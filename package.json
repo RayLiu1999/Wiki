@@ -9,6 +9,7 @@
     "typecheck": "node scripts/astro.mjs check",
     "lint": "eslint .",
     "test": "node --test tests/*.test.mjs",
+    "test:container": "node scripts/check-container.mjs",
     "test:examples": "node scripts/test-examples.mjs",
     "icons": "node scripts/create-icons.mjs",
     "build": "node scripts/astro.mjs build && node scripts/build-pwa.mjs && node scripts/check-site.mjs",

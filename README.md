@@ -22,6 +22,39 @@ pnpm preview --port 4321
 
 Astro 7 的正式預覽會在背景執行。停止本專案的預覽可使用 node scripts/astro.mjs preview stop。
 
+## Docker Compose 啟動
+
+需求：已啟動的 Docker 引擎與 Docker Compose v2.20 以上。可使用 Docker Desktop 或 OrbStack；主機不需要另行安裝 Node、pnpm 或 .NET。
+
+~~~sh
+docker compose up --build --detach --wait
+~~~
+
+開啟 http://127.0.0.1:8080/。Compose 建立 devwiki 專案，透過 Node 22.17.0／pnpm 10.16.0 建置完整網站，再由 Nginx 提供 dist/，包含 Pagefind、Service Worker 與圖示。容器通過首頁 HTTP 健康檢查後，啟動指令才會完成。
+
+預設只綁定本機 127.0.0.1。變更主機連接埠可使用：
+
+~~~sh
+WIKI_PORT=8081 docker compose up --build --detach --wait
+~~~
+
+修改文章或程式後，重新執行啟動指令即可建置並替換容器。讀者的本機收藏存放於瀏覽器；網址的協定、主機或連接埠改變時，會使用另一份瀏覽器儲存空間。需要 PWA 安裝與離線功能時，使用本機 localhost／127.0.0.1，或透過具 HTTPS 的反向代理提供正式網域。
+
+~~~sh
+# 查看狀態與記錄
+docker compose ps
+docker compose logs --follow wiki
+
+# 停止並移除本專案的容器與網路
+docker compose down
+~~~
+
+容器以非 root 使用者執行，網站檔案唯讀。HTML、搜尋索引與 sw.js 使用 no-cache，Astro 雜湊資源使用長期快取；不存在的網址保留 HTTP 404 並提供本站錯誤頁。
+
+已有 Node／pnpm 時，可執行 pnpm test:container 驗證正在運行的容器。自訂網址時使用 WIKI_URL=http://127.0.0.1:8081 pnpm test:container。GitHub Actions 也會建置並啟動容器，驗證文章、搜尋與 PWA 資源、快取標頭、轉址及 404。
+
+設定檔為 [compose.yaml](compose.yaml)、[Dockerfile](Dockerfile) 與 [Nginx 設定](docker/nginx.conf)。建置採用 [Docker 多階段建置](https://docs.docker.com/build/building/multi-stage/)與[官方 Nginx 映像](https://hub.docker.com/_/nginx)；Node 與 Nginx 的基底映像固定版本，升級時一併重新建置及驗證。
+
 ## 已提供功能
 
 - C# 25 篇、ASP.NET Core 9 篇、架構設計 2 篇、資料存取 6 篇、.NET 執行環境 4 篇、測試與觀測 2 篇。
@@ -51,6 +84,7 @@ prerequisites、relatedArticles 與 src/lib/learning-paths.ts 使用穩定 artic
 | pnpm typecheck | Astro 與 TypeScript 嚴格型別檢查 |
 | pnpm lint | JavaScript、TypeScript 與建置腳本的靜態檢查 |
 | pnpm test | 收藏資料的損壞、持久化與儲存失敗行為 |
+| pnpm test:container | 對已啟動的容器驗證文章路由、搜尋／PWA 資源、快取標頭與 404 |
 | pnpm build | 靜態頁面、Pagefind、Workbox，以及連結與產物完整性檢查 |
 | pnpm check | 依序執行型別、lint、單元測試與正式建置 |
 | pnpm test:examples | 比對文章與範例程式，編譯並執行 25 個 C# 範例、核對輸出 |
