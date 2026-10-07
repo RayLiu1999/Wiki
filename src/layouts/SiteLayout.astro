@@ -1,0 +1,28 @@
+---
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+import ThemeProvider from '../components/ThemeProvider.astro';
+import '../styles/site.css';
+interface Props { title: string; description?: string; }
+const { title, description = '以繁體中文串起軟體知識，從 C# 開始。' } = Astro.props;
+---
+<!doctype html>
+<html lang="zh-TW" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title === 'DevWiki' ? 'DevWiki — 軟體知識庫' : title + ' | DevWiki'}</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#7357ce" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <ThemeProvider />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳至主要內容</a>
+    <Header />
+    <main id="main" class="site-main"><slot /></main>
+    <div class="footer-container"><Footer /></div>
+  </body>
+</html>

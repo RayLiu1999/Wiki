@@ -1,0 +1,27 @@
+---
+interface Props { name: string; size?: number; }
+const { name, size = 20 } = Astro.props;
+const paths: Record<string, string[]> = {
+  layers: ['m12 3 9 5-9 5-9-5 9-5Z', 'm3 12 9 5 9-5', 'm3 16 9 5 9-5'],
+  search: ['M21 21l-4.3-4.3', 'M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z'],
+  moon: ['M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z'],
+  sun: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z', 'M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5'],
+  arrow: ['M5 12h14', 'm12 5 7 7-7 7'],
+  chevron: ['m9 5 7 7-7 7'],
+  book: ['M12 7v14', 'M3 4h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5v15h-5a4 4 0 0 0-4 2 4 4 0 0 0-4-2H3V4Z'],
+  bookmark: ['M6 3h12v18l-6-4-6 4V3Z'],
+  code: ['m8 6-6 6 6 6', 'm16 6 6 6-6 6', 'm14 4-4 16'],
+  box: ['m12 3 9 5v8l-9 5-9-5V8l9-5Z', 'm3 8 9 5 9-5', 'M12 13v8'],
+  network: ['M9 3h6v6H9V3Z', 'M2 16h6v6H2v-6Z', 'M16 16h6v6h-6v-6Z', 'M12 9v4M5 16v-3h14v3'],
+  list: ['M8 6h13M8 12h10M8 18h7', 'M3 6h.01M3 12h.01M3 18h.01'],
+  file: ['M14 2H5v20h14V7l-5-5Z', 'M14 2v5h5', 'M8 12h8M8 16h5'],
+  spark: ['m12 3 2.3 6.7L21 12l-6.7 2.3L12 21l-2.3-6.7L3 12l6.7-2.3L12 3Z'],
+  close: ['m6 6 12 12', 'M6 18 18 6'],
+  download: ['M12 3v12', 'm7 10 5 5 5-5', 'M5 17v4h14v-4'],
+  wifi: ['M2 8a16 16 0 0 1 20 0', 'M5 12a11 11 0 0 1 14 0', 'M8 16a6 6 0 0 1 8 0', 'M12 20h.01'],
+  info: ['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z', 'M12 11v6', 'M12 7h.01'],
+};
+---
+<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  {(paths[name] ?? paths.file).map((d) => <path d={d} />)}
+</svg>

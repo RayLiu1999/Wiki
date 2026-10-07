@@ -1,0 +1,13 @@
+---
+import Icon from './Icon.astro';
+import { articleUrl, categoryFor, levelLabel, type Article } from '../lib/catalog';
+interface Props { article: Article; showCategory?: boolean; saved?: boolean; }
+const { article, showCategory = false, saved = false } = Astro.props;
+---
+<a class="article-row" href={articleUrl(article)} data-article-row data-category={article.data.category} data-article-id={article.data.articleId} data-saved-row={saved ? '' : undefined}>
+  <span class="row-icon"><Icon name="file" size={20} /></span>
+  <span class="row-copy"><strong>{article.data.title}</strong><span>{article.data.description}</span></span>
+  {showCategory && <span class="row-category">{categoryFor(article.data.category)?.name}</span>}
+  <span class="level-label">{levelLabel(article.data.difficulty)}</span>
+  <Icon name="arrow" size={18} />
+</a>

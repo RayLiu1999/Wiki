@@ -1,0 +1,21 @@
+---
+import SiteLayout from '../../../layouts/SiteLayout.astro';
+import Icon from '../../../components/Icon.astro';
+import ArticleRow from '../../../components/ArticleRow.astro';
+import { getArticles, categories } from '../../../lib/catalog';
+const articles = await getArticles();
+---
+<SiteLayout title="C# 知識地圖" description="從語法入門、型別與物件到 LINQ、非同步與取消作業，循序探索 C# 核心知識。">
+  <section class="page-intro">
+    <p class="eyebrow">程式語言 / C#</p>
+    <div class="topic-heading"><span class="cs-mark">C#</span><h1>C# 知識地圖</h1></div>
+    <p>從一個小範例開始，把語法、型別與實務串成完整的理解。</p>
+    <div class="topic-meta"><span>{articles.length} 篇核心文章</span><span>·</span><span>5 個知識主題</span><span>·</span><a href="/learning-paths/csharp-beginner/">查看入門路徑 <Icon name="arrow" size={14} /></a></div>
+  </section>
+  <div class="category-filters" role="group" aria-label="文章分類">
+    <button type="button" class="filter-button" data-filter="all" aria-pressed="true">全部文章</button>
+    {categories.map((category) => <button type="button" class="filter-button" data-filter={category.id} aria-pressed="false">{category.name}<span>{articles.filter((article) => article.data.category === category.id).length}</span></button>)}
+  </div>
+  <div class="section-heading"><h2 class="list-heading" data-filter-heading>全部文章</h2><span class="result-count" data-filter-count role="status">{articles.length} 篇</span></div>
+  <div class="article-list">{articles.map((article) => <ArticleRow article={article} showCategory />)}</div>
+</SiteLayout>

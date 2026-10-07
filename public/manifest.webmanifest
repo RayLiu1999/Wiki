@@ -1,0 +1,17 @@
+{
+  "id": "/",
+  "name": "DevWiki 軟體知識庫",
+  "short_name": "DevWiki",
+  "description": "以繁體中文串起軟體知識，從 C# 開始。",
+  "lang": "zh-TW",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8f8fc",
+  "theme_color": "#7357ce",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

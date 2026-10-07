@@ -1,0 +1,35 @@
+name: 驗證 Wiki
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  website:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.16.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devwiki-static-site
+          path: dist
+  csharp-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: node scripts/test-examples.mjs

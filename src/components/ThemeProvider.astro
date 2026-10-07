@@ -1,0 +1,7 @@
+<script is:inline>
+  try {
+    document.documentElement.dataset.theme = localStorage.getItem('devwiki-theme') === 'dark' ? 'dark' : 'light';
+  } catch {
+    document.documentElement.dataset.theme = 'light';
+  }
+</script>

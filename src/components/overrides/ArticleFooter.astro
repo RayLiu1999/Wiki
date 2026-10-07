@@ -1,0 +1,20 @@
+---
+import Icon from '../Icon.astro';
+import { getArticles, articleUrl } from '../../lib/catalog';
+const data = Astro.locals.starlightRoute.entry.data;
+const articles = await getArticles();
+const index = articles.findIndex((entry) => entry.data.articleId === data.articleId);
+const previous = index > 0 ? articles[index - 1] : undefined;
+const next = index >= 0 ? articles[index + 1] : undefined;
+const prerequisites = articles.filter((entry) => data.prerequisites?.includes(entry.data.articleId));
+const related = articles.filter((entry) => data.relatedArticles?.includes(entry.data.articleId));
+---
+<div class="article-resources">
+  {prerequisites.length > 0 && <section><h2>建議先讀</h2><ul>{prerequisites.map((article) => <li><a href={articleUrl(article)}>{article.data.title}</a></li>)}</ul></section>}
+  {related.length > 0 && <section><h2>連結相關知識</h2><ul>{related.map((article) => <li><a href={articleUrl(article)}>{article.data.title}</a></li>)}</ul></section>}
+  <section id="references"><h2>參考來源</h2><ul>{data.sources?.map((source) => <li><a href={source.url} rel="noopener noreferrer">{source.title}</a></li>)}</ul><p class="source-note">外部來源需要網路連線。</p></section>
+</div>
+<nav class="article-pagination" aria-label="前後文章" data-pagefind-ignore>
+  {previous ? <a href={articleUrl(previous)}><small>上一個概念</small><strong>{previous.data.title}</strong></a> : <span />}
+  {next ? <a href={articleUrl(next)}><span><small>接著理解</small><strong>{next.data.title}</strong></span><Icon name="arrow" /></a> : <a href="/learning-paths/csharp-beginner/"><span><small>完成核心閱讀</small><strong>回到 C# 學習路徑</strong></span><Icon name="arrow" /></a>}
+</nav>

@@ -1,0 +1,30 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro';
+import Icon from '../components/Icon.astro';
+import ArticleRow from '../components/ArticleRow.astro';
+import { getArticles, categories } from '../lib/catalog';
+const articles = await getArticles();
+const featured = ['csharp-getting-started', 'csharp-value-reference-types', 'csharp-async-await']
+  .map((id) => articles.find((article) => article.data.articleId === id)!);
+---
+<SiteLayout title="DevWiki">
+  <section class="home-hero" aria-labelledby="home-title">
+    <p class="eyebrow"><Icon name="spark" size={17} />從 C#，建立你的知識地圖</p>
+    <h1 id="home-title">把知識串起來，<br /><span>寫出更好的程式。</span></h1>
+    <p class="hero-description">從語言基礎到實務問題，把零散的概念，<br class="desktop-break" />整理成隨時找得到的知識。</p>
+    <div class="hero-actions"><a class="button-primary" href="/languages/csharp/">探索 C# 知識<Icon name="arrow" size={18} /></a><a class="text-link" href="/learning-paths/csharp-beginner/">依路徑學習<Icon name="network" size={18} /></a></div>
+  </section>
+  <section class="path-banner" aria-labelledby="path-title">
+    <div><p class="eyebrow">推薦學習路徑</p><h2 id="path-title">從第一個程式開始</h2><p>{articles.length} 篇核心文章，循序建立 C# 的完整輪廓。</p></div>
+    <a class="button-primary" href="/learning-paths/csharp-beginner/">開始學習<Icon name="arrow" size={18} /></a>
+  </section>
+  <section class="topic-section" aria-labelledby="categories-title">
+    <div class="section-heading"><div><h2 id="categories-title">找到你想理解的概念</h2><p>從五個主題，慢慢建立完整的知識地圖。</p></div><a class="text-link" href="/languages/csharp/">所有文章<Icon name="arrow" size={17} /></a></div>
+    <div class="category-grid">{categories.map((category) => <a class="category-card" href={'/languages/csharp/?category=' + category.id}><span class="category-icon"><Icon name={category.icon} size={21} /></span><span class="category-count">{articles.filter((article) => article.data.category === category.id).length} 篇文章</span><h3>{category.name}</h3><p>{category.description}</p></a>)}</div>
+  </section>
+  <section class="featured-section" aria-labelledby="featured-title">
+    <div class="section-heading"><h2 id="featured-title">從這幾篇開始</h2><span class="eyebrow">編輯精選</span></div>
+    <div class="article-list">{featured.map((article) => <ArticleRow article={article} />)}</div>
+  </section>
+  <section class="home-note"><Icon name="book" size={20} /><p>不用一次記住所有語法。先理解一個概念，再把它與下一個連起來。</p></section>
+</SiteLayout>

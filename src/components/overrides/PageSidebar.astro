@@ -1,0 +1,13 @@
+---
+import Icon from '../Icon.astro';
+const toc = Astro.locals.starlightRoute.toc;
+const items = toc?.items.filter((item) => item.slug !== '_top') ?? [];
+---
+{items.length > 0 && <nav class="article-toc" aria-labelledby="toc-title" data-pagefind-ignore>
+  <details open>
+    <summary id="toc-title">這篇文章的內容</summary>
+    <ul>{items.map((item) => <li><a href={'#' + item.slug}>{item.text}</a></li>)}<li><a href="#references">參考來源</a></li></ul>
+  </details>
+  <div class="toc-note"><Icon name="book" size={19} /><p>理解一個概念，<br />再連結下一個。</p></div>
+  <a class="toc-topic-link" href="/languages/csharp/">瀏覽 C# 知識地圖 <Icon name="arrow" size={15} /></a>
+</nav>}

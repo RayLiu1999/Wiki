@@ -1,0 +1,26 @@
+---
+import Icon from '../Icon.astro';
+import { categoryFor, levelLabel } from '../../lib/catalog';
+const { data } = Astro.locals.starlightRoute.entry;
+const category = categoryFor(data.category);
+---
+<div class="article-heading" data-article-id={data.articleId}>
+  <nav class="breadcrumbs" aria-label="麵包屑" data-pagefind-ignore>
+    <a href="/languages/csharp/">C#</a><Icon name="chevron" size={13} />
+    <a href={'/languages/csharp/?category=' + data.category}>{category?.name}</a>
+  </nav>
+  <h1 id="_top" data-pagefind-meta="title">{data.title}</h1>
+  <span class="sr-only" aria-hidden="true" data-pagefind-weight="0.1">{[...new Set(['C#', 'csharp', ...(data.tags ?? [])])].join(' ')}</span>
+  <p class="article-description" data-pagefind-meta="description">{data.description}</p>
+  <div class="article-meta" data-pagefind-ignore>
+    <span>C# 核心知識</span><span class="meta-dot">·</span><span>{levelLabel(data.difficulty)}</span>
+    <span class="meta-dot">·</span><span>已審閱 {data.lastReviewed?.toISOString().slice(0, 10)}</span>
+    <button class="bookmark-button" type="button" data-bookmark={data.articleId} aria-pressed="false"><Icon name="bookmark" size={17} /><span>收藏文章</span></button>
+  </div>
+  <p class="article-offline" data-article-offline role="status" data-pagefind-ignore>正在確認離線閱讀狀態…</p>
+  <div class="takeaway"><Icon name="spark" size={20} /><div><strong>先記住這件事</strong><p>{data.takeaway}</p></div></div>
+  <details class="version-details" data-pagefind-ignore>
+    <summary>適用版本與範例驗證</summary>
+    <p>{data.applicableVersions}</p><p>驗證環境：{data.verifiedWith}</p>
+  </details>
+</div>

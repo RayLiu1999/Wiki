@@ -1,0 +1,8 @@
+---
+import Footer from '../Footer.astro';
+---
+<div class="wiki-page">
+  <slot name="header" />
+  <div class="document-container"><slot /></div>
+  <div class="footer-container"><Footer /></div>
+</div>

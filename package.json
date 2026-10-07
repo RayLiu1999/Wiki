@@ -1,0 +1,45 @@
+{
+  "name": "devwiki",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "以繁體中文整理軟體知識的 C# Wiki PWA",
+  "scripts": {
+    "dev": "node scripts/astro.mjs dev --host 127.0.0.1",
+    "typecheck": "node scripts/astro.mjs check",
+    "lint": "eslint .",
+    "test": "node --test tests/*.test.mjs",
+    "test:examples": "node scripts/test-examples.mjs",
+    "icons": "node scripts/create-icons.mjs",
+    "build": "node scripts/astro.mjs build && node scripts/build-pwa.mjs && node scripts/check-site.mjs",
+    "preview": "node scripts/astro.mjs preview --host 127.0.0.1",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build"
+  },
+  "packageManager": "pnpm@10.16.0",
+  "engines": {
+    "node": ">=22.17.0 <23",
+    "pnpm": ">=10.16.0 <11"
+  },
+  "dependencies": {
+    "@astrojs/markdown-remark": "7.3.0",
+    "@astrojs/starlight": "0.42.5",
+    "astro": "7.3.6"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "@eslint/js": "10.0.1",
+    "cheerio": "1.1.2",
+    "esbuild": "0.28.2",
+    "eslint": "10.11.0",
+    "globals": "17.12.0",
+    "sharp": "0.34.5",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.0",
+    "workbox-build": "7.4.1",
+    "workbox-core": "7.4.1",
+    "workbox-expiration": "7.4.1",
+    "workbox-precaching": "7.4.1",
+    "workbox-routing": "7.4.1",
+    "workbox-strategies": "7.4.1"
+  }
+}
