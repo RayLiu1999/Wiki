@@ -70,7 +70,9 @@ Workbox 的獨立建置步驟會在 Pagefind 建好後執行。基本頁面、�
 
 ## 發布與回復
 
-網站尚未設定網域、Git 遠端或託管帳號。可將完整 dist/ 發布到任何支援 HTTPS 與目錄 index.html 的靜態託管平台。必須整包發布，包含 pagefind/、sw.js、_astro/ 和 icons/。
+原始碼存放於私人 GitHub 儲存庫 [RayLiu1999/Wiki](https://github.com/RayLiu1999/Wiki)，本機 origin 已連至該儲存庫，預設分支為 main。
+
+網站尚未設定正式網域或託管平台。可將完整 dist/ 發布到任何支援 HTTPS 與目錄 index.html 的靜態託管平台。必須整包發布，包含 pagefind/、sw.js、_astro/ 和 icons/。
 
 正式網域確認後，在 astro.config.mjs 設定 site 以產生 sitemap；目前建置會略過 sitemap 並顯示提示。
 
