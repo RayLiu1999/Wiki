@@ -1,0 +1,22 @@
+# 本機檔案
+.DS_Store
+*.log
+
+# 依賴、建置與快取
+node_modules/
+.pnpm-store/
+.astro/
+dist/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# C# 範例的建置輸出
+**/bin/
+**/obj/
+
+# 環境設定與機密
+.env
+.env.*
+!.env.example
