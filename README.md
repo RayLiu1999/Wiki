@@ -1,6 +1,6 @@
 # DevWiki 軟體知識庫
 
-以繁體中文整理軟體知識的靜態 PWA，第一版提供 C# 核心文章。介面沿用已確認的「書頁閱讀」設計，預設淺色與紫色點綴，提供深色切換。
+以繁體中文整理軟體知識的靜態 PWA，目前提供 6 個主題、48 篇文章。介面沿用已確認的「書頁閱讀」設計，預設淺色與紫色點綴，提供深色切換。
 
 ## 開始使用
 
@@ -24,7 +24,9 @@ Astro 7 的正式預覽會在背景執行。停止本專案的預覽可使用 no
 
 ## 已提供功能
 
-- 首頁、五個 C# 分類、15 篇核心文章與五階段學習路徑。
+- C# 25 篇、ASP.NET Core 9 篇、架構設計 2 篇、資料存取 6 篇、.NET 執行環境 4 篇、測試與觀測 2 篇。
+- 保留 15 篇的 C# 入門路徑，另提供 22 篇的 .NET 後端工作實務路徑。
+- 工作筆記概念對照頁，保留使用者提供摘要的相關日期、概念與文章對應；未直接匯入原始 46 篇筆記。
 - Markdown 內容、固定文章網址、版本資料、先備知識、相關文章與官方來源。
 - 頁內目錄、C# 語法標色與程式碼複製。
 - 繁體中文及英文技術名詞的 Pagefind 全文搜尋、搜尋快捷鍵與無結果提示。
@@ -34,11 +36,13 @@ Astro 7 的正式預覽會在背景執行。停止本專案的預覽可使用 no
 
 ## 編寫文章
 
-文章位於 src/content/docs/languages/csharp/。複製一篇既有文章，依 src/content.config.ts 的 schema 填入資料。articleId 在發布後保持穩定；檔名決定網址，不依分類變動。設定 draft: true 的內容不進入正式輸出與導覽。
+文章位於 src/content/docs/ 下各主題目錄。複製一篇既有文章，依 src/content.config.ts 的 schema 填入資料。articleId 在發布後保持穩定；檔名決定網址，不依分類變動。設定 draft: true 的內容不進入正式輸出與導覽。
 
-文章至少包含摘要、核心概念、完整範例與預期輸出、常見錯誤、適用版本、最近審閱日期與官方來源。prerequisites 和 relatedArticles 引用 articleId；建置會檢查引用是否存在。
+文章包含摘要、核心概念、常見誤解、適用版本、最近審閱日期與官方來源。可執行 C# 範例提供完整程式與預期輸出；需要框架、資料庫或外部服務的片段明確標記整合前提與未執行範圍。verifiedWith 不可把文件核對寫成實際編譯或連線驗證。
 
-新增主題時，先擴充 schema 與 src/lib/catalog.ts，再加入主題入口。不要先建立沒有內容的公開入口。
+prerequisites、relatedArticles 與 src/lib/learning-paths.ts 使用穩定 articleId。筆記對照位於 src/data/work-notes.json，文章的 noteDates 記錄相關日期。建置檢查主題目錄、分類、重複 ID、文章引用、學習路徑與日期對照。
+
+新增主題時，擴充 src/lib/taxonomy.ts，加入實際內容、Starlight sidebar 與基本頁預快取清單；主題入口由共用路由產生。PWA 的文章路由由實際建置頁面收集，不再限於 C#。
 
 ## 驗證指令
 
@@ -49,7 +53,7 @@ Astro 7 的正式預覽會在背景執行。停止本專案的預覽可使用 no
 | pnpm test | 收藏資料的損壞、持久化與儲存失敗行為 |
 | pnpm build | 靜態頁面、Pagefind、Workbox，以及連結與產物完整性檢查 |
 | pnpm check | 依序執行型別、lint、單元測試與正式建置 |
-| pnpm test:examples | 比對文章與範例程式，編譯並執行 15 個 C# 範例、核對輸出 |
+| pnpm test:examples | 比對文章與範例程式，編譯並執行 25 個 C# 範例、核對輸出 |
 | pnpm icons | 從本站 SVG 識別產生 PWA 與 Apple 圖示 |
 
 Astro 型別檢查也檢查 .astro 元件；ESLint 負責獨立腳本與模組。CI 保留靜態建置產物，沒有自動正式部署。
@@ -76,4 +80,4 @@ Workbox 的獨立建置步驟會在 Pagefind 建好後執行。基本頁面、�
 
 正式公開發布前仍需確認網域、託管平台、內容授權，以及 Android Chrome / iOS Safari 的實際安裝體驗。
 
-完整規劃見 [專案規劃書](docs/PROJECT_PLAN.md)，版本與本機驗收紀錄見 [首版實作與驗收紀錄](docs/IMPLEMENTATION.md)。
+完整規劃見 [專案規劃書](docs/PROJECT_PLAN.md)，歷史驗收見 [首版實作與驗收紀錄](docs/IMPLEMENTATION.md)，本次整理見 [工作筆記整合紀錄](docs/WORK_NOTES_INTEGRATION.md)。
