@@ -324,6 +324,13 @@ summary { cursor: pointer; }
   .icon-button, .search-trigger { min-width: 44px; min-height: 44px; }
   .article-toc a { display: flex; align-items: center; }
 }
+.sl-markdown-content .sl-heading-wrapper { --sl-anchor-icon-gap: 0.6em; }
+.sl-markdown-content .sl-anchor-icon > svg { transform: none; }
+@media (max-width: 760px), (pointer: coarse) {
+  .sl-markdown-content .expressive-code .copy button { width: 44px; height: 44px; min-width: 44px; min-height: 44px; opacity: 0.75; }
+  .sl-markdown-content .expressive-code .copy button::after { margin: 0.75rem; }
+  .sl-markdown-content .sl-heading-wrapper { --sl-anchor-icon-size: 0.7em; }
+}
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition: none !important; animation: none !important; }
