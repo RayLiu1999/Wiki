@@ -30,7 +30,14 @@ export default defineConfig({
         { tag: 'link', attrs: { rel: 'apple-touch-icon', href: '/icons/apple-touch-icon.png' } },
         { tag: 'meta', attrs: { name: 'theme-color', content: '#7357ce' } },
       ],
-      sidebar: [{ label: 'C# 核心知識', items: [{ autogenerate: { directory: 'languages/csharp' } }] }],
+      sidebar: [
+        { label: 'C#', items: [{ autogenerate: { directory: 'languages/csharp' } }] },
+        { label: 'ASP.NET Core', items: [{ autogenerate: { directory: 'frameworks/aspnet-core' } }] },
+        { label: '架構設計', items: [{ autogenerate: { directory: 'architecture' } }] },
+        { label: '資料存取', items: [{ autogenerate: { directory: 'data-access' } }] },
+        { label: '.NET 執行環境', items: [{ autogenerate: { directory: 'platforms/dotnet' } }] },
+        { label: '測試與觀測', items: [{ autogenerate: { directory: 'engineering' } }] },
+      ],
     }),
   ],
 });

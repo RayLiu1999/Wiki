@@ -1,0 +1,10 @@
+---
+import SiteLayout from '../../layouts/SiteLayout.astro';
+import TopicView from '../../components/TopicView.astro';
+import { topics, type TopicId } from '../../lib/taxonomy';
+export function getStaticPaths() {
+  return Object.entries(topics).filter(([id]) => id !== 'csharp').map(([topicId, topic]) => ({ params: { topic: topic.path }, props: { topicId } }));
+}
+const { topicId } = Astro.props as { topicId: TopicId };
+---
+<SiteLayout title={topics[topicId].name + ' 知識地圖'} description={topics[topicId].description}><TopicView topicId={topicId} /></SiteLayout>

@@ -8,7 +8,7 @@ order: 8
 tags: [C#, csharp, nullable, "null", 空值, 空值處理]
 difficulty: beginner
 prerequisites: [csharp-value-reference-types]
-relatedArticles: [csharp-exceptions]
+relatedArticles: ["csharp-exceptions", "csharp-parameter-passing", "csharp-records-invariants", "aspnet-core-model-binding"]
 applicableVersions: 可為空參考型別需 C# 8 以上；完整頂層範例需 C# 9 以上。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14 / Nullable enabled
 lastReviewed: 2026-10-07
@@ -16,6 +16,7 @@ takeaway: 問號表示資料可能缺少；應處理這種可能，而不是只�
 sources:
   - title: Microsoft Learn：可為空參考型別
     url: https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/null-safety/nullable-reference-types
+noteDates: ["2026-06-04", "2026-06-25"]
 ---
 
 ## 讓缺少資料變得明確
@@ -55,3 +56,9 @@ Console.WriteLine(length?.ToString() ?? "沒有長度");
 - <code>!</code> 是空值警告抑制運算子，不會建立物件，也不會避免執行時錯誤。
 - 單純關閉 nullable 警告，通常只是把問題留到執行時。
 - 呼叫外部 API 或解析資料時，仍需檢查輸入是否符合宣告。
+
+## 工作筆記：把 null 留在正確邊界
+
+`Type?` 要依 Type 是值型別或參考型別解讀；`?.`、`??` 處理可能缺少的資料，`!` 只告訴編譯器你保證非空。它不會驗證 HTTP JSON 或資料庫的實際內容。
+
+外部 DTO 可以保留「未提供」狀態，建立領域型別時再驗證必要條件。`out` 的輸出與 `ref` / `in` 的別名語意另見參數傳遞，不要把問號與傳參方式混為一談。

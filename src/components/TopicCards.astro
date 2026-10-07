@@ -1,0 +1,6 @@
+---
+import Icon from './Icon.astro';
+import { getArticles, topics, topicUrl } from '../lib/catalog';
+const articles = await getArticles();
+---
+<div class="knowledge-grid">{Object.entries(topics).map(([id, topic]) => <a class="knowledge-card" href={topicUrl(id)}><span class="category-icon"><Icon name={topic.icon} size={21} /></span><span class="category-count">{articles.filter((article) => article.data.topic === id).length} 篇文章</span><h3>{topic.name}</h3><p>{topic.description}</p><span class="text-link">探索主題<Icon name="arrow" size={16} /></span></a>)}</div>

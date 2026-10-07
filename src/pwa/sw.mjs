@@ -27,7 +27,8 @@ const articles = new NetworkFirst({
   ],
 });
 
-const isArticle = (url) => url.origin === self.location.origin && /^\/languages\/csharp\/[^/]+\/$/.test(url.pathname);
+const articlePaths = new Set(__WIKI_ARTICLE_PATHS__);
+const isArticle = (url) => url.origin === self.location.origin && articlePaths.has(url.pathname);
 registerRoute(({ request, url }) => request.mode === 'navigate' && isArticle(url), articles);
 registerRoute(({ request, url }) => request.mode === 'navigate' && url.origin === self.location.origin, new NetworkOnly());
 setCatchHandler(async ({ request }) => request.mode === 'navigate'

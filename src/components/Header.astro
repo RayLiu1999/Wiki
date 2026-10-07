@@ -4,8 +4,8 @@ import { getCatalog } from '../lib/catalog';
 const path = Astro.url.pathname;
 const links = [
   { href: '/', label: '探索', active: path === '/' },
-  { href: '/languages/csharp/', label: 'C# 主題', active: path.startsWith('/languages/') },
-  { href: '/learning-paths/csharp-beginner/', label: '學習路徑', active: path.startsWith('/learning-paths/') },
+  { href: '/topics/', label: '知識主題', active: ['/topics/', '/languages/', '/frameworks/', '/architecture/', '/data-access/', '/platforms/', '/engineering/', '/work-notes/'].some((prefix) => path.startsWith(prefix)) },
+  { href: '/learning-paths/', label: '學習路徑', active: path.startsWith('/learning-paths/') },
   { href: '/saved/', label: '收藏', active: path.startsWith('/saved/') },
 ];
 const catalog = await getCatalog();
@@ -35,7 +35,7 @@ const catalog = await getCatalog();
     <button class="icon-button" type="button" data-search-close aria-label="關閉搜尋"><Icon name="close" /></button>
   </div>
   <label class="search-input-label" for="search-input">概念、語法或關鍵字</label>
-  <div class="search-input-wrap"><Icon name="search" /><input id="search-input" type="search" placeholder="試試「非同步」、「泛型」或 LINQ" autocomplete="off" /></div>
+  <div class="search-input-wrap"><Icon name="search" /><input id="search-input" type="search" placeholder="試試「非同步」、DI 或交易" autocomplete="off" /></div>
   <p class="search-status" id="search-status" role="status" aria-live="polite">輸入關鍵字，找到你想理解的概念。</p>
   <div class="search-results" id="search-results"></div>
   <div class="search-shortcuts"><span><kbd>Tab</kbd> 選擇結果</span><span><kbd>Esc</kbd> 關閉</span></div>

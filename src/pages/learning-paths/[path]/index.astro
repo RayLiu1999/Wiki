@@ -1,0 +1,8 @@
+---
+import SiteLayout from '../../../layouts/SiteLayout.astro';
+import LearningPathView from '../../../components/LearningPathView.astro';
+import { learningPaths } from '../../../lib/learning-paths';
+export function getStaticPaths() { return learningPaths.map((path) => ({ params: { path: path.id }, props: { path } })); }
+const { path } = Astro.props;
+---
+<SiteLayout title={path.title + '學習路徑'}><LearningPathView pathId={path.id} /></SiteLayout>

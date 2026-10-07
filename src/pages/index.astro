@@ -2,8 +2,11 @@
 import SiteLayout from '../layouts/SiteLayout.astro';
 import Icon from '../components/Icon.astro';
 import ArticleRow from '../components/ArticleRow.astro';
+import TopicCards from '../components/TopicCards.astro';
 import { getArticles, categories } from '../lib/catalog';
-const articles = await getArticles();
+import { learningPaths } from '../lib/learning-paths';
+const articles = await getArticles('csharp');
+const beginnerCount = learningPaths[0].stages.flatMap((stage) => stage.articleIds).length;
 const featured = ['csharp-getting-started', 'csharp-value-reference-types', 'csharp-async-await']
   .map((id) => articles.find((article) => article.data.articleId === id)!);
 ---
@@ -15,12 +18,17 @@ const featured = ['csharp-getting-started', 'csharp-value-reference-types', 'csh
     <div class="hero-actions"><a class="button-primary" href="/languages/csharp/">探索 C# 知識<Icon name="arrow" size={18} /></a><a class="text-link" href="/learning-paths/csharp-beginner/">依路徑學習<Icon name="network" size={18} /></a></div>
   </section>
   <section class="path-banner" aria-labelledby="path-title">
-    <div><p class="eyebrow">推薦學習路徑</p><h2 id="path-title">從第一個程式開始</h2><p>{articles.length} 篇核心文章，循序建立 C# 的完整輪廓。</p></div>
+    <div><p class="eyebrow">推薦學習路徑</p><h2 id="path-title">從第一個程式開始</h2><p>{beginnerCount} 篇核心文章，循序建立 C# 的完整輪廓。</p></div>
     <a class="button-primary" href="/learning-paths/csharp-beginner/">開始學習<Icon name="arrow" size={18} /></a>
   </section>
   <section class="topic-section" aria-labelledby="categories-title">
-    <div class="section-heading"><div><h2 id="categories-title">找到你想理解的概念</h2><p>從五個主題，慢慢建立完整的知識地圖。</p></div><a class="text-link" href="/languages/csharp/">所有文章<Icon name="arrow" size={17} /></a></div>
+    <div class="section-heading"><div><h2 id="categories-title">找到你想理解的 C# 概念</h2><p>從五個分類，慢慢建立語言的知識地圖。</p></div><a class="text-link" href="/languages/csharp/">C# 文章<Icon name="arrow" size={17} /></a></div>
     <div class="category-grid">{categories.map((category) => <a class="category-card" href={'/languages/csharp/?category=' + category.id}><span class="category-icon"><Icon name={category.icon} size={21} /></span><span class="category-count">{articles.filter((article) => article.data.category === category.id).length} 篇文章</span><h3>{category.name}</h3><p>{category.description}</p></a>)}</div>
+  </section>
+  <section class="topic-section" aria-labelledby="knowledge-title">
+    <div class="section-heading"><div><h2 id="knowledge-title">從語言，走進工作實務</h2><p>把服務、資料、架構與診斷連起來。</p></div><a class="text-link" href="/work-notes/">筆記對照<Icon name="arrow" size={17} /></a></div>
+    <TopicCards />
+    <p class="practice-path-link"><a class="text-link" href="/learning-paths/dotnet-backend-practice/">沿著 .NET 後端工作實務路徑閱讀<Icon name="arrow" size={17} /></a></p>
   </section>
   <section class="featured-section" aria-labelledby="featured-title">
     <div class="section-heading"><h2 id="featured-title">從這幾篇開始</h2><span class="eyebrow">編輯精選</span></div>

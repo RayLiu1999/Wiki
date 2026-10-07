@@ -168,7 +168,7 @@ async function search() {
       const found = await (await pagefind).search(query);
       count = found.results.length;
       const data = await Promise.all(found.results.slice(0, 8).map((result) => result.data()));
-      items = data.map((item) => ({ url: item.url, title: item.meta.title ?? 'C# 文章', excerpt: item.plain_excerpt }));
+      items = data.map((item) => ({ url: item.url, title: item.meta.title ?? '知識文章', excerpt: item.plain_excerpt }));
     }
     if (current !== searchSequence) return;
     showResults(items);
@@ -178,7 +178,7 @@ async function search() {
     pagefind = undefined;
     devIndex = undefined;
     showResults([]);
-    if (status) status.textContent = '搜尋暫時無法載入。請確認連線，或從 C# 主題頁瀏覽文章。';
+    if (status) status.textContent = '搜尋暫時無法載入。請確認連線，或從知識主題頁瀏覽文章。';
   }
 }
 

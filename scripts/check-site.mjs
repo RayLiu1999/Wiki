@@ -49,5 +49,22 @@ assert.ok(manifest.icons.some((icon) => icon.sizes === '192x192'));
 assert.ok(manifest.icons.some((icon) => icon.sizes === '512x512'));
 for (const icon of manifest.icons) await stat(path.join('dist', icon.src));
 await stat('dist/pagefind/pagefind.js');
-await stat('dist/sw.js');
+const worker = await readFile('dist/sw.js', 'utf8');
+const catalog = JSON.parse(await readFile('dist/search-index.json', 'utf8'));
+const articleDocuments = new Map();
+for (const [file, $] of documents) {
+  const articleId = $('.article-heading').attr('data-article-id');
+  if (articleId) articleDocuments.set(articleId, { file, $ });
+}
+assert.equal(articleDocuments.size, catalog.length, '文章頁面與搜尋目錄數量不一致');
+assert.equal(new Set(catalog.map((article) => article.id)).size, catalog.length, '搜尋目錄有重複文章');
+for (const article of catalog) {
+  const document = articleDocuments.get(article.id);
+  assert.ok(document, article.id + ' 缺少文章頁面');
+  assert.equal(document.$('h1').text(), article.title, article.id + ' 標題與搜尋目錄不一致');
+  const topicUrl = article.url.split('/').slice(0, -2).join('/') + '/';
+  assert.equal(document.$('.breadcrumbs a').first().attr('href'), topicUrl, article.id + ' 麵包屑指向錯誤主題');
+  assert.ok(worker.includes(article.url), article.id + ' 未納入離線閱讀路由');
+}
 console.log('已驗證 ' + files.length + ' 個頁面、內部連結、頁內錨點、搜尋索引與 PWA 產物。');
+console.log(catalog.length + ' 篇文章的搜尋目錄、主題麵包屑與離線路由一致。');

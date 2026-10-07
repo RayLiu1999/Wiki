@@ -334,3 +334,42 @@ summary { cursor: pointer; }
   .reading-grid { display: block; }
   .document-container { padding: 0; max-width: none; }
 }
+.knowledge-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.knowledge-card { display: block; position: relative; padding: 24px; border: 1px solid var(--wiki-line); border-radius: 12px; background: var(--wiki-surface); color: var(--wiki-ink); text-decoration: none; transition: border-color .15s, background .15s; min-width: 0; }
+.knowledge-card:hover { border-color: var(--wiki-accent); background: var(--wiki-soft); }
+.knowledge-card h3 { margin-top: 20px; font-size: 21px; }
+.knowledge-card h2 { margin-top: 12px; font-size: 24px; }
+.knowledge-card p { font-size: 13px; line-height: 1.9; color: var(--wiki-muted); margin-top: 10px; }
+.knowledge-card .text-link { margin-top: 20px; }
+.practice-path-link { margin-top: 22px; }
+.path-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.page-intro .source-note { max-width: 740px; font-size: 13px; margin-top: 16px; }
+.page-intro .eyebrow a { color: inherit; }
+.note-group-links { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 40px; }
+.note-group-links a { font-size: 12px; padding: 8px 12px; border: 1px solid var(--wiki-line); border-radius: 7px; text-decoration: none; color: var(--wiki-muted); }
+.note-group-links a:hover { color: var(--wiki-accent); border-color: var(--wiki-accent); }
+.note-mapping-section + .note-mapping-section { margin-top: 48px; }
+.note-mapping-item { display: grid; grid-template-columns: 1.2fr 1fr; gap: 32px; padding: 23px 0; border-top: 1px solid var(--wiki-line); }
+.note-mapping-item h3 { font-size: 16px; }
+.note-mapping-item p { font-size: 13px; color: var(--wiki-muted); line-height: 1.9; margin-top: 9px; overflow-wrap: anywhere; }
+.note-mapping-item .note-dates { font-size: 11px; }
+.note-mapping-item ul { margin: 0; padding: 0; list-style: none; }
+.note-mapping-item li + li { margin-top: 9px; }
+.note-mapping-item a { display: flex; justify-content: space-between; align-items: center; gap: 12px; text-decoration: none; color: var(--wiki-ink); padding: 6px 0; }
+.note-mapping-item a:hover { color: var(--wiki-accent); }
+.note-mapping-item small { color: var(--wiki-muted); font-size: 10px; display: block; }
+.note-mapping-item strong { font-size: 13px; font-weight: 550; }
+.note-provenance p { overflow-wrap: anywhere; }
+.cs-mark.wide-mark { font-size: 22px; min-width: 76px; }
+@media (max-width: 1000px) {
+  .knowledge-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .knowledge-grid, .path-options { grid-template-columns: 1fr; }
+  .note-mapping-item { grid-template-columns: 1fr; gap: 12px; }
+  .knowledge-card { padding: 22px; }
+  .topic-meta { flex-wrap: wrap; }
+  .topic-heading h1 { overflow-wrap: anywhere; }
+  .note-group-links a { min-height: 44px; display: inline-flex; align-items: center; }
+  .cs-mark.wide-mark { min-width: 60px; font-size: 18px; }
+}

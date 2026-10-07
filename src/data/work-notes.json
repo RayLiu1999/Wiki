@@ -1,0 +1,743 @@
+{
+  "title": "工作筆記概念對照",
+  "startDate": "2026-05-20",
+  "endDate": "2026-10-06",
+  "reportedNoteCount": 46,
+  "provenance": "依使用者提供的 46 篇每日筆記摘要統整；未直接讀取原始筆記與技術子頁。日期為摘要提供的相關日期，子頁細節另依官方文件補充。",
+  "groups": [
+    {
+      "title": "C# 語法與型別",
+      "items": [
+        {
+          "title": "Null 與參數傳遞",
+          "concepts": [
+            "Type?",
+            "?.",
+            "??",
+            "!",
+            "out",
+            "ref",
+            "in"
+          ],
+          "dates": [
+            "2026-06-25",
+            "2026-06-04"
+          ],
+          "articleIds": [
+            "csharp-nullable",
+            "csharp-parameter-passing"
+          ]
+        },
+        {
+          "title": "型別與物件",
+          "concepts": [
+            "建構子多載",
+            "base()",
+            "typeof",
+            "nameof",
+            "GetType()",
+            "default",
+            "sizeof",
+            "泛型"
+          ],
+          "dates": [
+            "2026-06-03",
+            "2026-05-25",
+            "2026-05-21"
+          ],
+          "articleIds": [
+            "csharp-classes",
+            "csharp-type-operators",
+            "csharp-collections"
+          ]
+        },
+        {
+          "title": "類別設計",
+          "concepts": [
+            "internal",
+            "partial",
+            "sealed",
+            "virtual",
+            "Attribute",
+            "this 擴充方法"
+          ],
+          "dates": [
+            "2026-05-28",
+            "2026-05-27",
+            "2026-06-24"
+          ],
+          "articleIds": [
+            "csharp-class-design",
+            "csharp-extensions-attributes"
+          ]
+        },
+        {
+          "title": "資料型別設計",
+          "concepts": [
+            "class",
+            "record",
+            "set",
+            "init",
+            "new()",
+            "with",
+            "型別封裝規則",
+            "非法狀態"
+          ],
+          "dates": [
+            "2026-05-22",
+            "2026-06-01"
+          ],
+          "articleIds": [
+            "csharp-records-invariants",
+            "architecture-domain-modeling"
+          ]
+        },
+        {
+          "title": "集合與 LINQ",
+          "concepts": [
+            "陣列",
+            "List<T>",
+            "IReadOnlyList<T>",
+            "Dictionary<K,V>",
+            "IEnumerable<T>",
+            "IQueryable<T>",
+            "EF Core 查詢翻譯",
+            "IAsyncEnumerable<T>"
+          ],
+          "dates": [
+            "2026-06-04",
+            "2026-10-06"
+          ],
+          "articleIds": [
+            "csharp-collections",
+            "csharp-linq",
+            "csharp-query-abstractions",
+            "data-access-ef-core"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "非同步與並行",
+      "items": [
+        {
+          "title": "Task 非同步模型",
+          "concepts": [
+            "Task",
+            "ValueTask",
+            "async/await",
+            "Task.WhenAll",
+            "CancellationToken",
+            "CancellationTokenSource",
+            "Channel<T>"
+          ],
+          "dates": [
+            "2026-05-21",
+            "2026-05-27"
+          ],
+          "articleIds": [
+            "csharp-async-await",
+            "csharp-cancellation",
+            "csharp-async-coordination",
+            "csharp-channels"
+          ]
+        },
+        {
+          "title": "ConfigureAwait",
+          "concepts": [
+            "同步內容",
+            "ASP.NET Core",
+            "通用類別庫",
+            ".Result",
+            ".Wait()",
+            "死結",
+            "ConfigureAwaitOptions"
+          ],
+          "dates": [
+            "2026-06-02",
+            "2026-10-06",
+            "2026-10-05"
+          ],
+          "articleIds": [
+            "csharp-configure-await"
+          ]
+        },
+        {
+          "title": "同步與併發工具",
+          "concepts": [
+            "lock",
+            "ConcurrentQueue",
+            "ConcurrentDictionary",
+            "SemaphoreSlim",
+            "Lazy<T>",
+            "雙重檢查鎖定"
+          ],
+          "dates": [
+            "2026-06-02",
+            "2026-06-22",
+            "2026-06-24"
+          ],
+          "articleIds": [
+            "csharp-thread-safety"
+          ]
+        },
+        {
+          "title": "批次工作",
+          "concepts": [
+            "分批 SQL 更新",
+            "批次大小",
+            "批次間隔",
+            "資料庫鎖競爭",
+            "Task.Delay",
+            "Dapper",
+            "連線管理"
+          ],
+          "dates": [
+            "2026-09-02"
+          ],
+          "articleIds": [
+            "data-access-batch-updates"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "ASP.NET Core 與服務組態",
+      "items": [
+        {
+          "title": "Model Binding",
+          "concepts": [
+            "[ApiController]",
+            "[FromBody]",
+            "[FromQuery]",
+            "[FromRoute]",
+            "[FromHeader]",
+            "[FromForm]",
+            "[FromServices]"
+          ],
+          "dates": [
+            "2026-05-28",
+            "2026-05-22"
+          ],
+          "articleIds": [
+            "aspnet-core-model-binding"
+          ]
+        },
+        {
+          "title": "DI 與生命週期",
+          "concepts": [
+            "Transient",
+            "Scoped",
+            "Singleton",
+            "AddTransient",
+            "AddScoped",
+            "Options Pattern",
+            "IServiceScopeFactory",
+            "Singleton 依賴 Scoped"
+          ],
+          "dates": [
+            "2026-05-28",
+            "2026-10-06"
+          ],
+          "articleIds": [
+            "aspnet-core-dependency-injection"
+          ]
+        },
+        {
+          "title": "HTTP 用戶端",
+          "concepts": [
+            "IHttpClientFactory",
+            "AddHttpClient",
+            "命名 client",
+            "HttpMessageHandler",
+            "Handler 連線管理",
+            "記錄與追蹤"
+          ],
+          "dates": [
+            "2026-05-28",
+            "2026-07-01"
+          ],
+          "articleIds": [
+            "aspnet-core-http-client-factory"
+          ]
+        },
+        {
+          "title": "驗證與授權",
+          "concepts": [
+            "Authentication Scheme",
+            "Authorization Policy",
+            "[AllowAnonymous]",
+            "IsAuthenticated",
+            "AuthenticateResult.NoResult()",
+            "AuthenticateResult.Fail()"
+          ],
+          "dates": [
+            "2026-05-21",
+            "2026-05-28",
+            "2026-06-04",
+            "2026-10-05"
+          ],
+          "articleIds": [
+            "aspnet-core-authentication"
+          ]
+        },
+        {
+          "title": "Middleware",
+          "concepts": [
+            "管線順序",
+            "例外處理",
+            "短路回應",
+            "OnStarting",
+            "response header"
+          ],
+          "dates": [
+            "2026-07-17"
+          ],
+          "articleIds": [
+            "aspnet-core-middleware"
+          ]
+        },
+        {
+          "title": "API 架構",
+          "concepts": [
+            "Minimal API",
+            "Controller",
+            "JIT",
+            "Native AOT",
+            "反射",
+            "套件",
+            "監控"
+          ],
+          "dates": [
+            "2026-06-29"
+          ],
+          "articleIds": [
+            "aspnet-core-api-styles-aot"
+          ]
+        },
+        {
+          "title": "通訊與服務整合",
+          "concepts": [
+            "gRPC",
+            "HTTP/2 多工",
+            "client-side load balancing",
+            "Dapr sidecar",
+            "HTTP/gRPC"
+          ],
+          "dates": [
+            "2026-09-29",
+            "2026-09-14"
+          ],
+          "articleIds": [
+            "aspnet-core-grpc",
+            "aspnet-core-dapr"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "架構與資料存取",
+      "items": [
+        {
+          "title": "DDD 與分層架構",
+          "concepts": [
+            "Entity",
+            "Value Object",
+            "Aggregate Root",
+            "Domain",
+            "Application",
+            "Infrastructure",
+            "Web API"
+          ],
+          "dates": [
+            "2026-06-03",
+            "2026-05-28"
+          ],
+          "articleIds": [
+            "architecture-domain-modeling"
+          ]
+        },
+        {
+          "title": "應用程式模式",
+          "concepts": [
+            "Repository",
+            "Unit of Work",
+            "Mediator",
+            "CQRS",
+            "Command",
+            "Query",
+            "Handler",
+            "DTO",
+            "Validator"
+          ],
+          "dates": [
+            "2026-05-25",
+            "2026-05-28",
+            "2026-06-09",
+            "2026-10-05"
+          ],
+          "articleIds": [
+            "architecture-application-patterns"
+          ]
+        },
+        {
+          "title": "EF Core",
+          "concepts": [
+            "LINQ 查詢翻譯",
+            "DbContext",
+            "DbSet",
+            "Fluent API",
+            "OnModelCreating",
+            "ApplyConfigurationsFromAssembly",
+            "Migration",
+            "migration bundle"
+          ],
+          "dates": [
+            "2026-06-04",
+            "2026-10-05",
+            "2026-10-06"
+          ],
+          "articleIds": [
+            "data-access-ef-core",
+            "data-access-migrations"
+          ]
+        },
+        {
+          "title": "Dapper 與交易",
+          "concepts": [
+            "ADO.NET",
+            "明確傳入 transaction",
+            "SaveChanges 交易",
+            "回滾後 DbContext 記憶體狀態"
+          ],
+          "dates": [
+            "2026-07-01",
+            "2026-09-02",
+            "2026-10-06"
+          ],
+          "articleIds": [
+            "data-access-transactions"
+          ]
+        },
+        {
+          "title": "連線池與資料庫鎖",
+          "concepts": [
+            "Process/Pod 連線池",
+            "Cloud SQL Auth Proxy",
+            "交易",
+            "資料庫鎖",
+            "不同層級"
+          ],
+          "dates": [
+            "2026-08-26",
+            "2026-10-05"
+          ],
+          "articleIds": [
+            "data-access-pools-locks"
+          ]
+        },
+        {
+          "title": "資料庫型別對應",
+          "concepts": [
+            "C# byte",
+            "資料庫 tinyint",
+            "供應商差異"
+          ],
+          "dates": [
+            "2026-07-14"
+          ],
+          "articleIds": [
+            "data-access-type-mapping"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "HTTP、錯誤處理與資源",
+      "items": [
+        {
+          "title": "HTTP 錯誤與例外",
+          "concepts": [
+            "TaskCanceledException",
+            "OperationCanceledException",
+            "EnsureSuccessStatusCode()",
+            "HttpRequestException",
+            "SocketException",
+            "JsonException"
+          ],
+          "dates": [
+            "2026-07-13"
+          ],
+          "articleIds": [
+            "aspnet-core-http-resilience",
+            "csharp-exceptions"
+          ]
+        },
+        {
+          "title": "大回應串流",
+          "concepts": [
+            "ReadAsStringAsync()",
+            "ReadAsStreamAsync()",
+            "ResponseHeadersRead",
+            "巨大回應"
+          ],
+          "dates": [
+            "2026-07-13",
+            "2026-08-07"
+          ],
+          "articleIds": [
+            "aspnet-core-http-resilience"
+          ]
+        },
+        {
+          "title": "重試與限流",
+          "concepts": [
+            "Polly",
+            "符合條件才重試",
+            "HTTP 429",
+            "Retry-After"
+          ],
+          "dates": [
+            "2026-06-04",
+            "2026-07-13"
+          ],
+          "articleIds": [
+            "aspnet-core-http-resilience"
+          ]
+        },
+        {
+          "title": "資源釋放",
+          "concepts": [
+            "IDisposable",
+            "using",
+            "FileStream",
+            "資料庫連線",
+            "Singleton",
+            "DI 資源生命週期"
+          ],
+          "dates": [
+            "2026-05-21",
+            "2026-05-22",
+            "2026-06-29",
+            "2026-07-01"
+          ],
+          "articleIds": [
+            "csharp-disposable",
+            "aspnet-core-dependency-injection",
+            "data-access-transactions"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "執行環境、時間與識別碼",
+      "items": [
+        {
+          "title": "SDK 與套件管理",
+          "concepts": [
+            "global.json",
+            "version",
+            "rollForward",
+            "allowPrerelease",
+            "NuGet.config",
+            "套件來源",
+            "<clear />",
+            "中央套件版本管理"
+          ],
+          "dates": [
+            "2026-08-07",
+            "2026-07-08",
+            "2026-06-08"
+          ],
+          "articleIds": [
+            "dotnet-sdk-packages"
+          ]
+        },
+        {
+          "title": "Hosting 模式",
+          "concepts": [
+            "IHostBuilder",
+            "Program.cs",
+            "Minimal Hosting",
+            "Startup",
+            "Generic Host"
+          ],
+          "dates": [
+            "2026-05-20",
+            "2026-05-21"
+          ],
+          "articleIds": [
+            "dotnet-hosting"
+          ]
+        },
+        {
+          "title": "時間處理",
+          "concepts": [
+            "DateTimeOffset",
+            "UTC",
+            "Unix timestamp",
+            "日光節約時間",
+            "時區轉換"
+          ],
+          "dates": [
+            "2026-05-27",
+            "2026-06-08",
+            "2026-07-01"
+          ],
+          "articleIds": [
+            "dotnet-time-zones"
+          ]
+        },
+        {
+          "title": "唯一識別碼",
+          "concepts": [
+            "UUID v4",
+            "UUID v7",
+            "ULID",
+            "COMB Guid",
+            "Snowflake",
+            "索引寫入",
+            "儲存大小",
+            ".NET 版本"
+          ],
+          "dates": [
+            "2026-08-27"
+          ],
+          "articleIds": [
+            "dotnet-identifiers"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "測試與監控追蹤",
+      "items": [
+        {
+          "title": "測試工具與邊界",
+          "concepts": [
+            "xUnit",
+            "[Fact]",
+            "[Theory]",
+            "NSubstitute",
+            "介面替身",
+            "商業邏輯",
+            "Infrastructure 邊界"
+          ],
+          "dates": [
+            "2026-05-27",
+            "2026-05-28",
+            "2026-06-25"
+          ],
+          "articleIds": [
+            "engineering-business-tests"
+          ]
+        },
+        {
+          "title": "指標與追蹤",
+          "concepts": [
+            ".NET Runtime",
+            "GC",
+            "ThreadPool",
+            "HTTP 請求指標",
+            "RPS",
+            "OpenTelemetry",
+            "Activity.Current",
+            "W3C traceparent",
+            "tracestate",
+            "跨服務追蹤"
+          ],
+          "dates": [
+            "2026-10-06",
+            "2026-07-17"
+          ],
+          "articleIds": [
+            "engineering-metrics-tracing"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "易錯觀念校準",
+      "items": [
+        {
+          "title": "ref 與指標",
+          "concepts": [
+            "ref 別名呼叫端變數",
+            "與 Go 指標不完全相同"
+          ],
+          "dates": [
+            "2026-06-04",
+            "2026-06-25"
+          ],
+          "articleIds": [
+            "csharp-parameter-passing"
+          ]
+        },
+        {
+          "title": "with 的複製深度",
+          "concepts": [
+            "with 淺拷貝",
+            "共用參考欄位",
+            "struct 參考欄位"
+          ],
+          "dates": [
+            "2026-05-22",
+            "2026-06-01"
+          ],
+          "articleIds": [
+            "csharp-records-invariants",
+            "csharp-value-reference-types"
+          ]
+        },
+        {
+          "title": ".NET 6 Hosting 範本",
+          "concepts": [
+            "Minimal Hosting",
+            "Startup 仍受支援",
+            "Generic Host 仍受支援"
+          ],
+          "dates": [
+            "2026-05-20",
+            "2026-05-21"
+          ],
+          "articleIds": [
+            "dotnet-hosting"
+          ]
+        },
+        {
+          "title": "非同步與執行緒",
+          "concepts": [
+            "async/await 不自動建立執行緒",
+            "WaitAsync 非同步等待",
+            "Wait 同步阻塞"
+          ],
+          "dates": [
+            "2026-05-21",
+            "2026-05-27",
+            "2026-06-22"
+          ],
+          "articleIds": [
+            "csharp-async-await",
+            "csharp-thread-safety"
+          ]
+        },
+        {
+          "title": "ConfigureAwaitOptions.None",
+          "concepts": [
+            "None 無選項",
+            "ContinueOnCapturedContext",
+            "ConfigureAwait(false)"
+          ],
+          "dates": [
+            "2026-06-02",
+            "2026-10-05",
+            "2026-10-06"
+          ],
+          "articleIds": [
+            "csharp-configure-await"
+          ]
+        }
+      ]
+    }
+  ]
+}

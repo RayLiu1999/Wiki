@@ -8,7 +8,7 @@ order: 6
 tags: [C#, csharp, 值型別, 參考型別, struct, class, 記憶體]
 difficulty: beginner
 prerequisites: [csharp-variables, csharp-classes]
-relatedArticles: [csharp-methods, csharp-nullable]
+relatedArticles: ["csharp-methods", "csharp-nullable", "csharp-records-invariants", "csharp-parameter-passing"]
 applicableVersions: 型別語意通用；完整範例使用 C# 9 以上的頂層陳述式。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
 lastReviewed: 2026-10-07
@@ -16,6 +16,7 @@ takeaway: 一般指派會複製變數的值；參考型別變數的值，就是�
 sources:
   - title: Microsoft Learn：值型別
     url: https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/value-types
+noteDates: ["2026-05-22", "2026-06-01"]
 ---
 
 ## 從指派的行為理解
@@ -61,3 +62,9 @@ class Counter
 - 不要用「值型別一定在 stack、參考型別一定在 heap」取代語意理解；實際儲存位置受上下文影響。
 - 值型別包含參考型別欄位時，複製結構仍可能共享欄位指向的物件。
 - <code>string</code> 雖然是參考型別，但內容不可變，不能直接套用可變物件的直覺。
+
+## 工作筆記：值型別也可能含共用參考
+
+struct 被複製時會複製欄位值；若欄位是 List 或其他 class，欄位值就是參考，因此兩份 struct 仍可能共用同一物件。record 的 with 也採淺拷貝，不會自動深拷貝參考欄位。
+
+唯讀介面、init 與 readonly 能限制部分修改入口，卻不保證整棵物件圖不可變。設計 Value Object 時，還需考慮內部集合及其相等性。

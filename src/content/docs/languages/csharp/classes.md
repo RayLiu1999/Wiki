@@ -8,7 +8,7 @@ order: 5
 tags: [C#, csharp, class, 物件, 建構函式, public, private]
 difficulty: beginner
 prerequisites: [csharp-methods]
-relatedArticles: [csharp-value-reference-types, csharp-interfaces]
+relatedArticles: ["csharp-value-reference-types", "csharp-interfaces", "csharp-class-design", "csharp-type-operators", "csharp-records-invariants"]
 applicableVersions: 類別概念通用；完整範例使用 C# 9 以上的頂層陳述式。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
 lastReviewed: 2026-10-07
@@ -16,6 +16,7 @@ takeaway: class 描述物件的形狀；公開哪些成員，是設計的一部�
 sources:
   - title: Microsoft Learn：類別
     url: https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/types/classes
+noteDates: ["2026-05-21", "2026-05-25", "2026-06-03"]
 ---
 
 ## 型別與實例
@@ -61,3 +62,9 @@ C# 程式筆記
 - <code>static</code> 成員屬於型別，而非某一個實例；可變的共用狀態需要特別留意。
 - 類別是參考型別，指派變數不會自動複製物件。
 - 建構時檢查必要條件，比讓無效狀態流到其他方法更容易維護。
+
+## 工作筆記：建構與擴充邊界
+
+建構子可多載，同類別用 `this(...)` 串接，衍生類別用 `base(...)` 初始化父類別。建構子應讓物件一開始就滿足必要規則，不要要求每個呼叫端稍後手動補上關鍵欄位。
+
+internal、sealed、virtual 與 partial 分別處理組件存取、繼承、覆寫與宣告拆分；record / init / with 則是另一組資料設計選擇，連結下列文章可繼續閱讀。

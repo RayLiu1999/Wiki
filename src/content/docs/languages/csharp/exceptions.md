@@ -8,7 +8,7 @@ order: 12
 tags: [C#, csharp, 例外, exception, try, catch, throw, TryParse]
 difficulty: beginner
 prerequisites: [csharp-methods]
-relatedArticles: [csharp-disposable, csharp-cancellation]
+relatedArticles: ["csharp-disposable", "csharp-cancellation", "aspnet-core-http-resilience"]
 applicableVersions: 例外處理概念通用；完整範例使用 C# 9 以上。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
 lastReviewed: 2026-10-07
@@ -16,6 +16,7 @@ takeaway: 只在能恢復、補充脈絡或回報的位置捕捉例外，不要�
 sources:
   - title: Microsoft Learn：例外與例外處理
     url: https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/exceptions/
+noteDates: ["2026-07-13"]
 ---
 
 ## 錯誤如何向上傳遞
@@ -55,3 +56,9 @@ catch (FormatException)
 - 空白 <code>catch</code> 讓失敗消失，後續程式可能繼續使用無效資料。
 - 過度捕捉 <code>Exception</code>，容易把程式錯誤當成可恢復情況。
 - 非同步方法的例外通常透過回傳的工作傳遞，應使用 <code>await</code> 觀察。
+
+## 工作筆記：HTTP 失敗要先分類
+
+取消或逾時可能表現為 OperationCanceledException / TaskCanceledException；非 2xx 回應預設仍是 response，EnsureSuccessStatusCode 才會轉為 HttpRequestException。連線問題可能含底層 SocketException，JSON 格式或契約錯誤則可能是 JsonException。
+
+例外型別的細節依 API 與 .NET 版本不同，取消更不應一律當成故障重試。HTTP 實務文章把狀態碼、串流、Retry-After 與 Polly 的條件放在一起說明。

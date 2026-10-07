@@ -13,5 +13,15 @@
   "exceptions": "請輸入有效整數",
   "disposable": "使用資源\n已釋放\n離開區塊",
   "async-await": "開始\n完成",
-  "cancellation": "已取消"
+  "cancellation": "已取消",
+  "parameter-passing": "42\n2",
+  "type-operators": "total\n0\nTrue\n4\n泛型保留字串型別",
+  "class-design": "訂單：42",
+  "extensions-attributes": "Hello, Ada\n每日排程",
+  "records-invariants": "原始筆記\nC#, DDD\n2",
+  "query-abstractions": "1\n2\n3",
+  "async-coordination": "10, 20, 30\n99",
+  "channels": "1\n2\n3",
+  "configure-await": "沒有要求回原同步內容\n1",
+  "thread-safety": "10\n已初始化"
 }

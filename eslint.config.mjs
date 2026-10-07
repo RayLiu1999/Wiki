@@ -9,7 +9,7 @@ export default defineConfig(
   ...tseslint.configs.recommended,
   {
     languageOptions: {
-      globals: { ...globals.browser, ...globals.node, ...globals.serviceworker, __WIKI_BUILD_ID__: 'readonly' },
+      globals: { ...globals.browser, ...globals.node, ...globals.serviceworker, __WIKI_BUILD_ID__: 'readonly', __WIKI_ARTICLE_PATHS__: 'readonly' },
     },
     rules: { '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }] },
   },

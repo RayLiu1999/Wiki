@@ -31,4 +31,4 @@ for (const [slug, output] of Object.entries(expected)) {
   assert.equal(result.stdout.replace(/\r\n/g, '\n').trim(), output, slug + ' 的輸出與文章不一致');
   console.log('✓ ' + slug);
 }
-console.log('15 個 C# 範例的編譯、執行與預期輸出皆通過。');
+console.log(Object.keys(expected).length + ' 個 C# 範例的編譯、執行與預期輸出皆通過。');

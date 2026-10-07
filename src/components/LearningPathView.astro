@@ -1,0 +1,17 @@
+---
+import Icon from './Icon.astro';
+import { getArticles, articleUrl, levelLabel } from '../lib/catalog';
+import { learningPaths } from '../lib/learning-paths';
+interface Props { pathId: string; }
+const path = learningPaths.find((entry) => entry.id === Astro.props.pathId)!;
+const articles = await getArticles();
+const stages = path.stages.map((stage) => ({ ...stage, articles: stage.articleIds.map((id) => articles.find((article) => article.data.articleId === id)!) }));
+const count = stages.reduce((total, stage) => total + stage.articles.length, 0);
+---
+<section class="page-intro">
+  <p class="eyebrow"><a href="/learning-paths/">學習路徑</a></p>
+  <h1>{path.title}學習地圖。</h1><p>{path.description}<br />沿著 {stages.length} 個階段，走過 {count} 篇文章。</p>
+  <div class="hero-actions"><a class="button-primary" href={articleUrl(stages[0].articles[0])}>從第一篇開始<Icon name="arrow" size={18} /></a><span class="muted">{path.audience}</span></div>
+</section>
+<ol class="learning-path">{stages.map((stage, index) => <li class="learning-step"><span class="step-number">{String(index + 1).padStart(2, '0')}</span><div class="step-content"><p class="eyebrow">階段 {index + 1}</p><h2>{stage.title}</h2><p>{stage.description}</p><ol class="step-articles">{stage.articles.map((article) => <li><a href={articleUrl(article)}><span>{article.data.title}</span><span class="step-level">{levelLabel(article.data.difficulty)}</span><Icon name="arrow" size={16} /></a></li>)}</ol></div></li>)}</ol>
+<p class="path-tip"><Icon name="info" size={18} />可以依工作情境跳讀；文章底部的「建議先讀」與「連結相關知識」會補上上下文。</p>

@@ -1,0 +1,9 @@
+---
+import SiteLayout from '../../layouts/SiteLayout.astro';
+import Icon from '../../components/Icon.astro';
+import { learningPaths, learningPathUrl } from '../../lib/learning-paths';
+---
+<SiteLayout title="學習路徑">
+  <section class="page-intro"><p class="eyebrow">循序連結概念</p><h1>選一條適合現在的路徑。</h1><p>從基礎語法開始，或從工作問題走進 .NET 後端實務。</p></section>
+  <div class="path-options">{learningPaths.map((path) => <a class="knowledge-card" href={learningPathUrl(path.id)}><span class="eyebrow">{path.stages.length} 個階段 · {path.stages.flatMap((stage) => stage.articleIds).length} 篇文章</span><h2>{path.title}</h2><p>{path.description}</p><p class="muted">{path.audience}</p><span class="text-link">查看路徑<Icon name="arrow" size={16} /></span></a>)}</div>
+</SiteLayout>

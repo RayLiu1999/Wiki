@@ -9,6 +9,6 @@ const articles = await getArticles();
   <section class="page-intro"><p class="eyebrow"><Icon name="bookmark" size={17} />你的閱讀書籤</p><h1>把值得再讀的，留下來。</h1><p>收藏儲存在這台裝置的瀏覽器中，方便你下次繼續理解。</p></section>
   <p class="result-count" data-saved-count role="status">正在讀取收藏…</p>
   <div class="article-list" data-saved-list hidden>{articles.map((article) => <ArticleRow article={article} saved />)}</div>
-  <section class="empty-state" data-saved-empty hidden><Icon name="bookmark" size={33} /><h2>還沒有收藏文章</h2><p>閱讀時點選「收藏文章」，就可以在這裡找回它。</p><a class="button-primary" href="/languages/csharp/">探索 C# 知識<Icon name="arrow" size={17} /></a></section>
+  <section class="empty-state" data-saved-empty hidden><Icon name="bookmark" size={33} /><h2>還沒有收藏文章</h2><p>閱讀時點選「收藏文章」，就可以在這裡找回它。</p><a class="button-primary" href="/topics/">探索知識主題<Icon name="arrow" size={17} /></a></section>
   <noscript><p>請開啟 JavaScript 以讀取這台裝置的收藏。</p></noscript>
 </SiteLayout>

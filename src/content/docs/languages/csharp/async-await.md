@@ -8,7 +8,7 @@ order: 14
 tags: [C#, csharp, 非同步, asynchronous, async, await, Task, I/O]
 difficulty: intermediate
 prerequisites: [csharp-methods, csharp-exceptions]
-relatedArticles: [csharp-cancellation, csharp-disposable]
+relatedArticles: ["csharp-cancellation", "csharp-disposable", "csharp-async-coordination", "csharp-configure-await", "csharp-channels", "csharp-thread-safety"]
 applicableVersions: async / await 自 C# 5 起提供；完整頂層範例使用 C# 9 以上。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
 lastReviewed: 2026-10-07
@@ -16,6 +16,7 @@ takeaway: await 等待的是作業結果；未完成時可交還控制權，不�
 sources:
   - title: Microsoft Learn：非同步程式設計
     url: https://learn.microsoft.com/en-us/dotnet/csharp/asynchronous-programming/
+noteDates: ["2026-05-21", "2026-05-27", "2026-06-22"]
 ---
 
 ## 作業與執行緒
@@ -56,3 +57,11 @@ static async Task<string> ReadMessageAsync()
 - <code>.Result</code> 與 <code>.Wait()</code> 會同步阻塞，某些執行環境也可能死結；通常應一路使用 <code>await</code>。
 - 除了必要的事件處理器，避免使用 <code>async void</code>，讓呼叫端能等待及觀察例外。
 - 忘記等待作業，可能使錯誤無法被正確觀察，或讓程式提早結束。
+
+## 工作筆記：先分清等待、協調與排程
+
+Task / ValueTask 是作業結果的表示，Task.WhenAll 協調多個作業，CancellationToken 讓取消要求傳到真正的等待處。Channel 則適合把工作從生產者交給消費者。
+
+async/await 不會自動建立額外執行緒；未完成的 await 可交還控制權，已完成的 await 則可能同步繼續。共享狀態用 lock 或其他協調工具保護；SemaphoreSlim 的 WaitAsync 與阻塞的 Wait 也不能混用來解釋非同步。
+
+ConfigureAwait 處理延續是否嘗試回到捕捉內容，不負責併發限制，也不替代取消或錯誤處理。
