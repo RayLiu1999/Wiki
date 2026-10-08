@@ -4,11 +4,9 @@ import { getSearchCatalog } from '../lib/catalog';
 const path = Astro.url.pathname;
 const links = [
   { href: '/start/', label: '開始閱讀', active: path.startsWith('/start/') },
-  { href: '/knowledge-maps/', label: '知識地圖', active: path.startsWith('/knowledge-maps/') },
   { href: '/projects/ecommerce/', label: '電商專題', active: path.startsWith('/projects/') },
   { href: '/practice/ecommerce/', label: '實作指南', active: path.startsWith('/practice/') },
-  { href: '/topics/', label: '技術查閱', active: ['/topics/', '/languages/', '/frameworks/', '/architecture/', '/data-access/', '/infrastructure/', '/platforms/', '/engineering/', '/work-notes/'].some((prefix) => path.startsWith(prefix)) },
-  { href: '/learning-paths/', label: '學習路徑', active: path.startsWith('/learning-paths/') },
+  { href: '/topics/', label: '技術查閱', active: ['/topics/', '/languages/', '/frameworks/', '/architecture/', '/data-access/', '/infrastructure/', '/platforms/', '/engineering/'].some((prefix) => path.startsWith(prefix)) },
   { href: '/saved/', label: '收藏', active: path.startsWith('/saved/') },
 ];
 const catalog = await getSearchCatalog();

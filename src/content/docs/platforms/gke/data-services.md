@@ -52,4 +52,4 @@ RabbitMQ 需要核對 TLS、vhost、Publisher Confirm、Consumer Ack、耐久拓
 
 ## MySQL 與整體容量
 
-本篇沿既有 PostgreSQL 實驗說明。若選 Cloud SQL MySQL，仍分開核對雲端連線、資料庫登入與 MySqlConnector；從[資料庫地圖](/knowledge-maps/database-scale/)比較兩套 driver 的設定。所有 Pod、Worker 與 rollout 的池總量見[池容量](/data-access/pool-capacity/)，副本延遲與恢復目標見[複寫與復原](/data-access/replication-recovery/)。本次沒有建立新的雲端資料庫。
+本篇沿既有 PostgreSQL 實驗說明。若選 Cloud SQL MySQL，仍分開核對雲端連線、資料庫登入與 MySqlConnector；從[C# 與資料庫連線](/data-access/csharp-connections/)比較兩套 driver 的設定。所有 Pod、Worker 與 rollout 的池總量見[池容量](/data-access/pool-capacity/)，副本延遲與恢復目標見[複寫與復原](/data-access/replication-recovery/)。本次沒有建立新的雲端資料庫。

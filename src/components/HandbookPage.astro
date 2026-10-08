@@ -35,7 +35,7 @@ const environments = { reading: '可直接閱讀', 'host-compose': '主機與 Co
       </div>
       <nav class="article-pagination" aria-label="前後章節" data-pagefind-ignore>
         {previous ? <a href={handbookUrl(previous)}><small>上一個章節</small><strong>{previous.data.title}</strong></a> : <span />}
-        {next ? <a href={handbookUrl(next)}><span><small>接著閱讀</small><strong>{next.data.title}</strong></span><Icon name="arrow" /></a> : <a href="/knowledge-maps/"><span><small>繼續深入</small><strong>選擇知識地圖</strong></span><Icon name="arrow" /></a>}
+        {next ? <a href={handbookUrl(next)}><span><small>接著閱讀</small><strong>{next.data.title}</strong></span><Icon name="arrow" /></a> : <a href="/topics/"><span><small>繼續深入</small><strong>瀏覽技術主題</strong></span><Icon name="arrow" /></a>}
       </nav>
     </article>
     <aside class="reading-sidebar" data-pagefind-ignore><nav class="article-toc" aria-label="本篇目錄"><details open><summary>這篇文章的內容</summary><ul>{headings.filter((heading) => heading.depth === 2).map((heading) => <li><a href={'#' + heading.slug}>{heading.text}</a></li>)}<li><a href="#references">參考來源</a></li></ul></details><a class="toc-topic-link" href={group.path}>回到{group.title}<Icon name="arrow" size={15} /></a></nav></aside>

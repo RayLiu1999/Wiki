@@ -70,4 +70,4 @@ Pooler 管理連線數，不會縮短一段慢 SQL 或讓同一庫存列可無�
 
 PostgreSQL 更新／刪除會留下需要 VACUUM 清理的版本；長交易、慢 Reader 或維護不足會影響清理。大量匯入、清理與報表還需安排 WAL、複寫和統計更新。預設 Read Committed 的一般查詢以各 statement 的快照為基準，並非整筆交易不變快照。
 
-從[容量地圖](/knowledge-maps/database-scale/)先建立預算，再用[驗證指南](/practice/ecommerce/database-validation/)檢查真實環境。
+從[池容量](/data-access/pool-capacity/)先建立預算，再用[驗證指南](/practice/ecommerce/database-validation/)檢查真實環境。

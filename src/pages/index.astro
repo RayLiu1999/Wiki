@@ -4,9 +4,7 @@ import Icon from '../components/Icon.astro';
 import ArticleRow from '../components/ArticleRow.astro';
 import TopicCards from '../components/TopicCards.astro';
 import { getArticles } from '../lib/catalog';
-import { learningPaths } from '../lib/learning-paths';
 const articles = await getArticles();
-const beginnerCount = learningPaths[0].stages.flatMap((stage) => stage.articleIds).length;
 const featured = ['csharp-getting-started', 'csharp-value-reference-types', 'csharp-async-await']
   .map((id) => articles.find((article) => article.data.articleId === id)!);
 ---
@@ -17,24 +15,17 @@ const featured = ['csharp-getting-started', 'csharp-value-reference-types', 'csh
     <p class="hero-description">用商品、訂單與通知理解 .NET、MySQL／PostgreSQL、Redis 與 RabbitMQ，<br class="desktop-break" />再走進 Docker、Kubernetes、GKE 與維運。</p>
     <div class="hero-actions"><a class="button-primary" href="/start/">開始閱讀<Icon name="arrow" size={18} /></a><a class="text-link" href="/projects/ecommerce/">先看電商案例<Icon name="network" size={18} /></a></div>
   </section>
-  <section class="path-banner" aria-labelledby="path-title">
-    <div><p class="eyebrow">推薦學習路徑</p><h2 id="path-title">從第一個程式開始</h2><p>{beginnerCount} 篇核心文章，循序建立 C# 的完整輪廓。</p></div>
-    <a class="button-primary" href="/learning-paths/csharp-beginner/">開始學習<Icon name="arrow" size={18} /></a>
-  </section>
   <section class="topic-section" aria-labelledby="entry-title">
-    <div class="section-heading"><div><h2 id="entry-title">選擇你的閱讀方式</h2><p>按領域深入、按案例串接，或查閱部署與維運。</p></div></div>
+    <div class="section-heading"><div><h2 id="entry-title">選擇你的閱讀方式</h2><p>跟著電商案例串起決策，或直接查閱一項技術的原理與排查方法。</p></div></div>
     <div class="knowledge-grid">
-      <a class="knowledge-card" href="/knowledge-maps/dotnet-backend/"><Icon name="code" size={25} /><h3>深入學習 C#／.NET</h3><p>十個領域，從型別與非同步走到框架、資料、Runtime 和設計。</p><span class="text-link">閱讀 .NET 地圖<Icon name="arrow" size={17} /></span></a>
       <a class="knowledge-card" href="/projects/ecommerce/"><Icon name="box" size={25} /><h3>跟著電商案例學</h3><p>從商品、購物車到下單與通知，理解每項技術解決的問題。</p><span class="text-link">閱讀電商專題<Icon name="arrow" size={17} /></span></a>
-      <a class="knowledge-card" href="/knowledge-maps/cloud-native/"><Icon name="layers" size={25} /><h3>部署與維運</h3><p>從容器、本機 K8s 到 GKE，串接權限、網路、交付、擴縮和恢復。</p><span class="text-link">閱讀雲端地圖<Icon name="arrow" size={17} /></span></a>
+      <a class="knowledge-card" href="/topics/"><Icon name="code" size={25} /><h3>直接查閱一項技術</h3><p>從 C#／.NET、資料庫、Redis、RabbitMQ 到 Kubernetes，各篇可獨立閱讀。</p><span class="text-link">瀏覽所有主題<Icon name="arrow" size={17} /></span></a>
+      <a class="knowledge-card" href="/practice/ecommerce/"><Icon name="layers" size={25} /><h3>動手做實驗（選讀）</h3><p>需要親自觀察命中、重送或 Pod 狀態時，再準備環境操作。</p><span class="text-link">進入實作指南<Icon name="arrow" size={17} /></span></a>
     </div>
-    <p class="practice-path-link"><a class="text-link" href="/knowledge-maps/database-scale/">C# 與資料庫容量：連線、高併發 CRUD 與大量資料<Icon name="arrow" size={17} /></a></p>
   </section>
   <section class="topic-section" aria-labelledby="knowledge-title">
-    <div class="section-heading"><div><h2 id="knowledge-title">直接查閱一項技術</h2><p>{articles.length} 篇技術文章，也能各自理解背景、原理和限制。</p></div><a class="text-link" href="/topics/">所有主題<Icon name="arrow" size={17} /></a></div>
+    <div class="section-heading"><div><h2 id="knowledge-title">技術主題</h2><p>{articles.length} 篇技術文章，也能各自理解背景、原理和限制。</p></div><a class="text-link" href="/topics/">所有主題<Icon name="arrow" size={17} /></a></div>
     <TopicCards />
-    <p class="practice-path-link"><a class="text-link" href="/learning-paths/dotnet-backend-practice/">沿著 .NET 後端工作實務路徑閱讀<Icon name="arrow" size={17} /></a></p>
-    <p class="practice-path-link"><a class="text-link" href="/practice/ecommerce/">準備實作環境與核對結果<Icon name="arrow" size={17} /></a></p>
   </section>
   <section class="featured-section" aria-labelledby="featured-title">
     <div class="section-heading"><h2 id="featured-title">從這幾篇開始</h2><span class="eyebrow">編輯精選</span></div>

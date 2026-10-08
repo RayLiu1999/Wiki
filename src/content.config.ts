@@ -15,15 +15,14 @@ export const collections = {
         category: z.enum(allCategories.map((category) => category.id)),
         order: z.number().int().positive(),
         tags: z.array(z.string()).min(1),
-        difficulty: z.enum(['beginner', 'intermediate']),
-        learningDepth: z.enum(['basic', 'deep', 'applied']).default('basic'),
+        articleType: z.enum(['deep-dive', 'troubleshooting', 'reference']).default('deep-dive'),
         prerequisites: z.array(z.string()).default([]),
         relatedArticles: z.array(z.string()).default([]),
         applicableVersions: z.string().min(1),
         verifiedWith: z.string().min(1),
         lastReviewed: z.coerce.date(),
         takeaway: z.string().min(1),
-        noteDates: z.array(z.iso.date()).default([]),
+        omitSections: z.array(z.object({ section: z.string().min(1), reason: z.string().min(1) })).default([]),
         sources: z.array(z.object({ title: z.string(), url: z.url() })).min(1),
       }).superRefine((data, context) => {
         if (!topicFor(data.topic)?.categories.some((category) => category.id === data.category)) {

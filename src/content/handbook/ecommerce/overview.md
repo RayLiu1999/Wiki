@@ -42,6 +42,6 @@ sources: [{"title": "Microsoft modern web application architecture", "url": "htt
 
 ## 怎麼讀這條路線
 
-先看[元件責任](/start/responsibilities/)，再依章節順序走一次。遇到型別、非同步、交易或部署概念，回到 [.NET 地圖](/knowledge-maps/dotnet-backend/)或[雲端地圖](/knowledge-maps/cloud-native/)深入閱讀。要實際觀察命中、重送或 Pod 狀態，就進[實作指南](/practice/ecommerce/)。
+先看[元件責任](/start/responsibilities/)，再依章節順序走一次。遇到型別、非同步、交易或部署概念，回到[技術主題](/topics/)深入閱讀。要實際觀察命中、重送或 Pod 狀態，就進[實作指南](/practice/ecommerce/)。
 
 這份專題讓技術有共同背景，也保留各項技術自己的語意與限制。讀者可以單讀某篇文章，再沿連結補上所在流程。

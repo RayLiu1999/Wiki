@@ -43,6 +43,6 @@ MySQL InnoDB 預設 Repeatable Read，PostgreSQL 預設 Read Committed。兩者�
 
 先完成正確且可觀測的單一主庫用例，量測 SQL 和持有時間，再核對池及入場上限。之後依證據加入索引／游標、批次與保留、允許延遲的讀副本；分割按維護需求評估，分片在實際容量與邊界方案清楚後再考慮。
 
-先走[C# 與資料庫容量地圖](/knowledge-maps/database-scale/)或[循序學習路徑](/learning-paths/dotnet-database-scale/)。需要執行指令時，進[驗證指南](/practice/ecommerce/database-validation/)，先確認工具、目錄與驗證層次。
+先讀[資料存取主題](/data-access/)。需要執行指令時，進[驗證指南](/practice/ecommerce/database-validation/)，先確認工具、目錄與驗證層次。
 
 此處的庫存、分割、分片、壓測與恢復是設計案例。本次新增程式只完成編譯與離線設定解析，沒有實際高併發 CRUD 或一億列驗證。

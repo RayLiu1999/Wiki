@@ -1,8 +1,5 @@
 import { getCollection, type CollectionEntry } from 'astro:content';
 import { topicFor, type TopicId } from './taxonomy';
-import { learningPaths } from './learning-paths';
-import { knowledgeMaps } from './knowledge-maps';
-import workNotes from '../data/work-notes.json';
 export { categories, categoryFor, topics, topicFor, topicUrl } from './taxonomy';
 
 export type Article = CollectionEntry<'docs'>;
@@ -28,7 +25,8 @@ export async function getHandbook(group?: HandbookEntry['data']['group']) {
   return group ? entries.filter((entry) => entry.data.group === group) : entries;
 }
 export const articleUrl = (article: Article) => '/' + article.id.replace(/\/$/, '') + '/';
-export const levelLabel = (level: string) => level === 'beginner' ? '入門' : '進階';
+export const articleTypeLabels = { 'deep-dive': '深度解析', troubleshooting: '問題排查', reference: '參考速查' } as const;
+export const articleTypeLabel = (type: keyof typeof articleTypeLabels) => articleTypeLabels[type];
 export async function getArticles(topic?: TopicId) {
   const articles = (await getCollection('docs', (entry) => !entry.data.draft))
     .sort((a, b) => a.data.order - b.data.order);
@@ -45,33 +43,9 @@ export async function getArticles(topic?: TopicId) {
       if (!ids.has(id)) throw new Error(article.id + ' 引用不存在的文章：' + id);
     }
   }
-  for (const path of learningPaths) {
-    for (const id of path.stages.flatMap((stage) => stage.articleIds)) {
-      if (!ids.has(id)) throw new Error(path.id + ' 引用不存在的文章：' + id);
-    }
-  }
-  for (const map of knowledgeMaps) {
-    for (const domain of map.domains) {
-      for (const id of domain.articleIds) {
-        if (!ids.has(id)) throw new Error(domain.id + ' 引用不存在的文章：' + id);
-      }
-    }
-  }
   for (const entry of await getHandbook()) {
     for (const id of entry.data.linkedArticles) {
       if (!ids.has(id)) throw new Error(entry.id + ' 引用不存在的文章：' + id);
-    }
-  }
-  const byId = new Map(articles.map((article) => [article.data.articleId, article]));
-  for (const group of workNotes.groups) {
-    for (const item of group.items) {
-      if (!item.articleIds.length) throw new Error(item.title + ' 尚未對應文章');
-      for (const id of item.articleIds) {
-        if (!ids.has(id)) throw new Error(item.title + ' 引用不存在的文章：' + id);
-        if (!item.dates.every((date) => byId.get(id)!.data.noteDates.includes(date))) {
-          throw new Error(id + ' 的筆記日期與概念對照不一致');
-        }
-      }
     }
   }
   return topic ? articles.filter((article) => article.data.topic === topic) : articles;
@@ -84,7 +58,7 @@ export async function getCatalog() {
     title: article.data.title,
     description: article.data.description ?? '',
     category: article.data.category,
-    level: levelLabel(article.data.difficulty),
+    level: articleTypeLabel(article.data.articleType),
     tags: article.data.tags,
     topic: article.data.topic,
     kind: 'article',
