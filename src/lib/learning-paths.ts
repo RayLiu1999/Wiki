@@ -55,6 +55,16 @@ export const learningPaths = [
       { title: '以結果維運', description: '觀測、容量、品質與恢復。', articleIds: ['engineering-metrics-tracing', 'kubernetes-autoscaling', 'engineering-slo-alerts', 'engineering-recovery-cost'] },
     ],
   },
+  {
+    id: 'dotnet-database-scale', title: 'C#、MySQL／PostgreSQL 與資料庫容量', description: '從連線生命週期進入高併發 CRUD，再處理大量資料、維護、複寫與可驗證容量。', audience: '適合已能建立 .NET API，準備深入資料存取與擴容的開發者',
+    stages: [
+      { title: '先讀清連線與查詢邊界', description: 'SQL、DataSource、driver 差異與短期資源。', articleIds: ['data-access-sql-foundations', 'data-access-csharp-connections', 'data-access-mysql-dotnet', 'data-access-postgresql-dotnet'] },
+      { title: '限制並行，保持結果正確', description: '全程序池預算、CRUD、隔離、鎖與冪等。', articleIds: ['data-access-pool-capacity', 'data-access-concurrent-crud', 'data-access-isolation-locking', 'data-access-concurrency', 'data-access-transactions'] },
+      { title: '讓資料量增加仍可運作', description: '查詢、索引、穩定翻頁、批次和資料保留。', articleIds: ['data-access-large-table-queries', 'data-access-bulk-retention', 'data-access-batch-updates'] },
+      { title: '依證據擴展與恢復', description: '分割／分片選擇、讀副本及 GKE 資料服務。', articleIds: ['data-access-partitioning-sharding', 'data-access-replication-recovery', 'gke-data-services'] },
+      { title: '量測容量並管理變更', description: '代表性資料、長時間負載、恢復與相容更新。', articleIds: ['data-access-load-validation', 'data-access-migrations', 'engineering-metrics-tracing', 'engineering-recovery-cost'] },
+    ],
+  },
 ];
 
 export const learningPathUrl = (id: string) => '/learning-paths/' + id + '/';

@@ -29,6 +29,8 @@ L1 可執行實驗包含商品查詢、價格更新、訂單與 Outbox、發布�
 
 ## 指令怎麼讀
 
+資料庫另有[設定與容量驗證指南](/practice/ecommerce/database-validation/)。它先執行獨立 C# 範例的離線設定解析，再說明選用的 TLS 連線檢查與 CRUD／負載驗證方法；不需要啟動 L1，也沒有已完成的上億列壓測。
+
 `sh`區塊在終端機執行；`text`區塊可能是預期輸出，或有明確前提的 Redis CLI 輸入。`pnpm lab:*`是這個儲存庫定義的快捷指令，並非 Redis 或 RabbitMQ 的通用命令。
 
 如果只是閱讀概念，從[電商專題](/projects/ecommerce/)或[知識地圖](/knowledge-maps/)往下即可；操作時使用與本站相同版本的範例專案。

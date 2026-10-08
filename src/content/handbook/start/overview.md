@@ -20,6 +20,7 @@ sources: [{"title": "Microsoft modern web application architecture", "url": "htt
 | 深入後端技術 | [C#／.NET 地圖](/knowledge-maps/dotnet-backend/) | 依十個領域補基礎與深入知識 |
 | 理解系統怎麼合作 | [電商專題](/projects/ecommerce/) | 沿商品查詢、下單、事件與部署閱讀 |
 | 補雲端能力 | [雲端地圖](/knowledge-maps/cloud-native/) | 先容器和 Kubernetes，再進 GKE 與維運 |
+| 深入資料庫與容量 | [資料庫地圖](/knowledge-maps/database-scale/) | C# 連接 MySQL／PostgreSQL、併發 CRUD 與大量資料 |
 | 動手觀察結果 | [實作指南](/practice/ecommerce/) | 先確認環境，再跑對應的實驗 |
 
 ## 四種內容怎麼配合

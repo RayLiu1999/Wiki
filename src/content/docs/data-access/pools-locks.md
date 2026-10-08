@@ -8,10 +8,10 @@ order: 5
 tags: ["連線池", "Process", "Pod", "Cloud SQL Auth Proxy", "transaction", "資料庫鎖", "pooling", "DbContext pooling"]
 difficulty: "intermediate"
 prerequisites: ["data-access-transactions", "aspnet-core-dependency-injection"]
-relatedArticles: ["data-access-batch-updates", "engineering-metrics-tracing", "aspnet-core-dapr"]
+relatedArticles: ["data-access-batch-updates", "engineering-metrics-tracing", "aspnet-core-dapr", "data-access-csharp-connections", "data-access-pool-capacity", "data-access-isolation-locking"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-08"
+lastReviewed: "2026-10-09"
 takeaway: "池解決連線重用，交易定義提交邊界，鎖協調資料存取；增加池大小不會解除鎖競爭。"
 noteDates: ["2026-08-26", "2026-10-05"]
 sources: [{"title": "Microsoft Learn：SQL Server 連線池", "url": "https://learn.microsoft.com/en-us/dotnet/framework/data/adonet/sql-server-connection-pooling"}, {"title": "Google Cloud：Cloud SQL Auth Proxy", "url": "https://docs.cloud.google.com/sql/docs/mysql/sql-proxy?hl=en"}, {"title": "Microsoft Learn：EF Core pooling", "url": "https://learn.microsoft.com/en-us/ef/core/performance/advanced-performance-topics"}]
@@ -52,3 +52,7 @@ DbContext pooling 重用 context 物件，與 driver connection pooling 不同�
 總池預算要包含所有 API／Worker 程序、各個 DataSource、更新額外副本與工具。Cloud SQL Auth Proxy 不是連接池；長期交易或大量併發會讓等待增加。增加 Pod 可能擴大下游壓力，而不是自動縮短延遲。
 
 [閱讀對應的電商章節](/projects/ecommerce/scaling/)，把本篇概念接到整個用例。
+
+## MySQL／PostgreSQL 的進一步設計
+
+本篇建立共通層次；driver 的設定與生命週期另見 [C# 連線](/data-access/csharp-connections/)，所有 API／Worker 與更新期間的預算見[池容量](/data-access/pool-capacity/)。兩套資料庫的隔離差異和死鎖處理在[隔離與鎖](/data-access/isolation-locking/)展開。

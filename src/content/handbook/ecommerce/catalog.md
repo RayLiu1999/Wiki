@@ -5,7 +5,7 @@ group: "ecommerce"
 order: 1
 environment: "reading"
 verification: "電商設計案例；本章描述規則與方案，尚未提供完整業務實作。"
-linkedArticles: ["csharp-classes", "csharp-records-invariants", "csharp-structs-equality", "architecture-domain-modeling", "architecture-creation-patterns"]
+linkedArticles: ["csharp-classes", "csharp-records-invariants", "csharp-structs-equality", "architecture-domain-modeling", "architecture-creation-patterns", "data-access-large-table-queries"]
 prerequisites: ["ecommerce/overview"]
 sources: [{"title": "Microsoft modern web application architecture", "url": "https://learn.microsoft.com/en-us/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures"}]
 ---
@@ -36,3 +36,7 @@ struct 的 `default` 可能產生不符合金額規則的值；如果使用值�
 ## 可檢驗的結果
 
 價格更新後，新的查詢顯示新價格，既有訂單快照不變；不合法金額與數量被拒絕。完整快照與庫存模型是本章設計目標，目前實驗的訂單只有商品識別和數量，尚未實現這份完整模型。
+
+## 資料庫延伸
+
+查價與商品列表流量增加時，延伸閱讀[資料庫容量專題](/projects/ecommerce/database-capacity/)，先核對查詢範圍、投影與索引。

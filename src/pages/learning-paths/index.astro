@@ -4,6 +4,6 @@ import Icon from '../../components/Icon.astro';
 import { learningPaths, learningPathUrl } from '../../lib/learning-paths';
 ---
 <SiteLayout title="學習路徑">
-  <section class="page-intro"><p class="eyebrow">循序連結概念</p><h1>選一條適合現在的路徑。</h1><p>從 C# 入門與 .NET 深入，走到快取、可靠訊息、Kubernetes、GKE 和日常維運。</p></section>
+  <section class="page-intro"><p class="eyebrow">循序連結概念</p><h1>選一條適合現在的路徑。</h1><p>從 C# 與 .NET，走到資料庫容量、快取、可靠訊息、Kubernetes、GKE 和日常維運。</p></section>
   <div class="path-options">{learningPaths.map((path) => <a class="knowledge-card" href={learningPathUrl(path.id)}><span class="eyebrow">{path.stages.length} 個階段 · {path.stages.flatMap((stage) => stage.articleIds).length} 篇文章</span><h2>{path.title}</h2><p>{path.description}</p><p class="muted">{path.audience}</p><span class="text-link">查看路徑<Icon name="arrow" size={16} /></span></a>)}</div>
 </SiteLayout>

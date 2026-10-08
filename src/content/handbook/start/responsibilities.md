@@ -32,6 +32,8 @@ sources: [{"title": "Microsoft modern web application architecture", "url": "htt
 
 ## 一筆訂單如何走完
 
+上表描述現有 PostgreSQL 實驗。新加入的[資料庫專題](/projects/ecommerce/database-capacity/)比較 MySQL 與 PostgreSQL 的連線、交易及容量設計，選擇其中一個作為權威交易來源；快取和訊息的責任仍按用例定義。
+
 <figure class="concept-flow">
 <figcaption>訂單提交與通知完成的流程</figcaption>
 <ol><li>買家</li><li>訂單 API</li><li>訂單與 Outbox 交易</li><li>發布器</li><li>RabbitMQ</li><li>通知 Consumer</li><li>Inbox 與通知結果交易</li></ol>

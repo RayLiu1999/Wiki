@@ -5,7 +5,7 @@ group: "ecommerce"
 order: 15
 environment: "reading"
 verification: "電商設計案例；具體的跟做環境與已驗證範圍見實作指南。"
-linkedArticles: ["kubernetes-autoscaling", "data-access-pools-locks", "redis-concurrency", "rabbitmq-retries-idempotency", "dotnet-threadpool"]
+linkedArticles: ["kubernetes-autoscaling", "data-access-pools-locks", "redis-concurrency", "rabbitmq-retries-idempotency", "dotnet-threadpool", "data-access-pool-capacity", "data-access-load-validation"]
 prerequisites: ["ecommerce/gke"]
 sources: [{"title": "HPA", "url": "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/"}, {"title": "RabbitMQ consumers", "url": "https://www.rabbitmq.com/docs/consumers"}]
 ---
@@ -33,3 +33,7 @@ HPA 的 CPU 目標需要 requests 與資源指標。Queue 年齡、處理量等�
 ## 驗證擴縮
 
 分階段增加請求和工作，觀察成功率、延遲、Queue 與 Outbox 年齡、池等待與資源；縮容時確認在途工作可安全完成或重送。擴容後結果正確，才有理由調整目標和上限。
+
+## 資料庫延伸
+
+API／Worker、rollout 額外 Pod、讀副本與故障回源的連線預算，見[池容量](/data-access/pool-capacity/)和[資料庫容量專題](/projects/ecommerce/database-capacity/)。增加 Pod 前先量測主庫承受量。

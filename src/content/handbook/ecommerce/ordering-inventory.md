@@ -5,7 +5,7 @@ group: "ecommerce"
 order: 5
 environment: "reading"
 verification: "已有本機實驗可觀察部分流程；本章逐項說明其邊界。"
-linkedArticles: ["data-access-transactions", "data-access-concurrency", "data-access-pools-locks", "architecture-domain-modeling", "architecture-outbox-inbox"]
+linkedArticles: ["data-access-transactions", "data-access-concurrency", "data-access-pools-locks", "architecture-domain-modeling", "architecture-outbox-inbox", "data-access-concurrent-crud", "data-access-isolation-locking"]
 prerequisites: ["ecommerce/cart"]
 sources: [{"title": "EF concurrency", "url": "https://learn.microsoft.com/en-us/ef/core/saving/concurrency"}, {"title": "PostgreSQL transaction isolation", "url": "https://www.postgresql.org/docs/current/transaction-iso.html"}]
 ---
@@ -39,3 +39,7 @@ sources: [{"title": "EF concurrency", "url": "https://learn.microsoft.com/en-us/
 ## 目前實驗能看到什麼
 
 現有 API 提交訂單和 Outbox，Consumer 記錄模擬通知；它驗證商品存在與數量，尚未扣庫存、保存完整成交快照或實現 HTTP 請求冪等。可用[事件實驗](/practice/ecommerce/cache-messaging/)觀察交易與通知邊界，庫存競爭屬於本章後續實現目標。
+
+## 資料庫延伸
+
+促銷尖峰的 CRUD、鎖順序、完整交易重試與提交結果不明，另見[資料庫容量專題](/projects/ecommerce/database-capacity/)；需以真實並行測試證明庫存與去重結果。

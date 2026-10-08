@@ -9,6 +9,7 @@ const { topicId } = Astro.props;
 const topic = topicFor(topicId)!;
 const articles: Article[] = await getArticles(topicId);
 const pathId = topicId === 'csharp' ? 'csharp-beginner'
+  : topicId === 'data-access' ? 'dotnet-database-scale'
   : ['redis', 'rabbitmq'].includes(topicId) ? 'dotnet-cache-messaging'
   : ['containers', 'networking', 'kubernetes'].includes(topicId) ? 'cloud-native-foundations'
   : topicId === 'gke' ? 'gke-delivery-operations' : 'dotnet-backend-practice';

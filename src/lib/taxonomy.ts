@@ -18,10 +18,13 @@ export const topics = {
     { id: 'application-patterns', name: '應用程式模式', description: 'Repository、Unit of Work、CQRS 與 Handler' },
     { id: 'object-patterns', name: '建立與組合', description: 'Factory、Builder、Strategy、Decorator 與橫切行為' },
   ] },
-  'data-access': { name: '資料存取', path: 'data-access', mark: 'Data', icon: 'list', description: '看懂 EF Core、Dapper、交易、連線池與資料庫鎖各自負責的層級。', categories: [
+  'data-access': { name: '資料存取', path: 'data-access', mark: 'Data', icon: 'list', description: '從 EF Core 與交易深入 C# 連接 MySQL／PostgreSQL、高併發 CRUD、連線容量與大量資料維護。', categories: [
     { id: 'querying', name: '模型與查詢', description: 'EF Core、LINQ 翻譯與型別對應' },
     { id: 'transactions', name: '交易與批次', description: 'Dapper、交易、批次更新' },
     { id: 'database-runtime', name: '部署與連線', description: 'Migration、連線池與鎖' },
+    { id: 'database-connections', name: 'C# 與資料庫連線', description: 'DataSource、MySqlConnector、Npgsql 與池容量' },
+    { id: 'database-concurrency', name: '高併發與一致性', description: 'CRUD、隔離層級、鎖、冪等與重試' },
+    { id: 'database-scale', name: '大量資料與容量', description: '索引、批次、分割、複寫、恢復與負載驗證' },
   ] },
   redis: { name: 'Redis', path: 'infrastructure/redis', mark: 'Redis', icon: 'layers', description: '從資料型別與 TTL 到 .NET 快取、一致性、併發與故障處理，理解 Redis 的使用邊界。', categories: [
     { id: 'redis-basics', name: '基礎與資料模型', description: '共享快取、資料型別、Key 與 TTL' },

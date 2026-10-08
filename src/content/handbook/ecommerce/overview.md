@@ -1,6 +1,6 @@
 ---
 title: "製作電商後端：從 C# 到 GKE"
-description: "沿十七個章節理解購買流程、可靠事件、部署與日常維運。"
+description: "沿十七個主線章節理解購買、事件與部署，再深入資料庫容量專題。"
 group: "ecommerce"
 order: 0
 environment: "reading"
@@ -35,6 +35,8 @@ sources: [{"title": "Microsoft modern web application architecture", "url": "htt
 | 17 [日常維運](/projects/ecommerce/operations/) | 建立 SLO、還原與成本管理 | 設計與演練目標 |
 
 ## 先單體，再依責任擴展
+
+主線之外的[資料庫容量專題](/projects/ecommerce/database-capacity/)比較 C# 連接 MySQL／PostgreSQL、高併發 CRUD、上億筆資料與雲端擴容。可從商品 API、訂單與庫存、多副本或維運章節接入，不改變主線順序。
 
 最初使用模組化後端與獨立通知工作程序即可。商品、訂單、付款有各自規則，但不必立即各開一個服務。只有出現不同的一致性、容量、團隊或部署需求時，再評估切分；服務拆分也會增加契約、網路與故障成本。
 

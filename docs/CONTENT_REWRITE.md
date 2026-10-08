@@ -55,3 +55,12 @@ Docker 基底以已核對的多架構 manifest digest 固定，與主機 `global
 - [既有 Redis／RabbitMQ 整合與驗證](REDIS_RABBITMQ_INTEGRATION.md)
 
 新增文章沿用 `src/content.config.ts` 的 schema，避免移動已發布檔名。導讀、電商章節與指南位於 `src/content/handbook/`，各篇維護來源、環境與驗證範圍。後續補實作時，同步更新範例、指南與本紀錄的驗證結果；文件核對不能替代實際執行證據。
+
+
+## 2026-10-09 資料庫容量延伸
+
+新增 MySQL／PostgreSQL 與 C# 連線、高併發 CRUD、大表查詢、批次、分割、複寫和容量驗證共 11 篇技術文章。資料存取增至 20 篇，網站技術文章共 112 篇；第三份知識地圖有 8 個領域，另有第 7 條路徑、電商資料庫專題與獨立驗證指南。原有 .NET 十領域與優先級、雲端九領域及十七個主線章節保留。
+
+本次 `pnpm check` 通過，建置有 171 個頁面、141 篇搜尋內容與完整 PWA。新增 C# 專案以 .NET SDK 10.0.105 編譯並完成離線設定解析，三段文章程式與來源一致；未連線測試資料庫、執行 CRUD、一億列壓測或雲端恢復。瀏覽器確認地圖→文章→指南、MySQL／PostgreSQL 搜尋、版本更新與手機閱讀。
+
+詳細架構與驗證邊界見 [資料庫容量紀錄](DATABASE_SCALE_KNOWLEDGE_ARCHITECTURE.md)。本次沒有更改既有實驗資料庫 schema、基礎設施程式、Node 依賴或公開部署。

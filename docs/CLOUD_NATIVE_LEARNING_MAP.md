@@ -2,9 +2,9 @@
 
 | 項目 | 內容 |
 | --- | --- |
-| 版本 | 0.1 |
-| 日期 | 2026-10-08（Asia/Taipei） |
-| 狀態 | 待討論的內容規劃；尚未建立 K8s／GKE 範例或雲端環境 |
+| 版本 | 0.2 |
+| 日期 | 2026-10-09（Asia/Taipei） |
+| 狀態 | 已提供技術文章、指南與獨立部署宣告；尚未建立 kind／GKE 或雲端資料庫 |
 | 目的 | 用同一個 .NET 電商案例學會容器、編排、雲端整合、交付與維運，也提供可獨立查閱的知識文章 |
 | 整體架構 | [DevWiki 全面知識架構](E_COMMERCE_KNOWLEDGE_ARCHITECTURE.md) |
 | 應用先備 | [C#／.NET 深入學習地圖](CSHARP_DOTNET_LEARNING_MAP.md)，原有十個領域與 P0／P1 維持原定義 |
@@ -98,6 +98,8 @@
 - RabbitMQ 起步先選一個可存取的 broker 端點；深入篇再比較代管 RabbitMQ 與 GKE 中的 Cluster Operator、StatefulSet、儲存及維運。[RabbitMQ Kubernetes Cluster Operator](https://www.rabbitmq.com/kubernetes/operator/operator-overview)。
 - Google Pub/Sub 可作後續訊息服務比較，另說明模型、契約與處理語意；共同案例的 RabbitMQ 知識仍完整保留。
 - 商品圖片若擴充，再加入 Cloud Storage；Secret Manager 則用於設定供應與身分整合的深入篇。
+
+2026-10-09 延伸至 MySQL／PostgreSQL 選擇與全部程序的連線預算，見 [資料庫容量架構](DATABASE_SCALE_KNOWLEDGE_ARCHITECTURE.md)。C09 以到達量、借池、SQL、鎖與恢復證據核對 HPA；更新與終止中 Pod 的連線也計入，不能只用名目副本數。
 
 ### C08 自動化交付與 IaC
 

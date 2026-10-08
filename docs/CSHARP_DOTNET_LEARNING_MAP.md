@@ -2,17 +2,17 @@
 
 | 項目 | 內容 |
 | --- | --- |
-| 版本 | 0.2 |
-| 日期 | 2026-10-08（Asia/Taipei） |
-| 狀態 | 待討論的內容規劃與涵蓋檢查 |
+| 版本 | 0.3 |
+| 日期 | 2026-10-09（Asia/Taipei） |
+| 狀態 | 十領域已加入網站；原定 P0／P1 保留，實際驗證另列 |
 | 來源 | 使用者提供的十個領域與 P0／P1 優先級 |
-| 現況 | 8 個技術主題、63 篇文章；本文件逐項確認基礎涵蓋與深入缺口 |
+| 現況 | 12 個主題、112 篇文章；新增資料庫容量專題的八個深入領域 |
 | 整體架構 | [DevWiki 全面知識架構](E_COMMERCE_KNOWLEDGE_ARCHITECTURE.md) |
 | 部署與維運 | [Docker、Kubernetes 與 GKE 知識地圖](CLOUD_NATIVE_LEARNING_MAP.md) |
 
 ## 1. 在 Wiki 中的角色
 
-這份地圖是語言、框架、Runtime 與後端工程的完整學習入口。電商專題依功能引用它；目前八個技術主題繼續作為文章的主要歸檔方式。
+這份地圖是語言、框架、Runtime 與後端工程的完整學習入口。電商專題依功能引用它；目前十二個技術主題繼續作為文章的主要歸檔方式。
 
 ```text
 C#／.NET 知識地圖：按領域與深度學習
@@ -142,6 +142,8 @@ MVC Filter 需放在 action invocation pipeline 的背景中說明，再與 Midd
 - 主要既有文章：`csharp-linq`、`csharp-query-abstractions`、`data-access-ef-core`、`data-access-transactions`、`data-access-pools-locks`、`data-access-migrations`。
 
 Concurrency 新篇需提供可重現的衝突，明確說明 concurrency token、衝突結果與處理選擇，並記錄實際資料庫供應商。[EF Core 並行控制](https://learn.microsoft.com/en-us/ef/core/saving/concurrency)。
+
+2026-10-09 加入 [C# 與 MySQL／PostgreSQL 資料庫架構](DATABASE_SCALE_KNOWLEDGE_ARCHITECTURE.md)：D07 深入 driver、CRUD、隔離與大表查詢；D08 管理全程序連線池與故障；D09 量測工作量及等待。SQL 與 schema 的實際驗證依文章標示，未宣稱已完成上億列測試。
 
 ### D08 Infrastructure（P1）
 

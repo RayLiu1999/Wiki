@@ -5,7 +5,7 @@ group: "ecommerce"
 order: 17
 environment: "reading"
 verification: "電商設計案例；具體的跟做環境與已驗證範圍見實作指南。"
-linkedArticles: ["engineering-slo-alerts", "engineering-recovery-cost", "engineering-metrics-tracing", "kubernetes-autoscaling"]
+linkedArticles: ["engineering-slo-alerts", "engineering-recovery-cost", "engineering-metrics-tracing", "kubernetes-autoscaling", "data-access-replication-recovery", "data-access-load-validation"]
 prerequisites: ["ecommerce/delivery"]
 sources: [{"title": "SRE objectives", "url": "https://sre.google/sre-book/service-level-objectives/"}, {"title": "Cloud recovery planning", "url": "https://docs.cloud.google.com/architecture/dr-scenarios-planning-guide"}, {"title": "Budgets", "url": "https://docs.cloud.google.com/billing/docs/how-to/budgets"}]
 ---
@@ -33,3 +33,7 @@ sources: [{"title": "SRE objectives", "url": "https://sre.google/sre-book/servic
 追蹤運算、負載平衡、資料庫、磁碟、網路和觀測保存成本。alerts-only 預算是通知；適用範圍內的 spend cap 預算則另有觸發與服務暫停機制，需按實際方案核對。
 
 學習環境結束後，按清單確認叢集、IP、負載平衡器、磁碟、Registry 與外部服務，保留需要的資料並驗證清理結果。日常營運把這些動作與權責放進同一份 runbook。
+
+## 資料庫延伸
+
+資料庫的讀副本延遲、未知提交與時間點恢復，延伸至[讀副本與復原](/data-access/replication-recovery/)；容量和長期維護結果依[驗證指南](/practice/ecommerce/database-validation/)保存證據。

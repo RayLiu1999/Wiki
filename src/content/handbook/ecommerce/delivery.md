@@ -5,7 +5,7 @@ group: "ecommerce"
 order: 16
 environment: "reading"
 verification: "電商設計案例；具體的跟做環境與已驗證範圍見實作指南。"
-linkedArticles: ["engineering-ci-cd", "engineering-iac", "data-access-migrations", "dotnet-sdk-packages"]
+linkedArticles: ["engineering-ci-cd", "engineering-iac", "data-access-migrations", "dotnet-sdk-packages", "data-access-bulk-retention"]
 prerequisites: ["ecommerce/scaling"]
 sources: [{"title": "EF production migrations", "url": "https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/applying"}, {"title": "Deployment pipeline federation", "url": "https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines"}]
 ---
@@ -33,3 +33,7 @@ rollout 完成後檢查商品查詢、合法訂單提交、背景結果、錯誤
 ## 本站目前的交付範圍
 
 現有 CI 檢查 Wiki、C#範例和快取／訊息實驗。GKE 電商 pipeline 是本章設計目標，沒有自動發布或建立雲端基礎設施。[CI/CD 技術篇](/engineering/ci-cd/)和[IaC 技術篇](/engineering/iac/)說明工具責任與 review 依據。
+
+## 資料庫延伸
+
+上億列上的回填、索引與結構更新另見[大量寫入與保留](/data-access/bulk-retention/)；online DDL 仍需檢查鎖、磁碟與失敗處理。

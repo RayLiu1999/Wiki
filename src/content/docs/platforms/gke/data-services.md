@@ -9,10 +9,10 @@ tags: ["GKE 與 PostgreSQL、Redis、RabbitMQ 整合", "gke"]
 difficulty: "intermediate"
 learningDepth: "deep"
 prerequisites: ["gke-workload-identity", "data-access-pools-locks"]
-relatedArticles: ["redis-reliability", "rabbitmq-acknowledgements", "kubernetes-storage"]
+relatedArticles: ["redis-reliability", "rabbitmq-acknowledgements", "kubernetes-storage", "data-access-mysql-dotnet", "data-access-postgresql-dotnet", "data-access-pool-capacity", "data-access-replication-recovery"]
 applicableVersions: "依 2026-10-08 的 Google Cloud／Kubernetes 官方文件核對；可用功能、地區與費率以實際平台為準。"
 verifiedWith: "已核對官方概念與責任範圍；未建立 GCP 資源、執行正式部署或量測雲端成本。"
-lastReviewed: "2026-10-08"
+lastReviewed: "2026-10-09"
 takeaway: "逐層核對外部端點、IAM、服務登入、連線池與恢復責任。"
 noteDates: []
 sources: [{"title": "Cloud SQL from GKE", "url": "https://docs.cloud.google.com/sql/docs/postgres/connect-kubernetes-engine"}, {"title": "Cloud SQL Auth Proxy", "url": "https://docs.cloud.google.com/sql/docs/postgres/sql-proxy"}, {"title": "RabbitMQ operators", "url": "https://www.rabbitmq.com/kubernetes/operator/operator-overview"}]
@@ -49,3 +49,7 @@ RabbitMQ 需要核對 TLS、vhost、Publisher Confirm、Consumer Ack、耐久拓
 先用一組明確端點承載商品查詢與訂單通知，驗證正常連線、相依服務停止與恢復。接著演練憑證輪替、連線上限、Worker 停止與重送，再評估多副本或跨區能力。
 
 目前本機實驗使用單節點 PostgreSQL／Redis／RabbitMQ，未驗證上述雲端整合。遷移時還需要把 Outbox 工作領取和 SIGTERM 收尾納入測試，不能只替換連線字串就宣稱完成正式部署。
+
+## MySQL 與整體容量
+
+本篇沿既有 PostgreSQL 實驗說明。若選 Cloud SQL MySQL，仍分開核對雲端連線、資料庫登入與 MySqlConnector；從[資料庫地圖](/knowledge-maps/database-scale/)比較兩套 driver 的設定。所有 Pod、Worker 與 rollout 的池總量見[池容量](/data-access/pool-capacity/)，副本延遲與恢復目標見[複寫與復原](/data-access/replication-recovery/)。本次沒有建立新的雲端資料庫。

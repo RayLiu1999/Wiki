@@ -9,10 +9,10 @@ tags: ["HPA、佇列容量與多副本限制", "kubernetes"]
 difficulty: "intermediate"
 learningDepth: "deep"
 prerequisites: ["kubernetes-probes-resources", "architecture-outbox-inbox"]
-relatedArticles: ["data-access-pools-locks", "rabbitmq-retries-idempotency"]
+relatedArticles: ["data-access-pools-locks", "rabbitmq-retries-idempotency", "data-access-pool-capacity", "data-access-load-validation"]
 applicableVersions: "以 Kubernetes 現行核心 API 與 Docker 容器模型說明；GKE 限制另見平台文章。"
 verifiedWith: "已核對 Kubernetes／Docker 官方概念；叢集操作與環境驗證狀態見獨立實作指南。"
-lastReviewed: "2026-10-08"
+lastReviewed: "2026-10-09"
 takeaway: "分清 Pod 擴縮、Node 容量、訊息並行與資料庫連線壓力。"
 noteDates: []
 sources: [{"title": "HPA", "url": "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/"}, {"title": "KEDA concepts", "url": "https://keda.sh/docs/latest/concepts/"}, {"title": "GKE cluster autoscaler", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/cluster-autoscaler"}]
@@ -46,3 +46,7 @@ Outbox 發布器需要跨程序的工作領取協定，例如交易內 claim、�
 ## 池與觀察窗口
 
 最大可能連線數，要包含每個 API／Worker 的各個池、rolling update 額外副本、migration 與管理工具。HPA 上限需符合這個總預算。用不同流量階段觀察增加與縮減，確認縮容時正在處理的工作如何收尾，再決定穩定窗口與最大副本數。
+
+## 把資料庫預算接到最大副本數
+
+參考[池容量](/data-access/pool-capacity/)列出程序與每池上限，包括更新時新舊 Pod 和工具；再用[容量驗證](/data-access/load-validation/)核對借池等待、SQL、鎖與故障回源。HPA 能增加應用執行者，資料庫同時處理能力需另外證明。
