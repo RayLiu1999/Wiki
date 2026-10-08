@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "測試應確認使用者需要的資料與結果；重送、回滾、服務停止與重啟要用真實邊界驗證。"
 noteDates: []
 sources: [{"title":"Microsoft Learn：測試策略","url":"https://learn.microsoft.com/en-us/ef/core/testing/choosing-a-testing-strategy"},{"title":"RabbitMQ：Reliability","url":"https://www.rabbitmq.com/docs/reliability"},{"title":"Redis：Persistence","url":"https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/"},{"title":"Microsoft Learn：分散式追蹤","url":"https://learn.microsoft.com/en-us/dotnet/core/diagnostics/distributed-tracing-instrumentation-walkthroughs"},{"title":"OpenTelemetry：.NET Instrumentation","url":"https://opentelemetry.io/docs/languages/dotnet/instrumentation/"}]
+learningDepth: "deep"
 ---
+
+快取、交易與 Broker 各有真實失敗窗口，驗證要跨過對應邊界。商品結果和通知唯一性是核心證據，恢復測試應說明如何製造故障與最後看見什麼。
 
 ## 測試保護什麼結果
 
@@ -25,13 +28,11 @@ sources: [{"title":"Microsoft Learn：測試策略","url":"https://learn.microso
 
 ## 使用與範例相同的實際引擎
 
-pnpm test:infrastructure 啟動唯一 Compose project、隨機本機 port 與全新的 volume，使用 Redis 8.2.10、RabbitMQ 4.3.6 與 PostgreSQL 18.6。程式結束後只清理自己建立的測試容器與 volume。
+隔離整合檢查啟動唯一 Compose project、隨機本機 port 與全新的 volume，使用 Redis 8.2.10、RabbitMQ 4.3.6 與 PostgreSQL 18.6。程式結束後只清理自己建立的測試容器與 volume。
 
 此處採用 Compose 管理容器生命週期，沿用專案既有工具；資料庫仍使用範例的 PostgreSQL 引擎，沒有用替身或 SQLite 推論真實約束、交易與佇列語意。測試有總期限與條件輪詢，不依賴很長的固定 sleep。
 
-~~~sh
-pnpm test:infrastructure
-~~~
+完整啟動與預期結果見[故障驗證指南](/practice/ecommerce/failure-drills/)。
 
 首次執行需要網路下載映像與 NuGet 套件。固定版本與 packages.lock.json 支援後續重現；Docker socket 的存取依主機設定而定。
 
@@ -46,7 +47,7 @@ pnpm test:infrastructure
 | Consumer 效果寫入失敗 | Inbox 也回滾，修復後可以重送 |
 | 相同事件並行／Ack 前中斷 | 通知結果只有一筆 |
 | 暫時失敗、達重試上限、毒訊息 | 分別恢復成功、進入死信、直接隔離 |
-| Broker 無法路由／重新啟動 | 發布失敗可被觀察；耐久工作重啟後可繼續 |
+| Broker 無法路由／重新啟動 | 發布失敗可被觀察；耐久工作重新啟動後可繼續 |
 | Schema metadata | 每張表與每個欄位的說明真的存在於 PostgreSQL |
 
 HTTP 驗證另外核對不存在商品、非法件數、金額格式與建立訂單後的狀態查詢。測試直接斷言資料庫結果與訊息內容，而非只確認連線成功。
@@ -63,4 +64,10 @@ ActivitySource 與 Meter 是 instrumentation 入口；需要 listener 或 OpenTe
 
 ready 增加時，先確認 Consumer 數量與處理速度；unacked 高時，檢查慢查詢、外部等待、Prefetch 與漏 Ack；死信增加時，分開看契約錯誤與持續服務故障；Outbox 變舊時，檢查發布器、路由與 Confirm。
 
-Redis 失效與回源飆高時，核對過期、淘汰、記憶體與網路錯误，再查看資料庫容量。單一節點的正常停止與重啟不涵蓋多節點選主、磁碟毀損、網路分割、實際郵件效果或正式環境的高可用性。
+Redis 失效與回源飆高時，核對過期、淘汰、記憶體與網路錯誤，再查看資料庫容量。單一節點的正常停止與重啟不涵蓋多節點選主、磁碟毀損、網路分割、實際郵件效果或正式環境的高可用性。
+
+## 套用到電商情境
+
+將 Redis 停止、Outbox 寫入失敗、Ack 前中斷和持續失敗列成獨立用例，觀察資料與訊息結果。單節點容器重啟只有有限恢復證據；跨區、正式流量、Collector 與真實郵件需各自驗證。完整啟動與檢查命令移到實作指南。
+
+[閱讀對應的電商章節](/projects/ecommerce/testing-observability/)，把本篇概念接到整個用例。

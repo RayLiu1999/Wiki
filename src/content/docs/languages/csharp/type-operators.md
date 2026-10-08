@@ -11,11 +11,14 @@ prerequisites: ["csharp-variables", "csharp-classes"]
 relatedArticles: ["csharp-collections", "aspnet-core-api-styles-aot"]
 applicableVersions: "以 .NET 10 / C# 14 核對；個別語法與 API 的最低版本見內文。"
 verifiedWith: ".NET SDK 10.0.105 / net10.0 / C# 14；完整 Program.cs 已納入編譯與輸出驗證。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "typeof 看指定型別，GetType 看執行時物件；nameof 產生名稱，不是反射查詢。"
 noteDates: ["2026-05-21", "2026-05-25", "2026-06-03"]
 sources: [{"title": "Microsoft Learn：型別運算子", "url": "https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/operators/type-testing-and-cast"}, {"title": "Microsoft Learn：nameof", "url": "https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/operators/nameof"}, {"title": "Microsoft Learn：sizeof", "url": "https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/operators/sizeof"}]
+learningDepth: "deep"
 ---
+
+typeof 取得型別資訊，nameof 取得程式符號名稱，default 取得型別預設值。它們常出現在框架註冊、錯誤訊息與泛型程式中，但各自回答不同問題。
 
 ## 用途不同，別互相代替
 
@@ -58,3 +61,9 @@ True
 `GetType()` 對 null 呼叫會失敗；`typeof` 不需要先建立實例。`default` 不代表商業上有效，例如訂單數量 0 可能不合法。`sizeof` 用於特定內建型別可以在安全程式碼使用；其他 unmanaged 型別的情況可能需要 unsafe，不能用它估算 class 及其子物件的大小。
 
 動態反射與組件掃描牽涉 trimming、Native AOT 的可達性分析；不是所有 `typeof` 或 `nameof` 的使用都會造成 AOT 問題。
+
+## 套用到電商情境
+
+商品驗證錯誤可以用 nameof 指出成員；DI 或反射可能使用 typeof。default(decimal) 是 0，default(參考型別) 常是 null，這些值未必是合法商品或訂單狀態。泛型保留型別能力，也仍需要業務驗證。
+
+[閱讀對應的電商章節](/projects/ecommerce/catalog/)，把本篇概念接到整個用例。

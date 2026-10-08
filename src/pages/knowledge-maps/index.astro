@@ -1,0 +1,10 @@
+---
+import SiteLayout from '../../layouts/SiteLayout.astro';
+import Icon from '../../components/Icon.astro';
+import { knowledgeMaps, knowledgeMapUrl } from '../../lib/knowledge-maps';
+---
+<SiteLayout title="知識地圖">
+  <section class="page-intro"><p class="eyebrow">按領域深入</p><h1>從程式，到系統的完整輪廓。</h1><p>用兩份知識地圖找先備與深入方向，再把同一份知識接回電商案例。</p></section>
+  <div class="path-options">{knowledgeMaps.map((map) => <a class="knowledge-card" href={knowledgeMapUrl(map.id)}><p class="eyebrow">{map.domains.length} 個領域</p><h2>{map.title}</h2><p>{map.description}</p><span class="text-link">閱讀地圖<Icon name="arrow" size={17} /></span></a>)}</div>
+  <section class="home-note"><Icon name="book" /><p>第一次接觸 C#，先走 <a href="/learning-paths/csharp-beginner/">C# 入門</a>；想理解全流程，從 <a href="/projects/ecommerce/">電商案例總覽</a> 開始。</p></section>
+</SiteLayout>

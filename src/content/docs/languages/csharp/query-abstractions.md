@@ -11,11 +11,14 @@ prerequisites: ["csharp-collections", "csharp-linq", "csharp-async-await"]
 relatedArticles: ["data-access-ef-core", "aspnet-core-http-resilience"]
 applicableVersions: "以 .NET 10 / C# 14 核對；個別語法與 API 的最低版本見內文。"
 verifiedWith: ".NET SDK 10.0.105 / net10.0 / C# 14；完整 Program.cs 已納入編譯與輸出驗證。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "查詢寫成 LINQ 不代表一定在資料庫執行；先確認 provider 與實體化的位置。"
 noteDates: ["2026-06-04", "2026-10-06"]
 sources: [{"title": "Microsoft Learn：IQueryable<T>", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.linq.iqueryable-1?view=net-10.0"}, {"title": "Microsoft Learn：非同步串流", "url": "https://learn.microsoft.com/en-us/dotnet/csharp/asynchronous-programming/generate-consume-asynchronous-stream"}, {"title": "Microsoft Learn：EF Core 用戶端與伺服器評估", "url": "https://learn.microsoft.com/en-us/ef/core/querying/client-eval"}]
+learningDepth: "deep"
 ---
+
+IEnumerable、IQueryable 與 IAsyncEnumerable 表達不同的讀取契約。商品結果究竟是可列舉資料、可繼續組合的查詢，或逐筆非同步產生，會影響執行位置與資源生命週期。
 
 ## 三種介面，三種能力
 
@@ -62,3 +65,9 @@ static async IAsyncEnumerable<int> ReadAsync(
 ## 常見錯誤
 
 過早 ToList 再 Where，可能先載入大量資料。自訂 C# 方法也不一定能翻成 SQL；現代 EF Core 對非頂層投影中無法翻譯的表達式通常會丟例外。應查看產生的 SQL 與實際執行計畫。
+
+## 套用到電商情境
+
+查商品時，把需要的篩選與投影留在可轉譯查詢中；大量資料可依用例分頁或逐筆讀取。非同步列舉期間資源可能仍被佔用，取消和 disposal 要沿整段列舉管理。傳出 IQueryable 也會讓呼叫端影響查詢邊界。
+
+[閱讀對應的電商章節](/projects/ecommerce/product-api/)，把本篇概念接到整個用例。

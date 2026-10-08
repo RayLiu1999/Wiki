@@ -16,6 +16,7 @@ export const topics = {
   architecture: { name: '架構設計', path: 'architecture', mark: 'DDD', icon: 'box', description: '用領域模型、分層與應用程式模式，把商業規則放在清楚的邊界內。', categories: [
     { id: 'domain-design', name: '領域與分層', description: 'Entity、Value Object、Aggregate 與依賴方向' },
     { id: 'application-patterns', name: '應用程式模式', description: 'Repository、Unit of Work、CQRS 與 Handler' },
+    { id: 'object-patterns', name: '建立與組合', description: 'Factory、Builder、Strategy、Decorator 與橫切行為' },
   ] },
   'data-access': { name: '資料存取', path: 'data-access', mark: 'Data', icon: 'list', description: '看懂 EF Core、Dapper、交易、連線池與資料庫鎖各自負責的層級。', categories: [
     { id: 'querying', name: '模型與查詢', description: 'EF Core、LINQ 翻譯與型別對應' },
@@ -32,14 +33,33 @@ export const topics = {
     { id: 'rabbitmq-integration', name: '.NET 整合', description: 'Connection、Channel、Worker 與傳遞確認' },
     { id: 'rabbitmq-reliability', name: '可靠性與維運', description: '冪等、重試、死信、佇列類型與順序' },
   ] },
-  dotnet: { name: '.NET 執行環境', path: 'platforms/dotnet', mark: '.NET', icon: 'layers', description: '整理 SDK、NuGet、Hosting、時間與識別碼，讓開發與部署有一致的基準。', categories: [
+  containers: { name: '容器與 Docker', path: 'infrastructure/containers', mark: 'Docker', icon: 'box', description: '理解映像、程序、設定與網路，將 .NET API 和 Worker 放進可重現的執行環境。', categories: [
+    { id: 'container-basics', name: '映像與執行', description: 'Dockerfile、multi-stage、程序與停止訊號' },
+    { id: 'container-environments', name: '多程序環境', description: 'Compose、網路、設定與資料保留' },
+  ] },
+  networking: { name: '網路與協定', path: 'infrastructure/networking', mark: 'Net', icon: 'network', description: '沿著請求辨識 DNS、TCP、TLS、HTTP、路由與服務認證的責任。', categories: [
+    { id: 'network-foundations', name: '請求與連線', description: 'IP、Port、DNS、TLS、L4／L7 與 VPC' },
+  ] },
+  kubernetes: { name: 'Kubernetes', path: 'platforms/kubernetes', mark: 'K8s', icon: 'layers', description: '從期望狀態到部署、流量、探針、資源及擴縮，理解編排平台的工作方式。', categories: [
+    { id: 'k8s-workloads', name: '模型與工作負載', description: 'Pod、Deployment、控制器與服務探索' },
+    { id: 'k8s-configuration', name: '設定與安全', description: 'ConfigMap、Secret、ServiceAccount 與 RBAC' },
+    { id: 'k8s-reliability', name: '資源與可靠性', description: '探針、停止、儲存、更新與擴縮' },
+  ] },
+  gke: { name: 'GCP 與 GKE', path: 'platforms/gke', mark: 'GKE', icon: 'network', description: '把 Kubernetes 接到 Google Cloud 的身分、網路、映像及資料服務，學會部署與管理邊界。', categories: [
+    { id: 'gke-platform', name: '平台與身分', description: 'Project、Autopilot／Standard、IAM 與工作負載身分' },
+    { id: 'gke-integration', name: '網路與資料', description: 'Gateway、TLS、Cloud SQL 與依賴端點' },
+  ] },
+  dotnet: { name: '.NET 執行環境', path: 'platforms/dotnet', mark: '.NET', icon: 'layers', description: '從 SDK 與 Hosting 深入 CLR、GC、ThreadPool 和效能診斷，理解程式如何執行與管理資源。', categories: [
     { id: 'toolchain', name: 'SDK 與套件', description: 'global.json、NuGet 與集中版本管理' },
     { id: 'runtime-models', name: 'Hosting 模型', description: 'Generic Host、Minimal Hosting 與 Startup' },
     { id: 'time-identifiers', name: '時間與識別碼', description: 'UTC、時區與分散式 ID' },
+    { id: 'runtime-performance', name: 'Runtime 與效能', description: 'CLR、JIT、GC、ThreadPool、記憶體與 Profiling' },
   ] },
-  engineering: { name: '測試與觀測', path: 'engineering', mark: 'Ops', icon: 'spark', description: '從商業行為測試到指標與分散式追蹤，建立可驗證、可診斷的系統。', categories: [
+  engineering: { name: '工程實務', path: 'engineering', mark: 'Ops', icon: 'spark', description: '把行為測試、觀測、版本交付、服務目標與恢復串起來，管理系統完整生命週期。', categories: [
     { id: 'testing', name: '行為測試', description: 'xUnit、NSubstitute 與測試邊界' },
     { id: 'observability', name: '指標與追蹤', description: 'Runtime 指標、OpenTelemetry 與 W3C Trace Context' },
+    { id: 'delivery', name: '交付與環境', description: 'CI/CD、IaC、映像與資料相容更新' },
+    { id: 'operations', name: '服務與維運', description: 'SLO、告警、恢復、版本與成本' },
   ] },
 } as const;
 

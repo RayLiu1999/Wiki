@@ -11,11 +11,14 @@ prerequisites: ["csharp-methods", "csharp-value-reference-types"]
 relatedArticles: ["csharp-nullable", "csharp-type-operators"]
 applicableVersions: "以 .NET 10 / C# 14 核對；個別語法與 API 的最低版本見內文。"
 verifiedWith: ".NET SDK 10.0.105 / net10.0 / C# 14；完整 Program.cs 已納入編譯與輸出驗證。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "傳入物件參考的副本，與讓參數成為呼叫端變數的別名，是兩件事。"
 noteDates: ["2026-06-04", "2026-06-25"]
 sources: [{"title": "Microsoft Learn：方法參數", "url": "https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/method-parameters"}]
+learningDepth: "deep"
 ---
+
+方法預設傳遞的是值；out、ref、in 改變參數與呼叫端變數的關係。讀懂這些語法，才能辨識解析是否產生輸出、是否可改寫原變數，以及是否只是提供唯讀參考。
 
 ## 先看呼叫端的變數會不會被改寫
 
@@ -25,7 +28,7 @@ sources: [{"title": "Microsoft Learn：方法參數", "url": "https://learn.micr
 | --- | --- | --- |
 | 一般參數 | 是 | 使用值或參考的副本 |
 | `ref` | 是 | 讀取並改寫呼叫端變數 |
-| `out` | 否 | 每條正常返回路徑都必須指定結果 |
+| `out` | 否 | 每條正常返迴路徑都必須指定結果 |
 | `in` | 是 | 以唯讀參考使用；不能重新指定參數 |
 
 ## 一個輸入、一個輸出
@@ -57,3 +60,9 @@ static void Show(in int value) => Console.WriteLine(value);
 `ref` 是受語言規則約束的變數別名，不提供一般指標運算。`in` 也不是深層不可變：若參數是參考型別，仍可能修改該物件的可變成員。
 
 `in` 常用於較大的 struct，但編譯器可能產生暫存值或防禦性複製，需量測後再宣稱效能收益。`async` 方法不能宣告 `ref`、`out`、`in` 參數；多個非同步結果可以使用 tuple 或結果型別。
+
+## 套用到電商情境
+
+數量解析可以用 TryParse 的 bool 加 out 結果，讓輸入失敗明確。商品 class 即使按值傳遞，仍可能透過共用參考修改物件；in 也不是深度不可變。業務用例常用明確回傳型別表達結果，避免讓 ref 隱藏大量副作用。
+
+[閱讀對應的電商章節](/projects/ecommerce/product-api/)，把本篇概念接到整個用例。

@@ -1,6 +1,6 @@
 ---
 title: "global.json、NuGet 與中央版本管理"
-description: "分清 SDK 選擇、目標框架與套件來源，讓本機及 CI 使用一致的工具與依賴。"
+description: "分清 SDK 選擇、目標框架與套件來源，讓本機及 CI 使用一致的工具與相依。"
 articleId: "dotnet-sdk-packages"
 topic: "dotnet"
 category: "toolchain"
@@ -11,11 +11,14 @@ prerequisites: ["csharp-getting-started"]
 relatedArticles: ["dotnet-hosting", "data-access-migrations", "aspnet-core-api-styles-aot"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "global.json 選 SDK，TargetFramework 選目標框架；中央套件版本與來源設定再處理另一層問題。"
 noteDates: ["2026-06-08", "2026-07-08", "2026-08-07"]
 sources: [{"title": "Microsoft Learn：global.json", "url": "https://learn.microsoft.com/en-us/dotnet/core/tools/global-json"}, {"title": "NuGet：nuget.config", "url": "https://learn.microsoft.com/en-us/nuget/reference/nuget-config-file"}, {"title": "NuGet：Central Package Management", "url": "https://learn.microsoft.com/en-us/nuget/consume-packages/central-package-management"}]
+learningDepth: "deep"
 ---
+
+程式使用哪個 SDK 建置、以哪個 target framework 執行、還原哪些套件，是不同的版本決策。固定工具與相依來源，可以讓電商 API 和 Worker 的產物更容易重現。
 
 ## SDK 不是應用程式目標框架
 
@@ -55,4 +58,10 @@ nuget.config 可能由多個層級合併。packageSources 內的 `<clear />` 清
 
 Directory.Packages.props 啟用 ManagePackageVersionsCentrally，並以 PackageVersion 宣告版本；各 csproj 的 PackageReference 通常只寫 Include。預設套用最近的中央檔案，巢狀目錄不會自動合併每個檔案。
 
-CPM 集中版本，lock file 固定解析結果，CI locked restore 檢查依賴可重現性，三者用途不同。變更 SDK、來源或中央版本後，應一起驗證 restore、build、test 與實際發布。
+CPM 集中版本，lock file 固定解析結果，CI locked restore 檢查相依可重現性，三者用途不同。變更 SDK、來源或中央版本後，應一起驗證 restore、build、test 與實際發布。
+
+## 套用到電商情境
+
+API 與 Worker 共用契約套件時，固定 SDK 規則、套件來源與 lock，再記錄建出的映像 digest。更新版本要核對編譯、資料格式與整合結果；全機安裝新 SDK 不表示專案自動變成新 target framework。
+
+[閱讀對應的電商章節](/projects/ecommerce/delivery/)，把本篇概念接到整個用例。

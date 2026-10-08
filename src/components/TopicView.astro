@@ -9,11 +9,13 @@ const { topicId } = Astro.props;
 const topic = topicFor(topicId)!;
 const articles: Article[] = await getArticles(topicId);
 const pathId = topicId === 'csharp' ? 'csharp-beginner'
-  : ['redis', 'rabbitmq'].includes(topicId) ? 'dotnet-cache-messaging' : 'dotnet-backend-practice';
+  : ['redis', 'rabbitmq'].includes(topicId) ? 'dotnet-cache-messaging'
+  : ['containers', 'networking', 'kubernetes'].includes(topicId) ? 'cloud-native-foundations'
+  : topicId === 'gke' ? 'gke-delivery-operations' : 'dotnet-backend-practice';
 ---
 <section class="page-intro">
   <p class="eyebrow"><a href="/topics/">知識主題</a> / {topic.name}</p>
-  <div class="topic-heading"><span class:list={['cs-mark', { 'wide-mark': topicId !== 'csharp' }]}>{topic.mark}</span><h1>{topic.name} 知識地圖</h1></div>
+  <div class="topic-heading"><span class:list={['cs-mark', { 'wide-mark': topicId !== 'csharp' }]}>{topic.mark}</span><h1>{topic.name} 文章</h1></div>
   <p>{topic.description}</p>
   <div class="topic-meta"><span>{articles.length} 篇文章</span><span>·</span><span>{topic.categories.length} 個分類</span><span>·</span><a href={learningPathUrl(pathId)}>查看學習路徑 <Icon name="arrow" size={14} /></a></div>
 </section>

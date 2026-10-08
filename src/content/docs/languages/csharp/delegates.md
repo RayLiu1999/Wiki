@@ -11,14 +11,17 @@ prerequisites: [csharp-methods, csharp-interfaces]
 relatedArticles: [csharp-linq]
 applicableVersions: 委派與 Lambda 概念通用；完整範例使用 C# 9 以上並啟用 nullable。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14 / Nullable enabled
-lastReviewed: 2026-10-07
+lastReviewed: "2026-10-08"
 takeaway: 委派描述可呼叫的行為，Lambda 是簡潔的寫法，事件控制通知的發布與訂閱。
 sources:
   - title: Microsoft Learn：委派
     url: https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/delegates/
   - title: Microsoft Learn：事件
     url: https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/events/
+learningDepth: "basic"
 ---
+
+委派可以將函式當成資料傳遞，Lambda 提供簡短的函式表示，event 則限制事件的對外觸發方式。先理解一次程序內呼叫，再分清外部訊息事件的持久化需求。
 
 ## 把行為當成輸入
 
@@ -67,3 +70,9 @@ Lambda 可以使用外層變數，形成閉包。它使用的是捕捉到的變�
 - 長時間存在的發布者可能透過訂閱保留物件；不需要通知時應取消訂閱。
 - 若要取消某個匿名處理器的訂閱，先保留該委派實例。
 - 非同步回呼需要合適的委派型別；不要隨意把有回傳工作的程式塞入 <code>Action</code>。
+
+## 套用到電商情境
+
+運費計算可接受不同計算策略，狀態改變也可觸發程序內通知。C# event 不會保存尚未完成工作；程序關閉後，訂閱與資料都可能消失。需要可靠跨程序交付時，要另用 Outbox 與 Broker。
+
+[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。

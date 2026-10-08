@@ -11,12 +11,15 @@ prerequisites: [csharp-variables]
 relatedArticles: [csharp-methods, csharp-collections]
 applicableVersions: 概念通用；完整範例使用 C# 9 以上的頂層陳述式。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
-lastReviewed: 2026-10-07
+lastReviewed: "2026-10-08"
 takeaway: 條件決定是否執行，迴圈決定如何重複；先把停止條件想清楚。
 sources:
   - title: Microsoft Learn：迴圈陳述式
     url: https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/statements/iteration-statements
+learningDepth: "basic"
 ---
+
+程式依條件選擇路徑，也可以重複處理一批資料。商品是否上架、數量是否合法和明細總計，都是條件與迴圈會出現的位置；先用簡單計算理解流程順序。
 
 ## 讓程式做選擇
 
@@ -62,3 +65,9 @@ else
 - 使用索引時，最後一個位置通常是長度減一，不是長度本身。
 - <code>while</code> 的條件若永遠不變，可能形成無窮迴圈。
 - 列舉 <code>List&lt;T&gt;</code> 時增刪元素，通常會讓列舉失敗；先整理修改清單再處理。
+
+## 套用到電商情境
+
+檢查每筆購物車明細時，先區分格式錯誤、商品不存在和庫存不足，再決定整筆拒絕或提示修改。迴圈可以累加金額，但不能保證兩個買家同時操作庫存的正確性；跨程序競爭需要資料庫協定。
+
+[閱讀對應的電商章節](/projects/ecommerce/ordering-inventory/)，把本篇概念接到整個用例。

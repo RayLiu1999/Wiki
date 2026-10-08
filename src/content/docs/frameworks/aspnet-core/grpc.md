@@ -11,11 +11,14 @@ prerequisites: ["aspnet-core-http-client-factory", "csharp-async-await"]
 relatedArticles: ["aspnet-core-dapr", "engineering-metrics-tracing"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "HTTP/2 可在同一連線多工；只分配 TCP 連線不保證每個 RPC 均勻分配。"
 noteDates: ["2026-09-14", "2026-09-29"]
 sources: [{"title": "Microsoft Learn：gRPC client-side load balancing", "url": "https://learn.microsoft.com/en-us/aspnet/core/grpc/loadbalancing?view=aspnetcore-10.0"}, {"title": "Microsoft Learn：gRPC 效能", "url": "https://learn.microsoft.com/en-us/aspnet/core/grpc/performance?view=aspnetcore-10.0"}]
+learningDepth: "deep"
 ---
+
+gRPC 以明確服務契約執行 RPC，常使用 HTTP/2。多個呼叫可以共用連線，而負載分配可能發生在連線或個別 RPC 層，不能只憑「有多個 Pod」判斷分流效果。
 
 ## 連線與 RPC 不是同一層
 
@@ -49,3 +52,9 @@ var channel = GrpcChannel.ForAddress("dns:///orders.example.com:443",
 ## 每個呼叫仍有自己的生命週期
 
 傳遞 deadline 與 cancellation，記錄 RPC status、延遲及 retries。已建立的 streaming RPC 仍維持在同一端點，訊息不會逐筆 round-robin；更換端點或重試也需尊重操作的冪等性。
+
+## 套用到電商情境
+
+內部商品與庫存服務若使用 gRPC，需定義 deadline、取消、狀態與契約版本。重用 channel 也要確認服務發現和負載平衡機制；對外 HTTP 商品 API 與內部 RPC 可以並存，但不會因此得到跨服務交易。
+
+[閱讀對應的電商章節](/projects/ecommerce/gke/)，把本篇概念接到整個用例。

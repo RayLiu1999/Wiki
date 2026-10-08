@@ -11,12 +11,15 @@ prerequisites: [csharp-getting-started]
 relatedArticles: [csharp-value-reference-types, csharp-nullable]
 applicableVersions: 概念通用；完整範例使用 C# 9 以上的頂層陳述式。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
-lastReviewed: 2026-10-07
+lastReviewed: "2026-10-08"
 takeaway: var 只是讓編譯器推斷型別，變數仍然有固定的型別。
 sources:
   - title: Microsoft Learn：C# 型別系統
     url: https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/types/
+learningDepth: "basic"
 ---
+
+商品單價、數量和是否上架具有不同語意。C# 的型別決定允許哪些操作、可表示的範圍與轉換方式；選好型別，才能在計算前看見不合理的資料。
 
 ## 用型別表達資料
 
@@ -55,3 +58,9 @@ Console.WriteLine(total.ToString("0.00", CultureInfo.InvariantCulture));
 - 整數相除仍可能得到整數。若需要小數，先讓運算元具有合適的型別。
 - <code>double</code> 與 <code>decimal</code> 有不同的精度與運算特性，不宜任意混用。
 - 明確轉型不代表一定安全；也要考慮範圍、溢位與資料來源。
+
+## 套用到電商情境
+
+單價可用 decimal，數量可用 int，總金額依幣別、小數位與捨入政策計算。decimal 仍不會阻止負值或溢位；API 與領域要驗證範圍，資料庫型別也要匹配。片段中的小訂單用來展示計算，完整結帳另外處理成交快照與交易。
+
+[閱讀對應的電商章節](/projects/ecommerce/catalog/)，把本篇概念接到整個用例。

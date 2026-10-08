@@ -1,6 +1,7 @@
 ---
 import Icon from '../Icon.astro';
 import { categoryFor, levelLabel, topicFor, topicUrl } from '../../lib/catalog';
+import { depthLabels } from '../../lib/knowledge-maps';
 const { data } = Astro.locals.starlightRoute.entry;
 const category = categoryFor(data.category);
 const topic = topicFor(data.topic)!;
@@ -14,7 +15,7 @@ const topic = topicFor(data.topic)!;
   <span class="sr-only" aria-hidden="true" data-pagefind-weight="0.1">{[...new Set([topic.name, data.topic, ...(data.tags ?? [])])].join(' ')}</span>
   <p class="article-description" data-pagefind-meta="description">{data.description}</p>
   <div class="article-meta" data-pagefind-ignore>
-    <span>{topic.name}</span><span class="meta-dot">·</span><span>{levelLabel(data.difficulty)}</span>
+    <span>{topic.name}</span><span class="meta-dot">·</span><span>{levelLabel(data.difficulty)}</span><span class="meta-dot">·</span><span>{depthLabels[data.learningDepth]}</span>
     <span class="meta-dot">·</span><span>已審閱 {data.lastReviewed?.toISOString().slice(0, 10)}</span>
     <button class="bookmark-button" type="button" data-bookmark={data.articleId} aria-pressed="false"><Icon name="bookmark" size={17} /><span>收藏文章</span></button>
   </div>

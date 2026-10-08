@@ -11,11 +11,14 @@ prerequisites: ["csharp-async-await", "aspnet-core-middleware"]
 relatedArticles: ["aspnet-core-http-client-factory", "aspnet-core-grpc", "data-access-pools-locks", "redis-reliability", "rabbitmq-queues-ordering", "engineering-cache-messaging-tests"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "指標告訴你整體趨勢，trace 串起單次工作；先統一量測範圍，再解讀數字。"
 noteDates: ["2026-07-17", "2026-10-06"]
 sources: [{"title": "Microsoft Learn：內建 .NET 指標", "url": "https://learn.microsoft.com/en-us/dotnet/core/diagnostics/built-in-metrics"}, {"title": "Microsoft Learn：分散式追蹤 instrumentation", "url": "https://learn.microsoft.com/en-us/dotnet/core/diagnostics/distributed-tracing-instrumentation-walkthroughs"}, {"title": "OpenTelemetry：.NET Instrumentation", "url": "https://opentelemetry.io/docs/languages/dotnet/instrumentation/"}, {"title": "W3C：Trace Context", "url": "https://www.w3.org/TR/trace-context/"}]
+learningDepth: "deep"
 ---
+
+Metrics 描述整體趨勢，Trace 連接一次執行的步驟，日誌提供具體事件線索。商品變慢或通知積壓時，這些證據需要對應用戶結果，而不是只有一個 CPU 數值。
 
 ## 先看流量、延遲與資源
 
@@ -49,3 +52,9 @@ activity?.SetTag("orders.operation", "confirm");
 metrics label 使用有界維度，例如 route template、status class；不要把每筆訂單 id、使用者 id 或 trace-id 放進 metric labels。trace tag 與 log 也避免秘密與不必要個資。
 
 遇到延遲時，先用 metrics 找時間窗與受影響服務，再用 trace 看 HTTP、gRPC、資料庫及等待段，最後核對 log。採樣、匯出失敗與時鐘差異會影響可見性，沒有 trace 不等於沒有執行過。
+
+## 套用到電商情境
+
+商品查詢拆分快取與回源延遲，訂單串起 API、Outbox、發布與 Consumer。保持有限 metrics 維度，訂單或事件 ID 用於受控日誌與 Trace。現有實驗只驗證 Activity context 傳遞，正式採集與後台仍需另行部署。
+
+[閱讀對應的電商章節](/projects/ecommerce/testing-observability/)，把本篇概念接到整個用例。

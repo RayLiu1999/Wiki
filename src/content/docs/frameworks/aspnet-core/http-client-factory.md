@@ -11,11 +11,14 @@ prerequisites: ["aspnet-core-dependency-injection", "csharp-disposable"]
 relatedArticles: ["aspnet-core-http-resilience", "engineering-metrics-tracing"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "工廠重用的是 Handler 與連線資源；client 的生命週期與 request scope 不必相同。"
 noteDates: ["2026-05-28", "2026-07-01"]
 sources: [{"title": "Microsoft Learn：IHttpClientFactory", "url": "https://learn.microsoft.com/en-us/dotnet/core/extensions/httpclient-factory"}, {"title": "Microsoft Learn：HttpClient 指南", "url": "https://learn.microsoft.com/en-us/dotnet/fundamentals/networking/http/httpclient-guidelines"}]
+learningDepth: "deep"
 ---
+
+API 呼叫付款或物流服務時，要管理長時間連線、DNS 與 handler 管線。IHttpClientFactory 提供建立 client 與重用 handler 的方式，重試和業務結果仍需另外設計。
 
 ## 避免每次請求都重建底層連線
 
@@ -48,3 +51,9 @@ Singleton 不宜長期捕捉短命的 typed client，否則可能失去預期的
 ## 連線與錯誤處理分工
 
 工廠不會讓非 2xx 回應自動變成例外，也不會保證安全重試。狀態碼、response 釋放、取消、串流與重試條件仍由呼叫流程決定；HTTP trace 通常可由 .NET 與 OpenTelemetry instrumentation 接上。
+
+## 套用到電商情境
+
+付款 client、物流 client 可以有各自 baseaddress、逾時與 handler。不要把每位買家的敏感狀態藏在會重用的 handler 裡；記錄請求時遮蔽機密。Factory 不能保證付款 POST 可安全重試。
+
+[閱讀對應的電商章節](/projects/ecommerce/payment/)，把本篇概念接到整個用例。

@@ -11,13 +11,16 @@ prerequisites: [csharp-variables, csharp-classes]
 relatedArticles: ["csharp-methods", "csharp-nullable", "csharp-records-invariants", "csharp-parameter-passing"]
 applicableVersions: 型別語意通用；完整範例使用 C# 9 以上的頂層陳述式。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
-lastReviewed: 2026-10-07
+lastReviewed: "2026-10-08"
 takeaway: 一般指派會複製變數的值；參考型別變數的值，就是物件參考。
 sources:
   - title: Microsoft Learn：值型別
     url: https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/value-types
 noteDates: ["2026-05-22", "2026-06-01"]
+learningDepth: "basic"
 ---
+
+兩個變數指向相同商品物件時，其中一邊改動會讓另一邊看到新狀態。值型別與參考型別的差別，先從指派、複製和別名理解，再討論記憶體與效能。
 
 ## 從指派的行為理解
 
@@ -63,8 +66,14 @@ class Counter
 - 值型別包含參考型別欄位時，複製結構仍可能共享欄位指向的物件。
 - <code>string</code> 雖然是參考型別，但內容不可變，不能直接套用可變物件的直覺。
 
-## 工作筆記：值型別也可能含共用參考
+## 深入理解：值型別也可能含共用參考
 
-struct 被複製時會複製欄位值；若欄位是 List 或其他 class，欄位值就是參考，因此兩份 struct 仍可能共用同一物件。record 的 with 也採淺拷貝，不會自動深拷貝參考欄位。
+struct 被複製時會複製欄位值；若欄位是 List 或其他 class，欄位值就是參考，因此兩份 struct 仍可能共用同一物件。record 的 with 也採淺複製，不會自動深複製參考欄位。
 
 唯讀介面、init 與 readonly 能限制部分修改入口，卻不保證整棵物件圖不可變。設計 Value Object 時，還需考慮內部集合及其相等性。
+
+## 套用到電商情境
+
+金額值物件適合有明確相等性，商品實體則常以識別追蹤。struct 內含 List 或其他參考欄位時，複製外層仍可能共用內部物件；購物車快照要確認需要多深的複製，不能只看外層型別。
+
+[閱讀對應的電商章節](/projects/ecommerce/catalog/)，把本篇概念接到整個用例。

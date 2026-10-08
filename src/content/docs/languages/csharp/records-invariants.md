@@ -1,21 +1,24 @@
 ---
 title: "record、init、with 與有效狀態"
-description: "用值相等性與型別封裝資料規則，理解 init 和淺拷貝不代表深層不可變。"
+description: "用值相等性與型別封裝資料規則，理解 init 和淺複製不代表深層不可變。"
 articleId: "csharp-records-invariants"
 topic: "csharp"
 category: "types"
 order: 20
-tags: ["class", "record", "set", "init", "new()", "with", "淺拷貝", "不變量", "非法狀態"]
+tags: ["class", "record", "set", "init", "new()", "with", "淺複製", "不變量", "非法狀態"]
 difficulty: "intermediate"
 prerequisites: ["csharp-classes", "csharp-value-reference-types"]
 relatedArticles: ["architecture-domain-modeling", "engineering-business-tests"]
 applicableVersions: "以 .NET 10 / C# 14 核對；個別語法與 API 的最低版本見內文。"
 verifiedWith: ".NET SDK 10.0.105 / net10.0 / C# 14；完整 Program.cs 已納入編譯與輸出驗證。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "record 提供值相等性與便利複製；有效狀態與內部集合仍需要你設計。"
 noteDates: ["2026-05-22", "2026-06-01"]
 sources: [{"title": "Microsoft Learn：record", "url": "https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/record"}, {"title": "Microsoft Learn：init", "url": "https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/init"}]
+learningDepth: "deep"
 ---
+
+record 提供資料導向的宣告與預設相等性，init 和 with 改善初始化與複製寫法。它們讓 DTO 更簡潔，但不自動讓所有狀態合法或所有內部資料不可變。
 
 ## 依資料意義選型別
 
@@ -56,10 +59,16 @@ C#, DDD
 2
 ~~~
 
-`with` 產生淺拷貝，兩個 Note 的 Tags 仍指向同一個 List。struct 複製其欄位值時，參考欄位同樣只是複製參考；不會自動把整棵物件圖深拷貝。
+`with` 產生淺複製，兩個 Note 的 Tags 仍指向同一個 List。struct 複製其欄位值時，參考欄位同樣只是複製參考；不會自動把整棵物件圖深複製。
 
 ## 在邊界建立有效資料
 
 PositiveQuantity 的公開建構子拒絕小於 1 的值，Value 只讀，正常呼叫端不能用物件初始化或 `with` 任意改成 0。不可變集合、複製集合或封裝修改方法，需要依使用情境選擇。
 
 並非所有 record 都適合當 Value Object。集合的相等性、允許的建構入口、序列化與 ORM 行為，都需要一起設計；避免只有外層 Validator 驗證，內部仍能建立非法狀態。
+
+## 套用到電商情境
+
+商品回應 DTO 可用 record；金額、數量與訂單狀態則要維持自己的規則。with 可能共用參考欄位，也可能繞過預期的驗證路徑。下單快照需要明確選擇資料與建立方式，再決定是否用 record。
+
+[閱讀對應的電商章節](/projects/ecommerce/catalog/)，把本篇概念接到整個用例。

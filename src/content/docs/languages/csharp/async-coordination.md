@@ -11,11 +11,14 @@ prerequisites: ["csharp-async-await", "csharp-cancellation"]
 relatedArticles: ["csharp-thread-safety", "csharp-channels", "aspnet-core-dependency-injection"]
 applicableVersions: "以 .NET 10 / C# 14 核對；個別語法與 API 的最低版本見內文。"
 verifiedWith: ".NET SDK 10.0.105 / net10.0 / C# 14；完整 Program.cs 已納入編譯與輸出驗證。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "WhenAll 等待一組作業，沒有替你限制併發、取消同伴或建立新執行緒。"
 noteDates: ["2026-05-21", "2026-05-27"]
 sources: [{"title": "Microsoft Learn：Task.WhenAll", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.threading.tasks.task.whenall?view=net-10.0"}, {"title": "Microsoft Learn：ValueTask<TResult>", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.threading.tasks.valuetask-1?view=net-10.0"}]
+learningDepth: "deep"
 ---
+
+多個 Task 可以代表已開始的作業，WhenAll 負責等待它們的整體結果。ValueTask 改變作業表示與配置成本，選擇時要理解使用限制並有量測證據。
 
 ## 作業已開始，再一起等待
 
@@ -44,7 +47,7 @@ static ValueTask<int> GetCachedAsync() => ValueTask.FromResult(99);
 99
 ~~~
 
-## ValueTask 要有量測支持
+## ValueTask 要有量測支援
 
 ValueTask 可在常見同步完成情境降低 Task 配置，卻帶來消費方式的限制與額外結構成本。一般 API 先使用 Task；除非契約明確允許，ValueTask 應只 await 一次。若必須多次等待或交給 WhenAll，先呼叫一次 AsTask 並保存轉換結果。
 
@@ -53,3 +56,9 @@ ValueTask 可在常見同步完成情境降低 Task 配置，卻帶來消費方�
 大量建立 Task 可能壓垮下游連線或資料庫。使用 SemaphoreSlim、Channel 或適當的並行 API 控制同時執行數；同一個 DbContext 不支援平行執行多個操作。
 
 WhenAll 不會在第一個失敗時自動取消其他作業。fault 優先於 cancellation 決定組合作業狀態；await 通常擲出其中一個例外，如需完整診斷可保留組合作業並查看其 Exception。取消需由各作業合作遵守 CancellationToken。
+
+## 套用到電商情境
+
+查商品與不影響成交的展示資訊可能可以並行，但同一 DbContext 不能任意同時執行多個查詢。WhenAll 不限制併發，也不自動取消其他作業；批次通知還需要名額、取消和失敗政策。
+
+[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。

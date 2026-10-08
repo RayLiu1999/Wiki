@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "發布確認與消費確認是兩段獨立責任；穩定 MessageId 與冪等結果補上重送帶來的風險。"
 noteDates: []
 sources: [{"title":"RabbitMQ：Acknowledgements and Confirms","url":"https://www.rabbitmq.com/docs/confirms"},{"title":"RabbitMQ：Reliability","url":"https://www.rabbitmq.com/docs/reliability"},{"title":"RabbitMQ：Consumer Prefetch","url":"https://www.rabbitmq.com/docs/consumer-prefetch"}]
+learningDepth: "deep"
 ---
+
+Publisher Confirm 確認發布階段，Consumer Ack 確認消費交付階段。訂單已經提交、Broker 已經接受、通知已經完成，是需要分別核對的三件事。
 
 ## 分別確認兩段通訊
 
@@ -58,4 +61,10 @@ durable Queue 與 Exchange 保留必要拓樸；Persistent 訊息指定相應的
 
 本例每個 Consumer 的 Prefetch 為 1，方便觀察處理與重送。提高 Prefetch 可能增加吞吐量，也會增加未確認工作、記憶體與工作分配差異；不能只看發布速度決定數值。
 
-pnpm test:infrastructure 會模擬「通知交易已提交，接收 Channel 在 Ack 前關閉」。重新消費後，通知表仍只有一筆結果，證明此案例的 Inbox 能處理這個重送窗口。Broker 接收與業務效果之間的其他邊界仍需各自測試。
+[隔離故障驗證](/practice/ecommerce/failure-drills/)會模擬「通知交易已提交，接收 Channel 在 Ack 前關閉」。重新消費後，通知表仍只有一筆結果，證明此案例的 Inbox 能處理這個重送窗口。Broker 接收與業務效果之間的其他邊界仍需各自測試。
+
+## 套用到電商情境
+
+消費者把 Inbox 與模擬通知交易提交後才 Ack；若 Ack 前中斷，重送由唯一條件保護結果。耐久 Queue、persistent message、確認與恢復契約需要組合驗證。Confirm 不保證外部郵件成功，也不能消除所有重送。
+
+[閱讀對應的電商章節](/projects/ecommerce/reliable-events/)，把本篇概念接到整個用例。

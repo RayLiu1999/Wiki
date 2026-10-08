@@ -11,11 +11,14 @@ prerequisites: ["data-access-ef-core", "dotnet-sdk-packages"]
 relatedArticles: ["data-access-transactions", "data-access-pools-locks"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "Migration 是待審查的資料庫變更程式；產生成功不等於正式資料安全。"
 noteDates: ["2026-06-04", "2026-10-05", "2026-10-06"]
 sources: [{"title": "Microsoft Learn：套用 Migration", "url": "https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/applying?tabs=dotnet-core-cli"}, {"title": "Microsoft Learn：管理 Migration", "url": "https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/managing"}]
+learningDepth: "deep"
 ---
+
+Migration 記錄模型或 schema 變更，部署還要考慮已有資料與新舊程序。新增訂單欄位時，先審查 SQL、資料轉換和相容性，再選擇執行產物。
 
 ## 模型差異與資料變更分開檢查
 
@@ -46,3 +49,9 @@ Bundle 用受控部署工作執行，必要設定來自環境或安全的 config
 ## 驗證與恢復
 
 在代表性的資料量與版本上驗證 apply、資料結果與應用程式相容性。Down 不保證找回被刪資料；先準備備份與實際可執行的恢復方案。部署期若新舊版本同時運作，schema 變更需保有過渡相容性。
+
+## 套用到電商情境
+
+增加可選欄位、讓新舊程序共存、回填、最終移除舊結構，是一種 expand／contract 路線。Migration 由受控任務執行，程序 rollback 仍需判斷 schema 兼容。初始化 SQL 只負責全新環境，不能替代已有正式資料升級。
+
+[閱讀對應的電商章節](/projects/ecommerce/delivery/)，把本篇概念接到整個用例。

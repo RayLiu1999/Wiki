@@ -11,11 +11,14 @@ prerequisites: ["aspnet-core-dependency-injection"]
 relatedArticles: ["aspnet-core-middleware", "aspnet-core-api-styles-aot", "dotnet-sdk-packages", "rabbitmq-dotnet-integration", "architecture-outbox-inbox"]
 applicableVersions: "Minimal Hosting 預設範本自 .NET 6 起；Generic Host 與 Startup 型設定仍可使用。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: ".NET 6 改變預設範本，不表示 Startup 與 Generic Host 被移除。"
 noteDates: ["2026-05-20", "2026-05-21"]
 sources: [{"title": "Microsoft Learn：.NET 5 到 .NET 6 移轉", "url": "https://learn.microsoft.com/en-us/aspnet/core/migration/50-to-60?view=aspnetcore-10.0"}, {"title": "Microsoft Learn：Generic Host", "url": "https://learn.microsoft.com/en-us/dotnet/core/extensions/generic-host"}]
+learningDepth: "deep"
 ---
+
+Host 將設定、DI、日誌與啟停生命週期組裝成一個應用。商品 API 和通知 Worker 可以使用同一套 hosting 基礎，但入口、工作與停止行為仍由各自程序定義。
 
 ## Host 管什麼
 
@@ -42,3 +45,9 @@ Minimal Hosting 是啟動組裝方式；Minimal API 是 endpoint 宣告方式。
 Program 決定 configuration、服務註冊、middleware 與應用程式啟動。功能變多時，可把註冊依功能整理成 extension method，把商業規則放回 Domain / Application，不必把全部實作塞在單一檔案。
 
 BackgroundService 要遵守停止 token；需要 Scoped 服務時建立自己的 scope。程式結束、scope 釋放與資源所有權也由 hosting 模型一起管理，避免 fire-and-forget 工作超出生命週期。
+
+## 套用到電商情境
+
+API 處理 HTTP，BackgroundService 處理持續工作，兩者都需要觀察停止。現在的 OrderApi 使用 ASP.NET Host，既有 OrderWorker 是 Console 程序與 Ctrl+C 取消；遷移平台時要補上 SIGTERM、scope 和在途工作驗證。
+
+[閱讀對應的電商章節](/projects/ecommerce/configuration/)，把本篇概念接到整個用例。

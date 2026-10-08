@@ -1,6 +1,6 @@
 ---
 title: 介面、繼承與多型
-description: 讓呼叫端依賴行為契約，理解介面與類別繼承各自的用途。
+description: 讓呼叫端相依行為契約，理解介面與類別繼承各自的用途。
 articleId: csharp-interfaces
 topic: csharp
 category: oop
@@ -11,14 +11,17 @@ prerequisites: [csharp-classes]
 relatedArticles: [csharp-delegates, csharp-disposable]
 applicableVersions: 基本介面與多型概念通用；完整範例使用 C# 9 以上。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
-lastReviewed: 2026-10-07
+lastReviewed: "2026-10-08"
 takeaway: 介面描述可以做什麼，呼叫端不必知道每個實作的內部細節。
 sources:
   - title: Microsoft Learn：多型
     url: https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/object-oriented/polymorphism
   - title: Microsoft Learn：介面
     url: https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/types/interfaces
+learningDepth: "basic"
 ---
+
+介面描述呼叫端需要的能力，實作提供具體行為。通知可以有不同提供者，但用例只需要理解通知契約和結果，不必知道每種底層傳輸。
 
 ## 先定義行為契約
 
@@ -63,3 +66,9 @@ class ConsoleNotifier : INotifier
 - 介面不會自動讓設計變好；契約仍應保持小而清楚。
 - 用 <code>new</code> 隱藏成員，與用 <code>override</code> 覆寫虛擬成員的呼叫行為不同。
 - 呼叫端若持續轉型成具體類別才能工作，應重新檢視契約是否完整。
+
+## 套用到電商情境
+
+本篇通知實作先示範多型替換。真正接郵件或模擬提供者時，契約還要包含取消、失敗與結果識別；測試替身可以隔離外部服務，但仍需整合測試核對真實服務。只有需求變動點清楚時才增加介面。
+
+[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。

@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "減少重複載入與限流可以使用 Redis；關鍵業務規則仍須由權威儲存與交易保護。"
 noteDates: []
 sources: [{"title":"Redis：INCR 與限流模式","url":"https://redis.io/docs/latest/commands/incr/"},{"title":"Redis：Distributed Locks","url":"https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/"},{"title":"Redis：SET","url":"https://redis.io/docs/latest/commands/set/"}]
+learningDepth: "deep"
 ---
+
+快取擊穿、同時到期與不存在資料的大量查詢，形成不同負載問題。程序內合併、限流和跨程序租約各有邊界，選擇前先說明想保護什麼結果。
 
 ## 三種流量問題需要不同處理
 
@@ -60,3 +63,9 @@ return count
 本案例的通知去重使用 PostgreSQL Inbox 與通知表的約束。Redis 的 TTL、淘汰與重啟設定會影響 Key 是否存在，因此快取去重不能自行承諾通知效果恰好執行一次。
 
 將鎖當作降低重複工作的協調手段，再由穩定業務 ID、唯一約束與交易保護結果。多節點鎖、續租、Cluster 與故障切換需要另外的部署與失敗驗證，本篇先建立這些判斷邊界。
+
+## 套用到電商情境
+
+商品快取冷啟動可合併同程序回源並限制名額；多 Pod 仍要考慮總容量。Redis 鎖有期限與所有權，不能直接保證庫存或付款恰好一次；關鍵結果由資料庫條件、唯一約束和穩定業務識別保護。
+
+[閱讀對應的電商章節](/projects/ecommerce/scaling/)，把本篇概念接到整個用例。

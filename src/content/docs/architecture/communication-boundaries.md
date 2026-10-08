@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "先決定誰需要立即回覆、工作能否遺失、是否需要重播，再選擇通訊機制。"
 noteDates: []
 sources: [{"title":"Microsoft Learn：非同步訊息通訊","url":"https://learn.microsoft.com/en-us/dotnet/architecture/microservices/architect-microservice-container-applications/asynchronous-message-based-communication"},{"title":"Microsoft Learn：Channels","url":"https://learn.microsoft.com/en-us/dotnet/core/extensions/channels"},{"title":"Redis：Pub/Sub","url":"https://redis.io/docs/latest/develop/pubsub/"},{"title":"Redis：Streams","url":"https://redis.io/docs/latest/develop/data-types/streams/"},{"title":"RabbitMQ：AMQP 模型","url":"https://www.rabbitmq.com/tutorials/amqp-concepts"}]
+learningDepth: "deep"
 ---
+
+立即查詢商品、排隊產生報表和可靠交付訂單事件，需要不同的回應與保存契約。同步、程序內背景工作與外部訊息的選擇，先由業務完成條件決定。
 
 ## 從用例需要的回覆開始
 
@@ -28,7 +31,7 @@ sources: [{"title":"Microsoft Learn：非同步訊息通訊","url":"https://lear
 | 機制 | 主要邊界與用途 | 需要另外設計 |
 | --- | --- | --- |
 | HTTP／gRPC | 直接請求回覆、查詢目前狀態 | 逾時、重試、副作用冪等與可用性 |
-| `Channel<T>` | 單一程序內的工作協調與背壓 | 程序重啟後未完成工作的恢復 |
+| `Channel<T>` | 單一程序內的工作協調與背壓 | 程序重新啟動後未完成工作的恢復 |
 | Redis Pub/Sub | 對目前在線訂閱者的即時通知 | 斷線時訊息可能遺失，沒有相同的耐久重送契約 |
 | Redis Streams | 保存事件紀錄、消費者群組與確認 | 保留政策、pending 恢復、修剪與 Redis 持久化配置 |
 | RabbitMQ Queue | 跨程序工作分派與 Exchange 路由 | 確認、冪等、重試、死信與 Queue 耐久設定 |
@@ -54,3 +57,9 @@ Domain Event 表達領域內已發生的事，例如訂單已確認；同一程�
 Dapr 提供 pub/sub、state 等 building blocks，可以透過 component 使用底層訊息或狀態服務。抽象讓應用的呼叫方式一致，仍需理解 component 的傳遞、重試、保存與故障語意。
 
 先用原生 Redis／RabbitMQ 範例建立機制輪廓，再回到既有 Dapr 文章理解抽象的邊界。本次實驗沒有啟動 Dapr；不能把底層服務的驗證直接記作 sidecar 與 component 的整合驗證。
+
+## 套用到電商情境
+
+訂單 API 回應 201 時定義已經完成哪項提交；後續通知可以晚一些完成，並提供狀態查詢。Channel、RedisStreams、RabbitMQ 和 Dapr 各有不同保存與整合責任；跨程序並不自動擁有最終一致性恢復。
+
+[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。

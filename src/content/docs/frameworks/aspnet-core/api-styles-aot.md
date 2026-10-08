@@ -11,11 +11,14 @@ prerequisites: ["dotnet-hosting", "csharp-type-operators"]
 relatedArticles: ["aspnet-core-model-binding", "engineering-metrics-tracing"]
 applicableVersions: "API 比較以 ASP.NET Core 10 文件核對；AOT 支援表可能隨版本變動。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "API 的組織方式與程式的編譯方式是兩個決策；AOT 相容性需要發布與執行驗證。"
 noteDates: ["2026-06-29"]
 sources: [{"title": "Microsoft Learn：ASP.NET Core Native AOT", "url": "https://learn.microsoft.com/en-us/aspnet/core/fundamentals/native-aot?view=aspnetcore-10.0"}, {"title": "Microsoft Learn：選擇 Web API 方式", "url": "https://learn.microsoft.com/en-us/aspnet/core/fundamentals/apis?view=aspnetcore-10.0"}]
+learningDepth: "deep"
 ---
+
+Minimal API 與 Controller 是宣告 HTTP 邊界的不同方式，Native AOT 則是部署與編譯選擇。先確保商品契約和維護需求清楚，再核對啟動、反射、程式大小與實際效能。
 
 ## 先選團隊能維護的 API 邊界
 
@@ -37,3 +40,9 @@ JIT 在執行時編譯 IL；Native AOT 在發布時產生目標平台原生程�
 動態掃描組件、反射建立型別、動態代理或序列化可能遇到 trimming / AOT 可達性限制。依套件文件選擇來源產生器、明確註冊與 JsonSerializerContext，發布時檢查警告。
 
 實際驗收應對發布後的 AOT artifact 跑 API、序列化與關鍵行為測試，再確認 runtime metrics、trace exporter 及 profiler 的支援。不能由 JIT 下測試通過，直接推論 AOT 正常。本篇沒有建立或發布 AOT 專案。
+
+## 套用到電商情境
+
+小型商品 API 可用 Minimal API，較複雜輸入流程也可採用 Controller。AOT 不自動提高每種工作負載的吞吐量；ORM、序列化、反射與套件兼容性都要驗證，並比較相同場景的量測。
+
+[閱讀對應的電商章節](/projects/ecommerce/containers/)，把本篇概念接到整個用例。

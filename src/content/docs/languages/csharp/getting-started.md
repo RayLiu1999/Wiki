@@ -11,14 +11,17 @@ prerequisites: []
 relatedArticles: [csharp-variables]
 applicableVersions: 主控台範例使用 C# 9 頂層陳述式；單檔執行需 .NET 10 / C# 14。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
-lastReviewed: 2026-10-07
+lastReviewed: "2026-10-08"
 takeaway: C# 是語言，.NET 是執行平台，SDK 是建立與執行專案的工具。
 sources:
   - title: Microsoft Learn：C# 語言概覽
     url: https://learn.microsoft.com/en-us/dotnet/csharp/tour-of-csharp/overview
   - title: Microsoft Learn：dotnet new
     url: https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-new
+learningDepth: "basic"
 ---
+
+C# 是描述程式行為的語言，.NET 提供執行環境與標準函式庫，SDK 則提供建置工具。先跑一個完整 Console 程式，理解原始碼如何變成可執行結果，之後再把同樣的語言放進商品 API。
 
 ## 先分清三個角色
 
@@ -57,3 +60,9 @@ Hello, DevWiki!
 - <code>dotnet build</code> 負責建置；<code>dotnet run</code> 會視需要建置後執行。
 - 範例使用的 SDK 與語言版本是不同概念，閱讀文章時應分別確認。
 - .NET 10 支援單檔應用程式，但本系列仍以主控台專案的 <code>Program.cs</code> 作為閱讀起點。
+
+## 套用到電商情境
+
+商品 API 和通知 Worker 都由 C# 程式建立，但 Console 的一次輸出、HTTP 的一次回應和持續運作的背景服務有不同生命週期。先確認能編譯與執行，再逐步加入框架；本篇的 Hello World 只用來觀察程式入口。
+
+[閱讀對應的電商章節](/projects/ecommerce/catalog/)，把本篇概念接到整個用例。

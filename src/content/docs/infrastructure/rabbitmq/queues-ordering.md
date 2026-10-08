@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "佇列的入列順序不代表多個 Consumer 的完成順序；容量、重送與每個業務實體的順序要一起設計。"
 noteDates: []
 sources: [{"title":"RabbitMQ：Queues","url":"https://www.rabbitmq.com/docs/queues"},{"title":"RabbitMQ：Quorum Queues","url":"https://www.rabbitmq.com/docs/quorum-queues"},{"title":"RabbitMQ：Streams","url":"https://www.rabbitmq.com/docs/streams"},{"title":"RabbitMQ：Consumer Prefetch","url":"https://www.rabbitmq.com/docs/consumer-prefetch"}]
+learningDepth: "deep"
 ---
+
+訊息進入 Queue、投遞給 Consumer 和完成業務結果的順序，可能不同。選擇 Queue 類型、併發和重試時，要先說明訂單流程是否依賴事件先後。
 
 ## 依保存與讀取需求選擇
 
@@ -52,3 +55,9 @@ RabbitMQ 4.0 起移除 Classic Queue mirroring；舊教學中的 mirrored classi
 Quorum Queue 具有毒訊息與投遞次數相關機制，行為與預設值需要對照部署版本。重新發布到重試 Queue 與 broker 原訊息的重新投遞，是不同的計數來源。
 
 本例自行保存 x-lab-attempt 來限制應用程式最多 3 次處理，不把 broker 的 delivery limit 當作相同的業務重試政策。若 header 不符合契約，也應有明確的失敗處理，避免錯誤資料使 Consumer 停在未確認狀態。
+
+## 套用到電商情境
+
+訂單建立與付款完成可能被不同消費者並行處理，合法狀態轉換需版本或對應順序設計。增加 prefetch 或 Consumer 可能提高吞吐，也會改變在途數量與完成順序；容量要同時觀察 Broker、應用與資料庫。
+
+[閱讀對應的電商章節](/projects/ecommerce/scaling/)，把本篇概念接到整個用例。

@@ -11,20 +11,23 @@ prerequisites: ["dotnet-time-zones", "data-access-type-mapping"]
 relatedArticles: ["data-access-pools-locks", "architecture-domain-modeling"]
 applicableVersions: "Guid.CreateVersion7 需 .NET 9 以上；UUID 依 RFC 9562，其他方案依列出的規格或實作。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
-takeaway: "ID 的時間布局、比較順序與唯一性依賴不同條件；先確認實際資料庫與跨節點需求。"
+lastReviewed: "2026-10-08"
+takeaway: "ID 的時間佈局、比較順序與唯一性取決於不同條件；先確認實際資料庫與跨節點需求。"
 noteDates: ["2026-08-27"]
 sources: [{"title": "IETF：RFC 9562 UUID", "url": "https://www.rfc-editor.org/rfc/rfc9562.html"}, {"title": "ULID：正式規格", "url": "https://github.com/ulid/spec"}, {"title": "RT.Comb：SQL Server 與 PostgreSQL 的 COMB 實作", "url": "https://github.com/richardtallent/RT.Comb"}, {"title": "Twitter：Snowflake 原始專案", "url": "https://github.com/twitter-archive/snowflake"}, {"title": "Microsoft Learn：Guid.CreateVersion7", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.guid.createversion7?view=net-10.0"}]
+learningDepth: "deep"
 ---
+
+商品、訂單與事件各需要穩定識別。UUID、ULID、COMB 與 Snowflake 在產生方式、位元大小和排序意圖上不同，選擇要對照資料庫與跨程序契約。
 
 ## 先比較二進位大小與排序意圖
 
 | 方案 | 二進位大小 | 產生與排序特性 |
 | --- | --- | --- |
 | UUID v4 | 128-bit / 16 bytes | 隨機為主，沒有時間前綴 |
-| UUID v7 | 128-bit / 16 bytes | 前段含 Unix 毫秒時間，另有隨機 / 計數布局 |
+| UUID v7 | 128-bit / 16 bytes | 前段含 Unix 毫秒時間，另有隨機 / 計數佈局 |
 | ULID | 128-bit / 16 bytes | 48-bit 時間、80-bit 隨機，常用 26 字元文字表示 |
-| COMB Guid | 通常 128-bit / 16 bytes | 時間與隨機組合，布局依實作及目標資料庫不同 |
+| COMB Guid | 通常 128-bit / 16 bytes | 時間與隨機組合，佈局依實作及目標資料庫不同 |
 | Snowflake 類型 | 常見 64-bit / 8 bytes | 時間、worker 與序號，需管理節點配置及時鐘 |
 
 文字欄位實際空間還受編碼、欄位型別與索引影響。不能拿 36 字元 UUID 字串直接當成 Guid 的二進位儲存大小。
@@ -42,6 +45,12 @@ Guid timedId = Guid.CreateVersion7();
 
 ## 資料庫排序才決定索引表現
 
-隨機 key 可能增加 B-tree 寫入的頁分裂，時間布局有機會改善寫入區域性，但也可能產生熱點。SQL Server uniqueidentifier、PostgreSQL uuid、字串 collation 與 .NET 比較順序未必相同；尤其不能把 v7 在某個引擎的結果直接套到另一個。
+隨機 key 可能增加 B-tree 寫入的頁分裂，時間佈局有機會改善寫入區域性，但也可能產生熱點。SQL Server uniqueidentifier、PostgreSQL uuid、字串 collation 與 .NET 比較順序未必相同；尤其不能把 v7 在某個引擎的結果直接套到另一個。
 
-COMB 不是一個跨實作一致的 UUID 標準版本；要確認布局、排序與相容性。用實際資料量、索引型態及工作負載量測，再選方案。ID 也不是授權憑證，時間型 ID 可能透露建立時刻。
+COMB 不是一個跨實作一致的 UUID 標準版本；要確認佈局、排序與相容性。用實際資料量、索引型態及工作負載量測，再選方案。ID 也不是授權憑證，時間型 ID 可能透露建立時刻。
+
+## 套用到電商情境
+
+建立事件時產生 MessageId，Outbox 重送保留相同值；DeliveryTag 或 Pod 名不能代替它。事件 ID 與訂單 ID 各自識別不同資料。採時間導向識別仍要實測資料庫排序與索引，也不能當成買家存取授權。
+
+[閱讀對應的電商章節](/projects/ecommerce/reliable-events/)，把本篇概念接到整個用例。

@@ -11,11 +11,14 @@ prerequisites: ["csharp-query-abstractions", "aspnet-core-dependency-injection"]
 relatedArticles: ["data-access-migrations", "data-access-transactions", "data-access-type-mapping"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "DbContext 是短生命週期的工作單位；查詢要看產生的 SQL，模型要寫清楚資料語意。"
 noteDates: ["2026-06-04", "2026-10-05", "2026-10-06"]
 sources: [{"title": "Microsoft Learn：EF Core 模型配置", "url": "https://learn.microsoft.com/en-us/ef/core/modeling/"}, {"title": "Microsoft Learn：查詢效能", "url": "https://learn.microsoft.com/en-us/ef/core/performance/efficient-querying"}, {"title": "Microsoft Learn：DbContext 生命週期", "url": "https://learn.microsoft.com/en-us/ef/core/dbcontext-configuration/"}]
+learningDepth: "deep"
 ---
+
+EF Core 將.NET 模型、查詢與資料庫操作連接起來。DbContext 管理一個工作範圍內的實體狀態與提交，商品清單和訂單更新應各自說明其查詢與變更邊界。
 
 ## Context、集合與模型
 
@@ -48,3 +51,9 @@ record OrderSummary(int Id, decimal Total);
 明確設定必要的 key、長度、precision、required、關聯與索引，並為資料表及每個欄位寫可持久化的註解，說清資料粒度、單位、狀態與 null 意義。EF Core 可用 table / property 的 HasComment API；是否產生資料庫註解以及 migration SQL，須由實際 provider 驗證。
 
 資料庫 schema 與 .NET 型別不能只靠名稱猜測。Migration 產物需檢查型別、約束與資料轉換，不要把 ORM 設定完成視為部署已驗證。
+
+## 套用到電商情境
+
+公開商品查詢先篩選與投影需要的 DTO；訂單更新使用有明確生命週期的 Context 與交易。現有 Redis／訊息實驗直接使用 Npgsql，本篇 EF 片段是另一種資料存取說明，不能誤認為實驗實際透過 EF 提交。
+
+[閱讀對應的電商章節](/projects/ecommerce/product-api/)，把本篇概念接到整個用例。

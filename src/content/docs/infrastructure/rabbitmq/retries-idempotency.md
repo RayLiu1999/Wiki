@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "重試需要次數與退避上限；消費成功與去重紀錄必須一起提交，才能安全面對重送。"
 noteDates: []
 sources: [{"title":"RabbitMQ：Dead Letter Exchanges","url":"https://www.rabbitmq.com/docs/dlx"},{"title":"RabbitMQ：Reliability","url":"https://www.rabbitmq.com/docs/reliability"},{"title":"RabbitMQ：Quorum Queues","url":"https://www.rabbitmq.com/docs/quorum-queues"},{"title":"Microsoft Learn：訂閱與冪等","url":"https://learn.microsoft.com/en-us/dotnet/architecture/microservices/multi-container-microservice-net-applications/subscribe-events"}]
+learningDepth: "deep"
 ---
+
+暫時失敗、毒訊息和永久業務拒絕需要不同處理。有限重試限制重複負載，死信保留診斷，冪等則保護重複交付後的業務結果。
 
 ## 先區分失敗原因
 
@@ -53,4 +56,10 @@ Inbox 使用 consumer_name＋message_id 的主鍵。新增去重紀錄與通知�
 
 dead Queue 應有積壓與訊息年齡觀測、原因紀錄、修復與重送程序。重送時保留原 MessageId，必要時記錄人工操作與新的嘗試政策；不要直接把全部死信無限送回工作 Queue。
 
-pnpm test:infrastructure 驗證暫時失敗後成功、連續失敗恰好到達上限、毒訊息送死信、相同事件並行處理只有一份結果，以及 Inbox 寫入後業務失敗時整個交易回滾。
+[隔離故障驗證](/practice/ecommerce/failure-drills/)核對暫時失敗後成功、連續失敗恰好到達上限、毒訊息送死信、相同事件並行處理只有一份結果，以及 Inbox 寫入後業務失敗時整個交易回滾。
+
+## 套用到電商情境
+
+通知重試副本確認後再 Ack 原交付，未知結果仍可能重複。Inbox 使用穩定 Consumer 名稱與 MessageId，業務結果另有唯一條件。真實郵件還需提供者冪等或對帳；本機實驗驗證的是資料庫模擬通知。
+
+[閱讀對應的電商章節](/projects/ecommerce/reliable-events/)，把本篇概念接到整個用例。

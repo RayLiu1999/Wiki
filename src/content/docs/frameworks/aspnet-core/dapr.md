@@ -11,11 +11,14 @@ prerequisites: ["aspnet-core-grpc", "aspnet-core-http-client-factory"]
 relatedArticles: ["engineering-metrics-tracing", "data-access-pools-locks", "architecture-communication-boundaries", "redis-getting-started", "rabbitmq-getting-started"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "應用程式到本地 sidecar，以及遠端 sidecar 到服務，是不同的通訊段。"
 noteDates: ["2026-09-14", "2026-09-29"]
 sources: [{"title": "Dapr：.NET SDK", "url": "https://docs.dapr.io/developing-applications/sdks/dotnet/"}, {"title": "Dapr：DaprClient 使用方式", "url": "https://docs.dapr.io/developing-applications/sdks/dotnet/dotnet-client/dotnet-daprclient-usage/"}, {"title": "Dapr：Service invocation overview", "url": "https://docs.dapr.io/developing-applications/building-blocks/service-invocation/service-invocation-overview/"}]
+learningDepth: "deep"
 ---
+
+Dapr sidecar 可以提供服務呼叫、發布訂閱和狀態等 buildingblock。應用通過相應 API 使用這些能力，底層狀態或 Broker 仍有自己的保存與失敗契約。
 
 ## Sidecar 把哪些責任放在外面
 
@@ -34,3 +37,9 @@ DaprClient 持有網路資源，通常透過 DI 依應用程式生命週期管�
 確認 app-id、app-port、sidecar 健康與 component 設定，再檢查 trace propagation。Dapr 不會自動讓跨服務呼叫成為資料庫交易，也不會讓重試的副作用恰好執行一次；timeout、重試、冪等與訊息重複仍需明確契約。
 
 Sidecar 的連線與應用程式中的資料庫連線池也不是同一件事。若要評估瓶頸，分開量測應用程式、sidecar、網路與資料庫的等待。本篇是概念指南，未啟動 Dapr runtime。
+
+## 套用到電商情境
+
+通知用例採用 Dapr pub/sub 時，要核對所選 component 的 Confirm、重送和 Consumer 結果語意。Sidecar 會新增程序、資源與診斷邊界；它不自動將資料庫訂單與事件變成同一個交易。
+
+[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。

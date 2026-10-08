@@ -1,4 +1,5 @@
 import { defineCollection } from 'astro:content';
+import { glob } from 'astro/loaders';
 import { z } from 'astro/zod';
 import { docsLoader, i18nLoader } from '@astrojs/starlight/loaders';
 import { docsSchema, i18nSchema } from '@astrojs/starlight/schema';
@@ -15,6 +16,7 @@ export const collections = {
         order: z.number().int().positive(),
         tags: z.array(z.string()).min(1),
         difficulty: z.enum(['beginner', 'intermediate']),
+        learningDepth: z.enum(['basic', 'deep', 'applied']).default('basic'),
         prerequisites: z.array(z.string()).default([]),
         relatedArticles: z.array(z.string()).default([]),
         applicableVersions: z.string().min(1),
@@ -28,6 +30,21 @@ export const collections = {
           context.addIssue({ code: 'custom', path: ['category'], message: '分類必須屬於文章主題。' });
         }
       }),
+    }),
+  }),
+  handbook: defineCollection({
+    loader: glob({ pattern: '**/*.md', base: './src/content/handbook' }),
+    schema: z.object({
+      title: z.string().min(1),
+      description: z.string().min(1),
+      group: z.enum(['start', 'ecommerce', 'practice']),
+      order: z.number().int().nonnegative(),
+      environment: z.enum(['reading', 'host-compose', 'kind', 'gke', 'ci']),
+      verification: z.string().min(1),
+      linkedArticles: z.array(z.string()).default([]),
+      prerequisites: z.array(z.string()).default([]),
+      sources: z.array(z.object({ title: z.string(), url: z.url() })).min(1),
+      draft: z.boolean().default(false),
     }),
   }),
   i18n: defineCollection({ loader: i18nLoader(), schema: i18nSchema() }),

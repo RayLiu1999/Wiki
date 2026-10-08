@@ -11,11 +11,14 @@ prerequisites: ["csharp-async-coordination", "csharp-cancellation"]
 relatedArticles: ["csharp-thread-safety", "aspnet-core-dependency-injection", "rabbitmq-getting-started", "architecture-communication-boundaries"]
 applicableVersions: "以 .NET 10 / C# 14 核對；個別語法與 API 的最低版本見內文。"
 verifiedWith: ".NET SDK 10.0.105 / net10.0 / C# 14；完整 Program.cs 已納入編譯與輸出驗證。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "有界 Channel 能控制積壓的工作量；滿載時的等待或丟棄策略必須由業務決定。"
 noteDates: ["2026-05-21", "2026-05-27"]
 sources: [{"title": "Microsoft Learn：System.Threading.Channels", "url": "https://learn.microsoft.com/en-us/dotnet/core/extensions/channels"}]
+learningDepth: "deep"
 ---
+
+Channel 在一個程序內將產生與處理資料的步驟接起來。有界 Channel 能限制積壓並提供背壓，適合可接受程序生命週期內保存的工作。
 
 ## 先決定可積壓多少工作
 
@@ -59,3 +62,9 @@ Channel 在 .NET Core 3.0 以上共享框架中提供；本例用 .NET 10 驗證
 DropOldest、DropNewest、DropWrite 會失去項目，適合允許丟棄的資料，不能直接套到付款或訂單。SingleReader / SingleWriter 是對實際使用的承諾，不能在多個讀寫者下隨意設成 true。
 
 Channel 只在 process 記憶體中，重啟會失去未處理項目；需要耐久性或跨 Pod 傳遞時，應選擇有對應保證的訊息系統。
+
+## 套用到電商情境
+
+暫時圖片處理或可重新產生的計算可以用有界 Channel；已提交訂單的通知若必須在重新啟動後恢復，就要有外部持久工作與交付契約。容量滿時等待、拒絕或丟棄，需要讓呼叫端知道結果。
+
+[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。

@@ -11,11 +11,14 @@ prerequisites: ["csharp-interfaces", "csharp-disposable"]
 relatedArticles: ["aspnet-core-http-client-factory", "data-access-ef-core", "dotnet-hosting", "redis-dotnet-integration", "rabbitmq-dotnet-integration"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "較長生命週期的服務不可直接持有較短 scope 的資料；生命週期看的是物件持有關係。"
 noteDates: ["2026-05-21", "2026-05-22", "2026-05-28", "2026-06-29", "2026-07-01", "2026-10-06"]
 sources: [{"title": "Microsoft Learn：DI 概觀", "url": "https://learn.microsoft.com/en-us/dotnet/core/extensions/dependency-injection/overview"}, {"title": "Microsoft Learn：DI 使用指南", "url": "https://learn.microsoft.com/en-us/dotnet/core/extensions/dependency-injection/guidelines"}, {"title": "Microsoft Learn：Options Pattern", "url": "https://learn.microsoft.com/en-us/dotnet/core/extensions/options"}]
+learningDepth: "deep"
 ---
+
+商品查詢、資料存取與通知提供者要被組裝成可執行用例。DI 管理建立與相依關係，Singleton、Scoped、Transient 則決定實例範圍和資源責任。
 
 ## 註冊與持有時間
 
@@ -25,7 +28,7 @@ sources: [{"title": "Microsoft Learn：DI 概觀", "url": "https://learn.microso
 | `AddScoped` | 每個 scope 一個實例 | Web request 中的 DbContext 與工作單位 |
 | `AddSingleton` | 根容器生命週期 | 可安全共享的設定、快取或協調器 |
 
-Scoped 並非天然等於 HTTP request：背景服務可自行建立 scope。Singleton 持有 Scoped 會讓本應短命的依賴被延長，並可能讓 DbContext 被多個工作並行使用。啟用 scope validation 有助於提早發現，但不能替代設計。
+Scoped 並非天然等於 HTTP request：背景服務可自行建立 scope。Singleton 持有 Scoped 會讓本應短命的相依被延長，並可能讓 DbContext 被多個工作並行使用。啟用 scope validation 有助於提早發現，但不能替代設計。
 
 ## 背景工作為每次處理建立 scope
 
@@ -52,3 +55,9 @@ scope 必須活到作業完成；不要返回尚未 await 的 Task 就先釋放 
 ## 資源由誰釋放
 
 容器建立的 IDisposable / IAsyncDisposable 服務由對應容器或 scope 釋放，使用端不應任意 Dispose 共用 Singleton。自行建立或註冊既有 instance 的資源，要確認自己的所有權與結束時機；Transient 若從根容器解析且需釋放，也可能被根容器持有很久。
+
+## 套用到電商情境
+
+商品快取 client 可長時間共用，DbContext 通常配合用例 scope。背景 Worker 沒有 HTTP request scope，需要自行為工作建立；Singleton 不能直接長期持有 Scoped 服務。Options 的設定更新則另外閱讀專篇。
+
+[閱讀對應的電商章節](/projects/ecommerce/configuration/)，把本篇概念接到整個用例。

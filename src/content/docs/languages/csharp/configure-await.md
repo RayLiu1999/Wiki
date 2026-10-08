@@ -11,11 +11,14 @@ prerequisites: ["csharp-async-await"]
 relatedArticles: ["csharp-thread-safety", "aspnet-core-middleware"]
 applicableVersions: "ConfigureAwaitOptions 自 .NET 8 起；本例以 .NET 10 / C# 14 驗證。"
 verifiedWith: ".NET SDK 10.0.105 / net10.0 / C# 14；完整 Program.cs 已納入編譯與輸出驗證。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "None 沒有要求捕捉同步內容；ContinueOnCapturedContext 才對應 ConfigureAwait(true)。"
 noteDates: ["2026-06-02", "2026-10-05", "2026-10-06"]
 sources: [{"title": "Microsoft .NET Blog：ConfigureAwait FAQ", "url": "https://devblogs.microsoft.com/dotnet/configureawait-faq/"}, {"title": "Microsoft Learn：ConfigureAwaitOptions", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.threading.tasks.configureawaitoptions?view=net-10.0"}]
+learningDepth: "deep"
 ---
+
+await 後的延續可能與同步內容和排程環境有關。ConfigureAwait 控制相關延續行為，不能把非同步作業變成同步、補上鎖，或保證某條固定執行緒。
 
 ## await 之後在哪裡繼續
 
@@ -54,3 +57,9 @@ Console.WriteLine((int)ConfigureAwaitOptions.ContinueOnCapturedContext);
 在需要回原內容的環境，呼叫端 `.Result` / `.Wait()` 卡住該內容，延續又等著回去，就可能死結。在 ASP.NET Core 中，即使沒有這種預設同步內容，阻塞仍可能造成 ThreadPool 飢餓與延遲。
 
 優先一路使用 await。只在外層加一個 ConfigureAwait(false) 不能修正內部先前已捕捉內容的 await，也不能替代正確的鎖、取消與例外處理。
+
+## 套用到電商情境
+
+ASP.NET Core 通常沒有傳統 UI 同步內容，不需要為每個端點套上魔法規則。可重用函式庫依契約選擇延續行為；API 仍避免 Result／Wait 阻塞，並用量測辨識 ThreadPool 或下游等待。
+
+[閱讀對應的電商章節](/projects/ecommerce/product-api/)，把本篇概念接到整個用例。

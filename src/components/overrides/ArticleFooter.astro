@@ -1,6 +1,7 @@
 ---
 import Icon from '../Icon.astro';
-import { getArticles, articleUrl } from '../../lib/catalog';
+import { getArticles, articleUrl, getHandbook, handbookUrl } from '../../lib/catalog';
+import { knowledgeMaps, knowledgeMapUrl } from '../../lib/knowledge-maps';
 const data = Astro.locals.starlightRoute.entry.data;
 const allArticles = await getArticles();
 const articles = allArticles.filter((article) => article.data.topic === data.topic);
@@ -9,8 +10,12 @@ const previous = index > 0 ? articles[index - 1] : undefined;
 const next = index >= 0 ? articles[index + 1] : undefined;
 const prerequisites = allArticles.filter((entry) => data.prerequisites?.includes(entry.data.articleId));
 const related = allArticles.filter((entry) => data.relatedArticles?.includes(entry.data.articleId));
+const contexts = (await getHandbook()).filter((entry) => entry.data.linkedArticles.includes(data.articleId));
+const domains = knowledgeMaps.flatMap((map) => map.domains.filter((domain) => domain.articleIds.includes(data.articleId)).map((domain) => ({ ...domain, mapId: map.id })));
 ---
 <div class="article-resources">
+  {domains.length > 0 && <section><h2>在知識地圖中的位置</h2><ul>{domains.map((domain) => <li><a href={knowledgeMapUrl(domain.mapId) + '#' + domain.id.toLowerCase()}>{domain.id} {domain.title}</a>（{domain.priority}）</li>)}</ul></section>}
+  {contexts.length > 0 && <section><h2>回到案例與實作</h2><ul>{contexts.map((entry) => <li><a href={handbookUrl(entry)}>{entry.data.title}</a></li>)}</ul></section>}
   {data.noteDates.length > 0 && <section class="note-provenance"><h2>工作筆記脈絡</h2><p>對應使用者提供的每日筆記摘要：{data.noteDates.join('、')}。</p><p class="source-note">依摘要統整並補充官方文件；原始筆記與技術子頁未直接匯入。<a href="/work-notes/">查看主題與日期對照</a></p></section>}
   {prerequisites.length > 0 && <section><h2>建議先讀</h2><ul>{prerequisites.map((article) => <li><a href={articleUrl(article)}>{article.data.title}</a></li>)}</ul></section>}
   {related.length > 0 && <section><h2>連結相關知識</h2><ul>{related.map((article) => <li><a href={articleUrl(article)}>{article.data.title}</a></li>)}</ul></section>}

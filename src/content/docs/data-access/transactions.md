@@ -11,11 +11,14 @@ prerequisites: ["data-access-ef-core", "csharp-disposable"]
 relatedArticles: ["data-access-batch-updates", "data-access-pools-locks", "architecture-application-patterns", "architecture-outbox-inbox", "redis-cache-aside"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "資料庫回滾會撤銷已加入交易的資料操作，不會自動倒帶 DbContext 內的物件。"
 noteDates: ["2026-05-21", "2026-05-22", "2026-06-29", "2026-07-01", "2026-09-02", "2026-10-06"]
 sources: [{"title": "Dapper：官方原始碼與說明", "url": "https://github.com/DapperLib/Dapper"}, {"title": "Dapper：CommandDefinition", "url": "https://github.com/DapperLib/Dapper/blob/main/Dapper/CommandDefinition.cs"}, {"title": "Microsoft Learn：EF Core 交易", "url": "https://learn.microsoft.com/en-us/ef/core/saving/transactions"}, {"title": "Microsoft Learn：EF Core Change Tracking", "url": "https://learn.microsoft.com/en-us/ef/core/change-tracking/"}]
+learningDepth: "deep"
 ---
+
+交易讓指定資料操作一起提交或回滾。建立訂單時，先定義必須一起保存的內容，再確保每個資料命令使用同一 connection 與 transaction。
 
 ## Dapper 的 transaction 要傳到每個命令
 
@@ -59,3 +62,9 @@ EF Core 交易內的 SaveChanges 可能建立 savepoint，支援與限制取決�
 回滾後，Entity 的屬性與 tracking 狀態可能仍反映已嘗試或已接受的變更。特別是 SaveChanges 成功後再回滾外層交易，context 可能已把資料視為未變更。
 
 依用例丟棄 context、重新載入或清理追蹤後重建操作；不要盲目重送同一份記憶體狀態。資料庫交易也不會自動回滾寄信或跨服務呼叫。
+
+## 套用到電商情境
+
+訂單、庫存保留與 Outbox 若屬於同一資料庫交易，應在失敗時一起回滾。Redis 失效和 RabbitMQ Confirm 在外部邊界，需要額外恢復；資料庫回滾也不會自動重設已經修改的 .NET 物件。目前實驗實現訂單加 Outbox，庫存尚未加入。
+
+[閱讀對應的電商章節](/projects/ecommerce/ordering-inventory/)，把本篇概念接到整個用例。

@@ -1,5 +1,7 @@
 # Redis、RabbitMQ 與可靠訊息處理實驗
 
+網站已提供包含環境、完整操作與驗證範圍的實作指南：`/practice/ecommerce/`。原始指南在 `src/content/handbook/practice/`。
+
 這組範例搭配 Wiki 的「.NET 快取與可靠訊息處理」學習路徑。商品查詢示範 Redis Cache-Aside；訂單流程示範 PostgreSQL Outbox、RabbitMQ 發布確認、有限重試，以及 Inbox 與模擬通知結果的交易。
 
 API 與 Worker 是本機執行的獨立 .NET 程序，Docker 只提供實驗服務。通知結果寫在資料庫，沒有實際寄信。Wiki 仍以靜態檔案提供文章，閱讀網站不需要啟動這些服務。

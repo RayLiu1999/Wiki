@@ -11,12 +11,15 @@ prerequisites: [csharp-control-flow]
 relatedArticles: [csharp-classes, csharp-value-reference-types]
 applicableVersions: 概念通用；範例以頂層陳述式中的區域函式示範，需 C# 9 以上。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
-lastReviewed: 2026-10-07
+lastReviewed: "2026-10-08"
 takeaway: 好的方法名稱說明行為，參數表達需求，回傳值表達結果。
 sources:
   - title: Microsoft Learn：方法
     url: https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/classes-and-structs/methods
+learningDepth: "basic"
 ---
+
+方法替一段有明確輸入與結果的行為命名。把折扣計算或商品驗證拆成方法，可以讓呼叫端看懂目的，也能清楚核對參數、回傳值與副作用。
 
 ## 替一段行為取名字
 
@@ -54,4 +57,10 @@ static int ApplyDiscount(int price, int percent)
 
 - 回傳型別不是 <code>void</code> 時，每條正常完成的路徑都必須回傳值。
 - 引數預設以值傳遞；若傳入的是參考型別，複製的是參考，並非整個物件。
-- 不要只依賴模糊的名稱，例如 <code>Process</code>，應說明實際處理的行為。
+- 不要只相依模糊的名稱，例如 <code>Process</code>，應說明實際處理的行為。
+
+## 套用到電商情境
+
+折扣方法可只負責計算；保存訂單則是包含資料操作的用例。分清兩者，才能用純資料測試計算、用交易驗證提交。範例以整數折扣展示參數與結果，實際金額需另定幣別和捨入規則。
+
+[閱讀對應的電商章節](/projects/ecommerce/catalog/)，把本篇概念接到整個用例。

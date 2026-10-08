@@ -11,11 +11,14 @@ prerequisites: ["csharp-async-await"]
 relatedArticles: ["aspnet-core-authentication", "engineering-metrics-tracing"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "Middleware 進入依註冊順序，返回依反向順序；header 必須在 response 開始前設定。"
 noteDates: ["2026-07-17"]
 sources: [{"title": "Microsoft Learn：Middleware", "url": "https://learn.microsoft.com/en-us/aspnet/core/fundamentals/middleware/?view=aspnetcore-10.0"}, {"title": "Microsoft Learn：HttpResponse.OnStarting", "url": "https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httpresponse.onstarting?view=aspnetcore-10.0"}]
+learningDepth: "deep"
 ---
+
+Middleware 按順序包住後續 HTTP 處理。診斷、例外、認證與授權的排列，影響商品端點會看到什麼身分、錯誤和回應內容。
 
 ## 把管線想成包住下一層
 
@@ -43,6 +46,12 @@ OnStarting 註冊的 callback 在 headers 送出前執行，多個 callback 通�
 
 ## 短路需要完成自己的回應
 
-若 Middleware 決定不呼叫 next，就應明確設定狀態與必要內容。非同步背景工作不應在 request 結束後继續持有 HttpContext。
+若 Middleware 決定不呼叫 next，就應明確設定狀態與必要內容。非同步背景工作不應在 request 結束後繼續持有 HttpContext。
 
 TraceIdentifier 是本地 request 識別，不必等於跨服務 Activity.TraceId。若要接上分散式追蹤，應使用框架與 OpenTelemetry 的傳播機制，並分清兩者用途。
+
+## 套用到電商情境
+
+請求識別可在進入 API 時建立，例外處理包住後續用例，授權依已建立的使用者判斷。回應開始後不能隨意改 header；短路時要明確完成回應。商品規則仍放在用例和領域邊界。
+
+[閱讀對應的電商章節](/projects/ecommerce/product-api/)，把本篇概念接到整個用例。

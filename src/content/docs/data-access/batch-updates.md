@@ -11,11 +11,14 @@ prerequisites: ["data-access-transactions", "csharp-cancellation"]
 relatedArticles: ["data-access-pools-locks", "csharp-thread-safety", "engineering-metrics-tracing"]
 applicableVersions: "SQL 範例限定 SQL Server T-SQL；其他資料庫需重寫批次語法與鎖定策略。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "批次需要可重跑的範圍與清楚的提交邊界；延遲應放在釋放交易與連線之後。"
 noteDates: ["2026-09-02"]
 sources: [{"title": "Microsoft Learn：SQL Server UPDATE", "url": "https://learn.microsoft.com/en-us/sql/t-sql/queries/update-transact-sql?view=sql-server-ver17"}, {"title": "Microsoft Learn：SQL Server 鎖與交易", "url": "https://learn.microsoft.com/en-us/sql/relational-databases/sql-server-transaction-locking-and-row-versioning-guide?view=sql-server-ver17"}, {"title": "Dapper：CommandDefinition", "url": "https://github.com/DapperLib/Dapper/blob/main/Dapper/CommandDefinition.cs"}]
+learningDepth: "deep"
 ---
+
+批次改價、資料轉換或過期保留清理，可能一次影響大量資料。分批提交可以限制鎖持有與資源佔用，但也會改變整體原子性與恢復方式。
 
 ## 將大工作拆成可觀察的小提交
 
@@ -58,3 +61,9 @@ TOP 不保證處理順序；若順序有業務意義，應改用有序選取範�
 檢查索引、查詢計畫、觸發器和 affected rows 的契約。多個 worker 同時取資料時，需使用實際資料庫支援的 claim / 鎖定流程或防止重複執行；process 內 SemaphoreSlim 不能協調其他 Pod。
 
 保留進度、每批耗時與錯誤紀錄；失敗後從安全的 checkpoint 繼續。單純縮小 batch 無法修正錯誤的 WHERE、無索引掃描或長交易。
+
+## 套用到電商情境
+
+促銷改價分批時，先定義批次識別、檢查點與失敗重跑。每批交易結束後再等待，不要在延遲期間佔著連線和鎖。讀者也應知道更新期間可能同時看到新舊價格，歷史訂單快照則保持原值。
+
+[閱讀對應的電商章節](/projects/ecommerce/delivery/)，把本篇概念接到整個用例。

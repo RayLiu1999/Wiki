@@ -11,11 +11,14 @@ prerequisites: ["csharp-variables"]
 relatedArticles: ["dotnet-identifiers", "data-access-type-mapping", "engineering-metrics-tracing"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "Offset 能標示時間點，不能代表完整時區；未來排程還需要所在地的時區規則。"
 noteDates: ["2026-05-27", "2026-06-08", "2026-07-01"]
 sources: [{"title": "Microsoft Learn：日期時間型別選擇", "url": "https://learn.microsoft.com/en-us/dotnet/standard/datetime/choosing-between-datetime"}, {"title": "Microsoft Learn：轉換時區", "url": "https://learn.microsoft.com/en-us/dotnet/standard/datetime/converting-between-time-zones"}, {"title": "Microsoft Learn：DateTimeOffset.ToUnixTimeSeconds", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.datetimeoffset.tounixtimeseconds?view=net-10.0"}]
+learningDepth: "deep"
 ---
+
+下單時間是一個時間點，促銷開始可能是某地區的排程，保留期限則涉及經過時間。先區分這些意義，再選 DateTimeOffset、UTC、時區和時計抽象。
 
 ## 先決定資料的時間意義
 
@@ -44,3 +47,9 @@ Unix seconds 與 milliseconds 差 1000 倍；欄位註解及 API 契約要寫清
 跨 Windows / Linux 部署時，核對 time zone id 格式、ICU / tzdata 與規則版本；不要自行用固定加減小時取代 TimeZoneInfo。時區規則可能更新，未來排程與歷史顯示要分別設計。
 
 測試時間相關規則時，注入時鐘或 TimeProvider，涵蓋日界線、DST 與秒 / 毫秒單位，避免依賴測試機器的目前時間與所在地。
+
+## 套用到電商情境
+
+保存訂單發生時間可用明確 UTC 時間點；展示時依買家時區轉換。促銷排程需要地區時區與 DST 規則，庫存保留到期也要有可測試的時計與重新啟動後策略。單一 UTC offset 不等於完整時區。
+
+[閱讀對應的電商章節](/projects/ecommerce/ordering-inventory/)，把本篇概念接到整個用例。

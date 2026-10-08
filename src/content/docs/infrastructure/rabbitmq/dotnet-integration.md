@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "Connection 長時間重用，Channel 依工作分配；停止程序時讓未確認工作可以重送。"
 noteDates: []
 sources: [{"title":"RabbitMQ：.NET API Guide","url":"https://www.rabbitmq.com/client-libraries/dotnet-api-guide"},{"title":"RabbitMQ：可靠發布 C# 教學","url":"https://www.rabbitmq.com/tutorials/tutorial-seven-dotnet"},{"title":"Microsoft Learn：Worker services","url":"https://learn.microsoft.com/en-us/dotnet/core/extensions/workers"}]
+learningDepth: "deep"
 ---
+
+RabbitMQ.Client 負責連接 Broker，應用負責分配 Channel、定義事件與完成結果。先讀懂網路連接和單次交付，再將消費放進可停止的背景程序。
 
 ## 使用與套件版本相符的 API
 
@@ -23,9 +26,9 @@ sources: [{"title":"RabbitMQ：.NET API Guide","url":"https://www.rabbitmq.com/c
 
 ConnectionFactory 由環境設定取得帳號、port 與 devwiki vhost。Connection 是長時間網路連線；Channel 在同一個連線上提供邏輯通訊。頻繁為每則訊息建立 Connection 會增加握手與資源成本。
 
-## 先跑最小發布與接收
+## 讀懂發布與接收片段
 
-以下片段取自 RabbitMqDemo/Program.cs。外層建立連線、唯一拓樸、讀取用 Channel 與 15 秒期限；ConfirmedPublisher 內部使用另一個 Channel。
+下方是整合片段。外層提供 IConnection、讀取用 IChannel 和 CancellationToken。ConfirmedPublisher 是自訂的確認發布包裝，topology 是自訂的 Exchange／Queue 設定，OrderPlaced 是帶 MessageId、OrderId、商品、數量與發生時間的事件，LabJson 負責契約序列化。這些自訂型別與完整啟動程式見[實作指南](/practice/ecommerce/cache-messaging/)；不是 RabbitMQ 套件自動提供的類別。
 
 ~~~csharp title="RabbitMqDemo/Program.cs（已納入完整範例）"
 await using var publisher = await ConfirmedPublisher.CreateAsync(connection, topology, token);
@@ -42,13 +45,7 @@ await channel.BasicAckAsync(delivery.DeliveryTag, multiple: false, token);
 Console.WriteLine("消費確認: 已完成處理");
 ~~~
 
-執行 pnpm lab:up 與 pnpm lab:rabbit，預期輸出：
-
-~~~text
-發布確認: broker 已接收
-消費內容: 商品 1，數量 2
-消費確認: 已完成處理
-~~~
+完整範例輸出依序表示發布確認、讀到商品與數量、以及消費確認；完整操作與三行結果見[實作指南](/practice/ecommerce/cache-messaging/)。
 
 BasicGet 是為了讓最小範例容易看見一則訊息的生命週期。持續運作的 OrderWorker 使用 BasicConsumeAsync 與 AsyncEventingBasicConsumer，由 broker 推送工作。
 
@@ -69,3 +66,9 @@ MessageId 是去重識別碼，DeliveryTag 是目前 Channel 上的確認識別�
 停止時取消背景迴圈，停止接收新工作，等待進行中的處理，再釋放 Channel 與 Connection。已完成資料庫交易但來不及 Ack 的訊息可能重送，因此正常關閉與冪等處理必須一起設計。
 
 Automatic Recovery 協助連線中斷後恢復，仍需處理初次連線失敗、未確認發布與應用程式狀態。OrderWorker 在重試發布失敗時保留原訊息，讓程序停止並關閉 Channel 後由 broker 重新投遞。它是可執行的主控台 Worker；正式服務可整合 Generic Host／BackgroundService 與部署平台的停止訊號。
+
+## 套用到電商情境
+
+下方 ConfirmedPublisher、OrderPlaced 和 LabJson 是教學程式自訂的型別，非 RabbitMQ 內建 API。發布與消費使用不同 Channel；穩定 MessageId 用於去重，DeliveryTag 只用於目前 Channel 確認。現有 Console Worker 尚需補平台停止訊號與多程序的工作領取協定。
+
+[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。

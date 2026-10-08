@@ -11,13 +11,16 @@ prerequisites: [csharp-async-await, csharp-disposable]
 relatedArticles: ["csharp-exceptions", "csharp-async-await", "csharp-async-coordination", "csharp-channels", "aspnet-core-http-resilience"]
 applicableVersions: 取消權杖概念通用；完整範例使用 C# 9 以上的頂層 await。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
-lastReviewed: 2026-10-07
+lastReviewed: "2026-10-08"
 takeaway: Cancel 發出取消要求；作業必須接收並回應權杖，才會停止。
 sources:
   - title: Microsoft Learn：受控執行緒中的取消
     url: https://learn.microsoft.com/en-us/dotnet/standard/threading/cancellation-in-managed-threads
 noteDates: ["2026-05-21", "2026-05-27"]
+learningDepth: "basic"
 ---
+
+取消由擁有作業的人提出，再由各層合作停止。買家關閉請求或平台準備停止 Worker 時，CancellationToken 讓等待與工作收到同一個訊號。
 
 ## 取消是一種協作
 
@@ -61,8 +64,14 @@ catch (OperationCanceledException) when (source.IsCancellationRequested)
 - 不要把所有取消都當成系統故障；應區分使用者取消、逾時與其他錯誤。
 - 取消後不會自動回復已完成的外部操作；有副作用的流程仍需要自己的交易或補償設計。
 
-## 工作筆記：誰擁有取消來源
+## 深入理解：誰擁有取消來源
 
 CancellationToken 是傳遞取消要求的值；CancellationTokenSource 是發出要求與管理期限的資源。request、host shutdown 或呼叫者的 token 應一路傳給 HTTP、資料庫、Task.Delay 與 Channel 讀寫。
 
 Dispose CancellationTokenSource 不等於發出 Cancel。也不要在一個 await 被取消後，誤以為其他 WhenAll 作業自動停止；每個作業仍需合作觀察 token。多個生命週期可用 linked source 組合，結束後釋放自己建立的 source。
+
+## 套用到電商情境
+
+HTTP 取消不等於已提交訂單被撤銷，取消等待也不保證外部付款未發生。已完成交易的背景事件應保留可恢復狀態；停止 Worker 時分清接收新工作、正在執行交易與尚未確認訊息。
+
+[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。

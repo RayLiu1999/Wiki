@@ -11,11 +11,14 @@ prerequisites: ["csharp-methods", "csharp-class-design"]
 relatedArticles: ["aspnet-core-model-binding", "aspnet-core-api-styles-aot"]
 applicableVersions: "以 .NET 10 / C# 14 核對；個別語法與 API 的最低版本見內文。"
 verifiedWith: ".NET SDK 10.0.105 / net10.0 / C# 14；完整 Program.cs 已納入編譯與輸出驗證。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "擴充方法仍是靜態方法；Attribute 只有被框架或程式讀取時才產生效果。"
 noteDates: ["2026-05-27", "2026-05-28", "2026-06-24"]
 sources: [{"title": "Microsoft Learn：擴充成員", "url": "https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/classes-and-structs/extension-methods"}, {"title": "Microsoft Learn：Attribute", "url": "https://learn.microsoft.com/en-us/dotnet/csharp/advanced-topics/reflection-and-attributes/"}]
+learningDepth: "deep"
 ---
+
+擴充方法讓既有型別多一種呼叫寫法，Attribute 則在宣告上附加中繼資料。兩者都常見於 ASP.NET Core，但附加名稱或標記不代表行為已經自動執行。
 
 ## 用 this 擴充既有型別的呼叫方式
 
@@ -57,3 +60,9 @@ Hello, Ada
 ## 避免藏住重要行為
 
 擴充方法適合可讀的小操作；資料庫查詢、交易或外部呼叫應讓成本在命名與介面上可見。反射讀取 Attribute 的流程若部署到 Native AOT，需確認 metadata 保留、來源產生器或明確註冊方式，不能只用一般 JIT 測試就宣稱相容。
+
+## 套用到電商情境
+
+AddProductServices 可整理組裝設定，商品資料的擴充方法仍要讓副作用可見。標上驗證或授權 Attribute，還需要相應框架讀取並執行；涉及交易與庫存的規則不能只靠一個未被處理的標記。
+
+[閱讀對應的電商章節](/projects/ecommerce/product-api/)，把本篇概念接到整個用例。

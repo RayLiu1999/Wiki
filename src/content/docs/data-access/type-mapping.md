@@ -11,11 +11,14 @@ prerequisites: ["csharp-variables", "data-access-ef-core"]
 relatedArticles: ["data-access-migrations", "csharp-records-invariants"]
 applicableVersions: "比較 SQL Server、MySQL 8.4 與 PostgreSQL；實際 CLR 對應由選用 provider 驗證。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "tinyint 不是跨資料庫完全一致的型別；先確認值域與 provider 的映射。"
 noteDates: ["2026-07-14"]
 sources: [{"title": "Microsoft Learn：SQL Server 整數型別", "url": "https://learn.microsoft.com/en-us/sql/t-sql/data-types/int-bigint-smallint-and-tinyint-transact-sql?view=sql-server-ver17"}, {"title": "MySQL 8.4：Integer types", "url": "https://dev.mysql.com/doc/refman/8.4/en/integer-types.html"}, {"title": "PostgreSQL：Numeric types", "url": "https://www.postgresql.org/docs/current/datatype-numeric.html"}]
+learningDepth: "deep"
 ---
+
+C# 的 byte 與各資料庫的 tinyint 未必具有相同值域。商品或訂單狀態在.NET、ORM 與資料庫間轉換時，需要核對供應商型別與約束。
 
 ## 名稱相同，值域可能不同
 
@@ -38,10 +41,16 @@ int storedValue = 255;
 byte value = checked((byte)storedValue);
 ~~~
 
-ORM / Dapper 讀取的型別轉換，也要以实際 driver、nullable 設定與代表性資料驗證，而不是假設會自動接受所有整數。
+ORM / Dapper 讀取的型別轉換，也要以實際 driver、nullable 設定與代表性資料驗證，而不是假設會自動接受所有整數。
 
 ## 商業狀態不要只留下數字
 
 如果 tinyint 儲存訂單狀態，在資料表與欄位註解寫明代碼、有效範圍、預設值及 null 意義，並以約束維持有效資料。enum 也可能被轉型成未定義值，仍需在邊界檢查。
 
 Migration 更換 provider 或型別時，先檢查既有負數、255 上界與 null，再安排資料轉換；欄位更小不等於一定值得犧牲可維護性。
+
+## 套用到電商情境
+
+訂單狀態若用數字保存，要有可維護的映射、合法值約束與持久說明。不要將某個資料庫的 tinyint 語意直接搬到 PostgreSQL；enum 也可能收到未命名數字，需要邊界驗證與升級策略。
+
+[閱讀對應的電商章節](/projects/ecommerce/catalog/)，把本篇概念接到整個用例。

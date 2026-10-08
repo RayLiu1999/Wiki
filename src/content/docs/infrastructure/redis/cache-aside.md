@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "先提交資料庫再使快取失效是起點；併發、失效失敗與回源負載仍需要獨立設計。"
 noteDates: []
 sources: [{"title":"Microsoft Learn：Cache-Aside","url":"https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside"},{"title":"Redis：Key eviction","url":"https://redis.io/docs/latest/develop/reference/eviction/"}]
+learningDepth: "deep"
 ---
+
+Cache-Aside 先查副本，未命中才回資料來源。商品價格更新後還要處理失效，讀取回填與寫入競爭則決定可能看到多少舊資料。
 
 ## 讀取先找副本，未命中才回源
 
@@ -69,13 +72,12 @@ Redis 失敗時仍可讀取資料庫，source 顯示 database-fallback。這個�
 
 ## 以可觀察的結果驗證
 
-執行 pnpm lab:api 後，可以在第二個終端機觀察：
+商品冷讀、命中、價格更新、TTL 到期、損壞副本與停機回源，應各自核對回應資料與讀取路徑。首次來源取決於既有副本，重複讀取通常命中；更新後的下一次讀取要核對新價格與遞增 version。
 
-~~~sh
-curl http://127.0.0.1:5080/products/1
-curl http://127.0.0.1:5080/products/1
-curl -X PUT http://127.0.0.1:5080/products/1/price -H 'Content-Type: application/json' -d '{"price":120.00}'
-curl http://127.0.0.1:5080/products/1
-~~~
+[快取實作指南](/practice/ecommerce/cache-messaging/)提供程序啟動與 HTTP 操作；[故障驗證指南](/practice/ecommerce/failure-drills/)說明隔離環境和斷言。
 
-第一次讀取的來源取決於既有副本，重複讀取通常命中；更新後的下一次讀取應看到新價格與遞增 version。pnpm test:infrastructure 使用全新的隔離容器，另外核對冷讀、命中、TTL 到期、更新失效、損壞快取與 Redis 停機時的回源結果。
+## 套用到電商情境
+
+查詢可以在 Redis 失效時回資料庫，但必須預算回源壓力。提交價格後刪除 key 仍可能遇到舊讀回填，需要定義可接受窗口和監測；庫存扣減與付款的最終判斷不依賴這種可過期副本。
+
+[閱讀對應的電商章節](/projects/ecommerce/caching/)，把本篇概念接到整個用例。

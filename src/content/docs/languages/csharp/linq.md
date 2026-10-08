@@ -11,7 +11,7 @@ prerequisites: [csharp-collections, csharp-delegates]
 relatedArticles: ["csharp-async-await", "csharp-query-abstractions", "data-access-ef-core"]
 applicableVersions: LINQ to Objects 概念通用；完整範例使用 C# 9 以上。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
-lastReviewed: 2026-10-07
+lastReviewed: "2026-10-08"
 takeaway: 許多 LINQ 查詢在列舉時才執行；ToList 會立即建立結果清單。
 sources:
   - title: Microsoft Learn：LINQ 查詢概觀
@@ -19,7 +19,10 @@ sources:
   - title: "Microsoft Learn：EF Core 查詢評估"
     url: https://learn.microsoft.com/en-us/ef/core/querying/client-eval
 noteDates: ["2026-06-04", "2026-10-06"]
+learningDepth: "basic"
 ---
+
+LINQ 用篩選、排序與投影描述資料結果。商品清單可以先選上架資料，再取畫面需要的欄位；理解何時實際列舉，才能判斷執行次數與資料來源。
 
 ## 用查詢描述資料
 
@@ -61,8 +64,14 @@ Console.WriteLine(string.Join(", ", query));
 - 重複列舉可能重做昂貴的工作，也可能得到不同資料。
 - 清單快照不等於深層複製；若元素是可變物件，仍可能共享物件參考。
 
-## 工作筆記：EF Core 的查詢邊界
+## 深入理解：EF Core 的查詢邊界
 
 對 EF Core DbSet 組合 LINQ 時，provider 可將支援的 Where、Select、OrderBy 等表達式翻成 SQL。ToListAsync 等方法才觸發實體化；不要先載入全部再篩選。
 
 不是每個 C# 方法都能翻譯；AsEnumerable 後的操作也可能移到用戶端。需用實際 provider 檢查 SQL 與效能，不能由記憶體 List 的範例推論資料庫查詢結果。
+
+## 套用到電商情境
+
+記憶體集合的 LINQ 會由 .NET 執行；EF Core 的 IQueryable 可能轉譯為 SQL。先在資料來源篩選和分頁，再實體化 DTO，避免先載入所有商品。列舉兩次也可能執行兩次工作，要核對來源與需求。
+
+[閱讀對應的電商章節](/projects/ecommerce/product-api/)，把本篇概念接到整個用例。

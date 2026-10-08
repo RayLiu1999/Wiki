@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "Producer 發布到 Exchange；哪些 Queue 收到訊息由 Binding 與路由規則決定。"
 noteDates: []
 sources: [{"title":"RabbitMQ：AMQP 0-9-1 Model","url":"https://www.rabbitmq.com/tutorials/amqp-concepts"},{"title":"RabbitMQ：Publishers","url":"https://www.rabbitmq.com/docs/publishers"},{"title":"RabbitMQ：Exchanges","url":"https://www.rabbitmq.com/docs/exchanges"}]
+learningDepth: "deep"
 ---
+
+Exchange 決定路由，Binding 描述匹配，Queue 保存等待交付的工作。訂單事件要送到通知或分析，需要把 routingkey 與獨立訂閱責任寫成契約。
 
 ## Exchange 選擇路由，Queue 保存工作
 
@@ -61,4 +64,10 @@ devwiki.orders.failed（Direct）
 
 Publisher 使用 mandatory=true，並啟用確認追蹤。訊息沒有路由到 Queue 時會被退回，範例的 await 因而失敗。只看 Publisher Confirm 的成功，不能自行推論所有預期訂閱都收到了訊息。
 
-pnpm test:infrastructure 會刻意使用沒有 Binding 的 Routing Key，核對發布失敗；Outbox 的未發布紀錄必須保留供恢復。另要監控退回原因與拓樸變更，避免重試同一份錯誤設定卻永遠無法路由。
+[隔離故障驗證](/practice/ecommerce/failure-drills/)會刻意使用沒有 Binding 的 Routing Key，核對發布失敗；Outbox 的未發布紀錄必須保留供恢復。另要監控退回原因與拓樸變更，避免重試同一份錯誤設定卻永遠無法路由。
+
+## 套用到電商情境
+
+orders.placed.v1 表示訂單建立，而不是付款完成；devwiki 前綴只是本教學應用的命名。通知、重試與死信各有 Queue，並明確限制重試次數。沒有路由應被發布端觀察，不能把「呼叫 publish」當成一定有工作被保存。
+
+[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。

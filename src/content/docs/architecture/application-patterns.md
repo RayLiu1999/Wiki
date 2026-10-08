@@ -11,15 +11,18 @@ prerequisites: ["architecture-domain-modeling"]
 relatedArticles: ["data-access-transactions", "data-access-ef-core", "engineering-business-tests", "aspnet-core-model-binding", "architecture-outbox-inbox", "architecture-communication-boundaries"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "模式用來釐清責任；CQRS 不要求分開資料庫，Mediator 也不會自動提供交易。"
 noteDates: ["2026-05-25", "2026-05-28", "2026-06-09", "2026-10-05"]
 sources: [{"title": "Microsoft Learn：CQRS", "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs"}, {"title": "Microsoft Learn：實作 Repository 與 Unit of Work", "url": "https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/infrastructure-persistence-layer-implementation"}]
+learningDepth: "deep"
 ---
+
+Repository、Unit of Work 與 CQRS 各表達資料或用例邊界。選擇這些模式前，先說明建立訂單和讀取商品各需要什麼能力，而不是每張表都套同一套類別。
 
 ## 一個用例的閱讀順序
 
-以「確認訂單」為例：API 接收 DTO，將資料轉成 Command；Validator 檢查輸入契約；Handler 載入 Aggregate，呼叫 Confirm 行為，最後提交 Unit of Work。Domain 在 Confirm 中維持規則，而不是依賴每個呼叫端先做驗證。
+以「確認訂單」為例：API 接收 DTO，將資料轉成 Command；Validator 檢查輸入契約；Handler 載入 Aggregate，呼叫 Confirm 行為，最後提交 Unit of Work。Domain 在 Confirm 中維持規則，而不是相依每個呼叫端先做驗證。
 
 | 名稱 | 責任 |
 | --- | --- |
@@ -43,3 +46,9 @@ sources: [{"title": "Microsoft Learn：CQRS", "url": "https://learn.microsoft.co
 DbContext 已具工作單位與資料集合能力；額外 Repository 應提供 Aggregate 邊界或可測試的業務 port，而不是只是把所有 DbSet 方法重新命名。任意回傳 IQueryable，也可能把 provider、scope 與查詢成本洩漏到上層。
 
 Mediator pipeline 可加入 logging、validation 或 transaction 行為，但必須明確實作與測試；不會因為使用套件就自動具有原子性。外部 HTTP、寄信與資料庫提交不會自然包含在同一個本地交易中。
+
+## 套用到電商情境
+
+建立訂單協調規則與提交；商品查詢可以直接投影 DTO。CQRS 可以先在同一資料庫分開讀寫模型，未必要建立兩個服務。若 EF Core 已提供適合的工作單元，不必再包一層只轉呼叫而沒有語意的介面。
+
+[閱讀對應的電商章節](/projects/ecommerce/ordering-inventory/)，把本篇概念接到整個用例。

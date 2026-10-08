@@ -11,13 +11,16 @@ prerequisites: [csharp-methods]
 relatedArticles: ["csharp-value-reference-types", "csharp-interfaces", "csharp-class-design", "csharp-type-operators", "csharp-records-invariants"]
 applicableVersions: 類別概念通用；完整範例使用 C# 9 以上的頂層陳述式。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
-lastReviewed: 2026-10-07
+lastReviewed: "2026-10-08"
 takeaway: class 描述物件的形狀；公開哪些成員，是設計的一部分。
 sources:
   - title: Microsoft Learn：類別
     url: https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/types/classes
 noteDates: ["2026-05-21", "2026-05-25", "2026-06-03"]
+learningDepth: "basic"
 ---
+
+class 描述物件的狀態與行為，實例則是一份具體狀態。商品與訂單需要不同的公開操作，建構與存取限制可以讓呼叫端知道哪些變更被允許。
 
 ## 型別與實例
 
@@ -25,7 +28,7 @@ noteDates: ["2026-05-21", "2026-05-25", "2026-06-03"]
 
 建構函式負責讓新物件從有效狀態開始。屬性可以控制資料的讀寫方式；<code>public</code> 表示公開，<code>private</code> 表示只讓類別內部使用。
 
-## 建立一份筆記
+## 用小型物件觀察建構
 
 ~~~csharp title="Program.cs"
 var notebook = new Notebook("C# 程式筆記");
@@ -63,8 +66,14 @@ C# 程式筆記
 - 類別是參考型別，指派變數不會自動複製物件。
 - 建構時檢查必要條件，比讓無效狀態流到其他方法更容易維護。
 
-## 工作筆記：建構與擴充邊界
+## 深入理解：建構與擴充邊界
 
 建構子可多載，同類別用 `this(...)` 串接，衍生類別用 `base(...)` 初始化父類別。建構子應讓物件一開始就滿足必要規則，不要要求每個呼叫端稍後手動補上關鍵欄位。
 
 internal、sealed、virtual 與 partial 分別處理組件存取、繼承、覆寫與宣告拆分；record / init / with 則是另一組資料設計選擇，連結下列文章可繼續閱讀。
+
+## 套用到電商情境
+
+下面 Notebook 是聚焦建構函式的小型完整程式。換成商品模型時，可以要求合法名稱與價格，並透過改價方法維持規則；只把類別換名不會完成商品設計。訂單成立後的歷史價格也應由明細快照保存。
+
+[閱讀對應的電商章節](/projects/ecommerce/catalog/)，把本篇概念接到整個用例。

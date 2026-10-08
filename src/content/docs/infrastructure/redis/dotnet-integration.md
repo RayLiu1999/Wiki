@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "IDistributedCache 提供快取抽象，原生 client 提供 Redis 操作；連線由應用程式生命週期管理。"
 noteDates: []
 sources: [{"title":"Microsoft Learn：分散式快取","url":"https://learn.microsoft.com/en-us/aspnet/core/performance/caching/distributed?view=aspnetcore-10.0"},{"title":"StackExchange.Redis：Basic Usage","url":"https://seredis.dev/Basics"},{"title":"Redis：.NET 用戶端","url":"https://redis.io/docs/latest/develop/clients/dotnet/"}]
+learningDepth: "deep"
 ---
+
+商品 API 需要可重用 Redis 連接，才能在請求間有效存取共享快取。IDistributedCache 提供一般快取抽象，StackExchange.Redis 提供更完整的原生操作；資源所有權與序列化仍由應用設計。
 
 ## 選擇需要的 API 能力
 
@@ -27,7 +30,7 @@ StackExchange.Redis 的 IConnectionMultiplexer 與 IDatabase 則提供原生操�
 
 ConnectionMultiplexer 管理網路連線與多個並行操作，適合長時間重用。GetDatabase 取得操作介面，不是每次建立一個獨立的資料庫網路連線。Web 應用通常在啟動時建立連線，透過 DI 共享，關閉時釋放；避免每個 request 都 Connect。
 
-以下片段取自 RedisDemo/Program.cs。外層先建立 redis 與唯一 prefix，最後由外層 using 釋放連線。provider 使用同一個 multiplexer；不把網路資源所有權交給每次請求。
+下面是整合片段：`redis` 是外層建立的共享 IConnectionMultiplexer，`prefix` 是區分這次示範 Key 的字串前綴，`services` 是 DI provider。需要 StackExchange.Redis 與 Microsoft.Extensions 的 DI、DistributedCache／Redis provider 套件和相應 using。外層管理連線取得與釋放，本段展示快取註冊與使用，完整可執行程式見[實作指南](/practice/ecommerce/cache-messaging/)。
 
 ~~~csharp title="RedisDemo/Program.cs（已納入完整範例）"
 var registrations = new ServiceCollection();
@@ -45,24 +48,9 @@ await cache.SetStringAsync("product:1", "商品快取", new DistributedCacheEntr
 Console.WriteLine("IDistributedCache: " + await cache.GetStringAsync("product:1"));
 ~~~
 
-## 執行與觀察
+## 抽象與資料格式的界線
 
-從儲存庫根目錄執行：
-
-~~~sh
-pnpm lab:up
-pnpm lab:redis
-~~~
-
-預期輸出：
-
-~~~text
-IDistributedCache: 商品快取
-Hash: 商品名稱
-String TTL 已設定: True
-~~~
-
-完整程式另展示 Hash 操作並移除自己的示範 Key。IDistributedCache provider 的內部格式與前綴由 provider 管理，不能假定與自訂 String 快取可以直接互讀。
+完整小範例另外展示 Hash，並清理自己的示範 Key。IDistributedCache 的 provider 管理內部格式與前綴，不能假定可直接與自訂 String 快取互讀。商品 Cache-Aside 用例需另外定義自己的序列化契約。
 
 ## 序列化與期限是資料契約
 
@@ -75,3 +63,9 @@ AbsoluteExpirationRelativeToNow 以固定時間限制副本生命週期；Slidin
 教學設定使用短連線與操作逾時，方便觀察故障；正式環境要依網路與服務延遲設定。AbortOnConnectFail=false 允許建立可恢復的 client，不保證每一次操作成功。
 
 IDistributedCache 的非同步 API 可接 CancellationToken。部分原生操作沒有相同的 token 參數，可使用 WaitAsync 取消等待，但取消等待不等於撤銷已送至 Redis 的命令。逾時後重試 INCR 等修改操作可能重複生效，需依命令與業務設計冪等性。
+
+## 套用到電商情境
+
+下方整合片段展示共用 multiplexer，完整程序在指南。商品 key、DTO 版本與 TTL 由對應應用契約定義；IDistributedCacheprovider 的內部格式不能假設與自己用 String 保存的 JSON 互通。等待取消也不能撤回已送出的修改命令。
+
+[閱讀對應的電商章節](/projects/ecommerce/caching/)，把本篇概念接到整個用例。

@@ -11,11 +11,14 @@ prerequisites: ["data-access-transactions", "aspnet-core-dependency-injection"]
 relatedArticles: ["data-access-batch-updates", "engineering-metrics-tracing", "aspnet-core-dapr"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "池解決連線重用，交易定義提交邊界，鎖協調資料存取；增加池大小不會解除鎖競爭。"
 noteDates: ["2026-08-26", "2026-10-05"]
 sources: [{"title": "Microsoft Learn：SQL Server 連線池", "url": "https://learn.microsoft.com/en-us/dotnet/framework/data/adonet/sql-server-connection-pooling"}, {"title": "Google Cloud：Cloud SQL Auth Proxy", "url": "https://docs.cloud.google.com/sql/docs/mysql/sql-proxy?hl=en"}, {"title": "Microsoft Learn：EF Core pooling", "url": "https://learn.microsoft.com/en-us/ef/core/performance/advanced-performance-topics"}]
+learningDepth: "deep"
 ---
+
+連線池管理可重用連接，transaction 界定提交，資料庫鎖協調競爭，Proxy 則處理不同的連線責任。商品查詢慢時，要先確認等待發生在哪一層。
 
 ## 四個層級分開看
 
@@ -43,3 +46,9 @@ DbContext pooling 重用 context 物件，與 driver connection pooling 不同�
 ## 診斷等待發生在哪裡
 
 分別觀察取得連線等待、命令執行、transaction 時間與 lock wait。調大 Max Pool Size 可能只讓更多命令同時等待同一把鎖，甚至增加資料庫壓力；先找出真正的瓶頸。
+
+## 套用到電商情境
+
+總池預算要包含所有 API／Worker 程序、各個 DataSource、更新額外副本與工具。Cloud SQL Auth Proxy 不是連接池；長期交易或大量併發會讓等待增加。增加 Pod 可能擴大下游壓力，而不是自動縮短延遲。
+
+[閱讀對應的電商章節](/projects/ecommerce/scaling/)，把本篇概念接到整個用例。

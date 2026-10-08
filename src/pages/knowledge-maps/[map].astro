@@ -1,0 +1,14 @@
+---
+import SiteLayout from '../../layouts/SiteLayout.astro';
+import { getArticles, articleUrl } from '../../lib/catalog';
+import { knowledgeMaps, depthLabels } from '../../lib/knowledge-maps';
+export function getStaticPaths() { return knowledgeMaps.map((map) => ({ params: { map: map.id }, props: { map } })); }
+const { map } = Astro.props;
+const articles = await getArticles();
+---
+<SiteLayout title={map.title} description={map.description}>
+  <section class="page-intro"><p class="eyebrow"><a href="/knowledge-maps/">知識地圖</a></p><h1>{map.title}</h1><p>{map.description}</p><p class="source-note">優先級表示學習安排；深度表示文章目的。官方文件核對、可編譯小範例與外部服務驗證各自在文章中記錄。</p></section>
+  <nav class="note-group-links" aria-label="學習領域">{map.domains.map((domain) => <a href={'#' + domain.id.toLowerCase()}>{domain.id} {domain.title}</a>)}</nav>
+  {map.domains.map((domain) => <section class="map-domain" id={domain.id.toLowerCase()}><p class="eyebrow">{domain.id} · {domain.priority}</p><h2>{domain.title}</h2><p>{domain.focus}</p><p class="domain-outcome"><strong>學會之後：</strong>{domain.outcome}</p><ul class="map-articles">{domain.articleIds.map((id) => { const article = articles.find((entry) => entry.data.articleId === id)!; return <li><a href={articleUrl(article)}>{article.data.title}</a><span>{depthLabels[article.data.learningDepth]}</span></li>; })}</ul></section>)}
+  <p class="path-tip">用同一份知識串接 <a href="/projects/ecommerce/">電商十七個章節</a>；需要跟做時，再進入 <a href="/practice/ecommerce/">實作指南</a>。</p>
+</SiteLayout>

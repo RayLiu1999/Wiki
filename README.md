@@ -1,6 +1,6 @@
 # DevWiki 軟體知識庫
 
-以繁體中文整理軟體知識的靜態 PWA，目前提供 8 個主題、63 篇文章。介面沿用已確認的「書頁閱讀」設計，預設淺色與紫色點綴，提供深色切換。
+以繁體中文整理軟體知識的靜態 PWA，以電商後端串接 C#／.NET 到 GKE，目前提供 12 個技術主題、101 篇技術文章、2 份知識地圖、17 個電商章節、2 篇導讀與 7 篇實作指南。介面沿用已確認的「書頁閱讀」設計，預設淺色與紫色點綴，提供深色切換。
 
 ## 開始使用
 
@@ -57,8 +57,10 @@ docker compose down
 
 ## 已提供功能
 
-- C# 25 篇、ASP.NET Core 9 篇、架構設計 4 篇、資料存取 6 篇、.NET 執行環境 4 篇、測試與觀測 3 篇、Redis 6 篇、RabbitMQ 6 篇。
-- 提供 15 篇的 C# 入門、22 篇的 .NET 後端工作實務，以及 23 篇的 .NET 快取與可靠訊息處理路徑。
+- C# 29 篇、ASP.NET Core 13 篇、架構設計 8 篇、資料存取 9 篇、.NET 10 篇、工程實務 7 篇、Redis 6 篇、RabbitMQ 6 篇、容器 2 篇、網路 1 篇、Kubernetes 6 篇、GKE 4 篇。
+- 開始閱讀 `/start/`、知識地圖 `/knowledge-maps/`、電商專題 `/projects/ecommerce/` 與實作指南 `/practice/ecommerce/` 各有入口。技術正文說明原理與情境；專案操作集中在具備完整前提的指南。
+- 六條技術學習路徑：C# 入門、.NET 後端工作實務、快取與可靠訊息、.NET 深入、容器與 Kubernetes 基礎、GKE 與交付維運。原有三條路徑與文章網址保留。
+- 獨立商品 API 容器範例位於 `examples/deployment/`，提供兩副本 Kubernetes 宣告與 GKE Gateway HTTP 學習入口；雲端部署指南需使用自己的環境，尚未執行 GKE 驗證。
 - 可執行 Redis、RabbitMQ 與 PostgreSQL 實驗，以商品快取、訂單 Outbox、Inbox 與模擬通知串起文章；具備實際服務的故障恢復驗證。
 - 工作筆記概念對照頁，保留使用者提供摘要的相關日期、概念與文章對應；未直接匯入原始 46 篇筆記。
 - Markdown 內容、固定文章網址、版本資料、先備知識、相關文章與官方來源。
@@ -76,7 +78,11 @@ docker compose down
 
 prerequisites、relatedArticles 與 src/lib/learning-paths.ts 使用穩定 articleId。筆記對照位於 src/data/work-notes.json，文章的 noteDates 記錄相關日期。建置檢查主題目錄、分類、重複 ID、文章引用、學習路徑與日期對照。
 
-新增主題時，擴充 src/lib/taxonomy.ts，加入實際內容、Starlight sidebar 與基本頁預快取清單；主題入口由共用路由產生。PWA 的文章路由由實際建置頁面收集，不再限於 C#。
+新增主題時，擴充 src/lib/taxonomy.ts，加入實際內容、Starlight sidebar 與基本頁預快取清單；主題入口由共用路由產生。PWA 的文章與指南路由由實際建置頁面收集。
+
+導讀、電商章節與實作指南位於 `src/content/handbook/{start,ecommerce,practice}/`，使用獨立 schema 與穩定路由。每篇標示環境及驗證範圍；`linkedArticles` 使用技術 articleId，`prerequisites` 使用 handbook 的 group/slug。`overview.md` 為各內容類型的入口。知識地圖在 `src/lib/knowledge-maps.ts` 維護十個 .NET 領域與九個雲端領域。
+
+新增技術文章須提供可獨立理解的背景與取捨，整合片段說明自訂型別、外層依賴和執行範圍。範例啟動、port、終端機位置與觀察結果寫在實作指南，避免讀者必須先開儲存庫 README 才能理解正文。
 
 ## 驗證指令
 
@@ -89,7 +95,7 @@ prerequisites、relatedArticles 與 src/lib/learning-paths.ts 使用穩定 artic
 | pnpm test:container | 對已啟動的容器驗證文章路由、搜尋／PWA 資源、快取標頭與 404 |
 | pnpm build | 靜態頁面、Pagefind、Workbox，以及連結與產物完整性檢查 |
 | pnpm check | 依序執行型別、lint、文章片段核對、單元測試與正式建置 |
-| pnpm test:examples | 比對文章與範例程式，編譯並執行 25 個 C# 範例、核對輸出 |
+| pnpm test:examples | 比對文章與範例程式，編譯並執行 29 個 C# 範例、核對輸出 |
 | pnpm test:infrastructure | 建立隔離 Redis／RabbitMQ／PostgreSQL 容器，核對快取、交易、重試、重送、HTTP 與重啟恢復 |
 | pnpm icons | 從本站 SVG 識別產生 PWA 與 Apple 圖示 |
 
@@ -109,7 +115,7 @@ pnpm test:infrastructure
 pnpm lab:down
 ~~~
 
-實驗使用自己的 devwiki-labs project，port 綁定本機，停止時保留資料。API 與 Worker 分別使用 pnpm lab:api、pnpm lab:worker 啟動。完整設定、curl 步驟、資料重設與驗證範圍見 [實驗 README](examples/infrastructure/README.md)；本例的通知是資料庫結果，未實際寄信。
+實驗使用自己的 devwiki-labs project，port 綁定本機，停止時保留資料。API 與 Worker 分別使用 pnpm lab:api、pnpm lab:worker 啟動。網站完整指南位於 `/practice/ecommerce/`；原始設定、curl 步驟、資料重設與驗證範圍也保留於 [實驗 README](examples/infrastructure/README.md)；本例的通知是資料庫結果，未實際寄信。
 
 ## PWA 行為
 
@@ -135,4 +141,4 @@ Workbox 的獨立建置步驟會在 Pagefind 建好後執行。基本頁面、�
 
 正式公開發布前仍需確認網域、託管平台、內容授權，以及 Android Chrome / iOS Safari 的實際安裝體驗。
 
-完整規劃見 [專案規劃書](docs/PROJECT_PLAN.md)，歷史驗收見 [首版實作與驗收紀錄](docs/IMPLEMENTATION.md)與[工作筆記整合紀錄](docs/WORK_NOTES_INTEGRATION.md)，最新擴充見 [Redis／RabbitMQ 整合紀錄](docs/REDIS_RABBITMQ_INTEGRATION.md)。
+完整規劃見 [專案規劃書](docs/PROJECT_PLAN.md)，歷史驗收見 [首版實作與驗收紀錄](docs/IMPLEMENTATION.md)與[工作筆記整合紀錄](docs/WORK_NOTES_INTEGRATION.md)，Redis／RabbitMQ 實驗紀錄見 [整合紀錄](docs/REDIS_RABBITMQ_INTEGRATION.md)，本次全面改寫見 [內容與驗收紀錄](docs/CONTENT_REWRITE.md)。

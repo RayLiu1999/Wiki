@@ -11,13 +11,16 @@ prerequisites: [csharp-value-reference-types]
 relatedArticles: ["csharp-exceptions", "csharp-parameter-passing", "csharp-records-invariants", "aspnet-core-model-binding"]
 applicableVersions: 可為空參考型別需 C# 8 以上；完整頂層範例需 C# 9 以上。
 verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14 / Nullable enabled
-lastReviewed: 2026-10-07
+lastReviewed: "2026-10-08"
 takeaway: 問號表示資料可能缺少；應處理這種可能，而不是只壓掉警告。
 sources:
   - title: Microsoft Learn：可為空參考型別
     url: https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/null-safety/nullable-reference-types
 noteDates: ["2026-06-04", "2026-06-25"]
+learningDepth: "basic"
 ---
+
+商品查詢可能找不到資料，優惠碼也可能未填。nullable 讓缺少值進入型別契約，使編譯器分析和呼叫端處理更明確；它不等於所有輸入都已被驗證。
 
 ## 讓缺少資料變得明確
 
@@ -57,8 +60,14 @@ Console.WriteLine(length?.ToString() ?? "沒有長度");
 - 單純關閉 nullable 警告，通常只是把問題留到執行時。
 - 呼叫外部 API 或解析資料時，仍需檢查輸入是否符合宣告。
 
-## 工作筆記：把 null 留在正確邊界
+## 深入理解：把 null 留在正確邊界
 
 `Type?` 要依 Type 是值型別或參考型別解讀；`?.`、`??` 處理可能缺少的資料，`!` 只告訴編譯器你保證非空。它不會驗證 HTTP JSON 或資料庫的實際內容。
 
 外部 DTO 可以保留「未提供」狀態，建立領域型別時再驗證必要條件。`out` 的輸出與 `ref` / `in` 的別名語意另見參數傳遞，不要把問號與傳參方式混為一談。
+
+## 套用到電商情境
+
+找不到商品應映射成既定的查詢結果，例如 404；選填優惠碼的 null 則可以是合法輸入。不要把缺少商品轉成預設商品後繼續下單，也不要用 null-forgiving 運算子掩蓋真正未處理的狀態。
+
+[閱讀對應的電商章節](/projects/ecommerce/product-api/)，把本篇概念接到整個用例。

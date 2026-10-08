@@ -23,5 +23,9 @@
   "async-coordination": "10, 20, 30\n99",
   "channels": "1\n2\n3",
   "configure-await": "沒有要求回原同步內容\n1",
-  "thread-safety": "10\n已初始化"
+  "thread-safety": "10\n已初始化",
+  "generics": "1, 2\n電子書",
+  "structs-equality": "True\n120\n100\n0",
+  "await-state-machine": "已取得作業\n報價暫時不可用",
+  "async-disposable": "處理訂單\n非同步清理完成\n離開工作範圍"
 }

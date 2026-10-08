@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "Key、資料結構與 TTL 是同一份資料契約；單一命令的原子性不會自動延伸到一串命令。"
 noteDates: []
 sources: [{"title":"Redis：資料型別","url":"https://redis.io/docs/latest/develop/data-types/"},{"title":"Redis：SET","url":"https://redis.io/docs/latest/commands/set/"},{"title":"Redis：TTL","url":"https://redis.io/docs/latest/commands/ttl/"},{"title":"Redis：INCR","url":"https://redis.io/docs/latest/commands/incr/"}]
+learningDepth: "basic"
 ---
+
+商品副本、購物車明細與排行需要不同操作，Redis 資料結構由讀寫需求決定。Key、格式和 TTL 一起形成契約，單一命令原子性不會自動涵蓋多步流程。
 
 ## 依操作選資料結構
 
@@ -37,7 +40,7 @@ JSON 字串放在 String 中，是應用程式自己的序列化約定；它與 
 
 ## 同一次 SET 設定過期
 
-先執行 pnpm lab:up，再用 pnpm lab:redis-cli 開啟本機實驗的 redis-cli。以下只操作 devwiki:learning: 前綴：
+以下是 Redis CLI 指令語意示例，使用教學自訂的 devwiki:learning: 前綴。SET 寫值、GET 讀值、TTL 看剩餘時間、DEL 刪除；它們不是終端機 shell 命令。要實際輸入，先按[實作指南](/practice/ecommerce/cache-messaging/)開啟對應 CLI：
 
 ~~~text
 SET devwiki:learning:price 100 EX 30
@@ -61,4 +64,10 @@ INCR 本身可以原子地增加整數，但「讀取數量、判斷、寫回」
 
 到期是依 TTL 判定 Key 已失效；淘汰（eviction）是記憶體壓力下依政策移除資料。Key 設定 30 秒 TTL，仍可能因淘汰在 30 秒內消失，因此讀取流程始終需要處理未命中。
 
-這裡的命令使用 Redis 8.2 基本語意；沒有執行全套資料型別或 Cluster 測試。可執行 .NET 範例與故障演練集中在實驗目錄。
+這裡的命令使用 Redis 8.2 基本語意；沒有執行全套資料型別或 Cluster 測試。可執行 .NET 範例與故障演練見[實作指南](/practice/ecommerce/)。
+
+## 套用到電商情境
+
+商品 DTO 可以放 String 並設固定 TTL；購物車若放 Hash，要另定期限與並行更新規則。TTL 不是庫存保留，記憶體淘汰也可能讓 key 提前消失。命名中的格式版本與隔離維度要讓不同程序一致理解。
+
+[閱讀對應的電商章節](/projects/ecommerce/caching/)，把本篇概念接到整個用例。

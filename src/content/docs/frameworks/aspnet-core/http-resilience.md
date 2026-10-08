@@ -11,11 +11,14 @@ prerequisites: ["aspnet-core-http-client-factory", "csharp-cancellation", "cshar
 relatedArticles: ["csharp-query-abstractions", "engineering-metrics-tracing"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "先辨認失敗層級，再決定是否重試；串流與取消要覆蓋整個讀取過程。"
 noteDates: ["2026-06-04", "2026-07-13", "2026-08-07"]
 sources: [{"title": "Microsoft Learn：HttpClient.SendAsync", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclient.sendasync?view=net-10.0"}, {"title": "Microsoft Learn：HttpCompletionOption", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpcompletionoption?view=net-10.0"}, {"title": "Polly：Retry strategy", "url": "https://www.pollydocs.org/strategies/retry.html"}, {"title": "Microsoft Learn：HTTP resilience", "url": "https://learn.microsoft.com/en-us/dotnet/core/resilience/http-resilience"}]
+learningDepth: "deep"
 ---
+
+外部 HTTP 可能連接失敗、回傳錯誤狀態、超時或在讀取 body 時失敗。先拆開失敗層次，才能為商品查詢或付款選擇合適的重試、限流與串流讀取。
 
 ## 先辨認失敗層級
 
@@ -63,3 +66,9 @@ ResponseHeadersRead 下，HttpClient.Timeout 主要覆蓋取得 headers 的階�
 Polly 的 retry 會重新執行 callback。設定 ShouldHandle、最大次數、退避、jitter 與總期限，才有可控的行為；Polly 8 的 pipeline API 與舊 Policy 寫法不同。
 
 429 可依 Retry-After（秒數或 HTTP 日期）決定延遲；不要立即密集重試。讀取請求通常較容易重試，付款或新增訂單需要冪等契約。每次嘗試需建立新的 HttpRequestMessage，並釋放先前 response；已部分消費的串流也不能直接假設能重播。
+
+## 套用到電商情境
+
+商品 GET 可以在有界預算內重試；付款 POST 需要提供者的穩定業務識別與冪等契約。逾時可能已經完成扣款，應查詢結果再決定下一步。重試的次數、間隔與整體期限也會影響下游負載。
+
+[閱讀對應的電商章節](/projects/ecommerce/payment/)，把本篇概念接到整個用例。

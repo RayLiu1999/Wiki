@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "本地交易保護資料與意圖，Outbox 與 Inbox 協助恢復；跨邊界仍可能重送，因此結果必須冪等。"
 noteDates: []
 sources: [{"title":"Microsoft Learn：非同步訊息與 Outbox","url":"https://learn.microsoft.com/en-us/dotnet/architecture/microservices/architect-microservice-container-applications/asynchronous-message-based-communication"},{"title":"Microsoft Learn：訂閱與冪等","url":"https://learn.microsoft.com/en-us/dotnet/architecture/microservices/multi-container-microservice-net-applications/subscribe-events"},{"title":"PostgreSQL：Constraints","url":"https://www.postgresql.org/docs/18/ddl-constraints.html"},{"title":"RabbitMQ：Reliability","url":"https://www.rabbitmq.com/docs/reliability"}]
+learningDepth: "deep"
 ---
+
+訂單和事件要一起留下可恢復的交付意圖；消費者則要在重送後保護結果。Outbox 與 Inbox 分別靠本地交易維持各自邊界，中間的發布和確認仍可能重複。
 
 ## 資料庫與發布之間的窗口
 
@@ -92,4 +95,10 @@ await transaction.CommitAsync(token);
 
 ## 用故障測試核對邊界
 
-pnpm test:infrastructure 會核對 Outbox 寫入失敗時訂單回滾、Consumer 效果失敗時 Inbox 回滾、並行重複事件只有一份通知結果，以及提交後 Ack 前中斷的重送。也會在 RabbitMQ 重啟後確認已保存的工作能繼續處理。
+[隔離故障驗證](/practice/ecommerce/failure-drills/)會核對 Outbox 寫入失敗時訂單回滾、Consumer 效果失敗時 Inbox 回滾、並行重複事件只有一份通知結果，以及提交後 Ack 前中斷的重送。也會在 RabbitMQ 重新啟動後確認已保存的工作能繼續處理。
+
+## 套用到電商情境
+
+本篇的 API 提交訂單加 Outbox，發布器等待 Confirm 後記錄，Consumer 提交 Inbox 加模擬通知再 Ack。結果只保存於資料庫，沒有外部郵件。遷移多 Pod 前還需跨程序 claim／lease，穩定事件 ID 與 Consumer 去重不能代替工作領取協定。
+
+[閱讀對應的電商章節](/projects/ecommerce/reliable-events/)，把本篇概念接到整個用例。

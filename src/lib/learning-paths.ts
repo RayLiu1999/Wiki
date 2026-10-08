@@ -29,6 +29,32 @@ export const learningPaths = [
       { title: '用結果與故障演練確認系統', description: '用行為測試與觀測串起商品快取和訂單背景通知。', articleIds: ['engineering-business-tests', 'engineering-metrics-tracing', 'engineering-cache-messaging-tests'] },
     ],
   },
+  {
+    id: 'dotnet-deep-dive', title: '.NET 深入：型別、非同步與 Runtime', description: '沿型別能力、資源生命週期和效能證據，補齊深入學習的缺口。', audience: '適合已能製作 API，想解釋底層行為的開發者',
+    stages: [
+      { title: '把型別契約讀清楚', description: '泛型、相等性與資料不變量。', articleIds: ['csharp-generics', 'csharp-structs-equality', 'csharp-records-invariants', 'csharp-parameter-passing'] },
+      { title: '理解等待與所有權', description: 'await 流程、ValueTask、釋放與背景工作。', articleIds: ['csharp-await-state-machine', 'csharp-async-coordination', 'csharp-async-disposable', 'dotnet-background-services'] },
+      { title: '從執行機制到診斷', description: 'CLR、GC、執行緒池、反射與量測。', articleIds: ['dotnet-clr-jit', 'dotnet-gc-memory', 'dotnet-threadpool', 'dotnet-reflection', 'dotnet-profiling'] },
+      { title: '連回設計與框架', description: '建立、組合與跨功能責任。', articleIds: ['architecture-creation-patterns', 'architecture-behavior-patterns', 'aspnet-core-options', 'architecture-cross-cutting'] },
+    ],
+  },
+  {
+    id: 'cloud-native-foundations', title: '容器與 Kubernetes 基礎', description: '先沿請求與程序理解容器，再掌握 Kubernetes 的期望狀態、設定和可靠性。', audience: '適合能執行後端程式、準備學習部署的開發者',
+    stages: [
+      { title: '辨識程序與連線', description: '映像、Compose、DNS 和 HTTP 路徑。', articleIds: ['containers-image-runtime', 'containers-compose', 'networking-request-path'] },
+      { title: '宣告工作與入口', description: 'Pod、Deployment、Service 與 Gateway。', articleIds: ['kubernetes-workloads', 'kubernetes-services-gateway'] },
+      { title: '讓程序正確運作', description: '設定、權限、探針、資源與儲存。', articleIds: ['kubernetes-configuration-security', 'kubernetes-probes-resources', 'kubernetes-storage'] },
+      { title: '理解容量邊界', description: '擴縮、連線池和背景程序停止。', articleIds: ['kubernetes-autoscaling', 'data-access-pools-locks', 'dotnet-background-services'] },
+    ],
+  },
+  {
+    id: 'gke-delivery-operations', title: 'GKE、交付與日常維運', description: '把共同部署模型接到 Google Cloud，追查映像、權限、資料與服務品質。', audience: '適合已理解 Kubernetes 的後端開發者',
+    stages: [
+      { title: '理解平台與整合', description: '模式、身分、入口和外部資料服務。', articleIds: ['gke-platform-modes', 'gke-workload-identity', 'gke-gateway-networking', 'gke-data-services'] },
+      { title: '交付可追溯版本', description: 'CI/CD、IaC 與新舊資料相容。', articleIds: ['engineering-ci-cd', 'engineering-iac', 'data-access-migrations'] },
+      { title: '以結果維運', description: '觀測、容量、品質與恢復。', articleIds: ['engineering-metrics-tracing', 'kubernetes-autoscaling', 'engineering-slo-alerts', 'engineering-recovery-cost'] },
+    ],
+  },
 ];
 
 export const learningPathUrl = (id: string) => '/learning-paths/' + id + '/';

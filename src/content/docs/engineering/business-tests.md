@@ -11,11 +11,14 @@ prerequisites: ["architecture-domain-modeling", "architecture-application-patter
 relatedArticles: ["data-access-transactions", "dotnet-time-zones", "engineering-metrics-tracing", "engineering-cache-messaging-tests"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "測試保護規則與結果；替身用於必要邊界，真實資料庫行為仍需要整合測試。"
 noteDates: ["2026-05-27", "2026-05-28", "2026-06-25"]
 sources: [{"title": "xUnit.net：Getting started", "url": "https://xunit.net/docs/getting-started/v3/getting-started"}, {"title": "NSubstitute：Getting started", "url": "https://nsubstitute.github.io/help/getting-started/"}, {"title": "Microsoft Learn：EF Core 測試策略", "url": "https://learn.microsoft.com/en-us/ef/core/testing/choosing-a-testing-strategy"}]
+learningDepth: "deep"
 ---
+
+測試從錯誤會影響哪個業務結果開始。訂單數量、價格、合法狀態和唯一通知，都可以形成清楚的輸入與結果契約，再依真實邊界選擇驗證方式。
 
 ## 從失敗會造成什麼後果開始
 
@@ -31,7 +34,7 @@ sources: [{"title": "xUnit.net：Getting started", "url": "https://xunit.net/doc
 
 ## 以非法數量測試型別契約
 
-以下測試片段沿用「record 與有效狀態」中的 PositiveQuantity；需放入有 xUnit 依賴及領域型別的測試專案，未在本站建置。xUnit v2 / v3 的 runner 與專案配置不同，要依實際版本選擇。
+以下測試片段沿用「record 與有效狀態」中的 PositiveQuantity；需放入有 xUnit 相依及領域型別的測試專案，未在本站建置。xUnit v2 / v3 的 runner 與專案配置不同，要依實際版本選擇。
 
 ~~~csharp title="QuantityTests.cs（整合片段）"
 using Xunit;
@@ -59,4 +62,10 @@ NSubstitute 可建立 Substitute.For<IPaymentGateway>()，設定付款拒絕或�
 
 Domain 通常不需要 database 或 HTTP；Application 用替身控制必要外部條件。但 EF InMemory 或 SQLite 不會完整重現正式 provider 的 SQL、型別與鎖定。交易、schema 與 provider 行為應用實際引擎的整合測試驗證。
 
-非同步测试要 await，取消使用可控 token，時間用可注入時鐘；不要依靠長時間 sleep 才偶然通過。
+非同步測試要 await，取消使用可控 token，時間用可注入時鐘；不要依靠長時間 sleep 才偶然通過。
+
+## 套用到電商情境
+
+金額與狀態轉換使用快速測試，訂單加 Outbox 用真資料庫交易測試，模擬通知去重用並行整合檢查。替身用來隔離外部邊界，避免驗證每個內部方法次數。尚未實現的庫存與付款規則應在實作時補對應行為證據。
+
+[閱讀對應的電商章節](/projects/ecommerce/testing-observability/)，把本篇概念接到整個用例。

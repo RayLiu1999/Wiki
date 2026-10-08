@@ -11,11 +11,14 @@ prerequisites: ["csharp-async-coordination"]
 relatedArticles: ["csharp-channels", "data-access-batch-updates", "data-access-pools-locks"]
 applicableVersions: "以 .NET 10 / C# 14 核對；個別語法與 API 的最低版本見內文。"
 verifiedWith: ".NET SDK 10.0.105 / net10.0 / C# 14；完整 Program.cs 已納入編譯與輸出驗證。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "安全集合只保護自身操作；跨多步的商業規則與非同步等待仍需要明確協調。"
 noteDates: ["2026-05-21", "2026-05-27", "2026-06-02", "2026-06-22", "2026-06-24"]
 sources: [{"title": "Microsoft Learn：SemaphoreSlim", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.threading.semaphoreslim?view=net-10.0"}, {"title": "Microsoft Learn：ConcurrentDictionary.GetOrAdd", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.collections.concurrent.concurrentdictionary-2.getoradd?view=net-10.0"}, {"title": "Microsoft Learn：Lazy 初始化", "url": "https://learn.microsoft.com/en-us/dotnet/framework/performance/lazy-initialization"}]
+learningDepth: "deep"
 ---
+
+多個執行路徑讀寫共用狀態時，需要先定義競爭範圍。lock、SemaphoreSlim 和 Lazy 各處理不同需求；只知道程式是 async，不能推論它已經安全。
 
 ## 依保護的目標選工具
 
@@ -58,6 +61,12 @@ Console.WriteLine(settings.Value);
 
 ## Lazy 與雙重檢查鎖定
 
-預設 Lazy 的 ExecutionAndPublication 協調一次初始化，並保留 factory 的例外。自行實作「先檢查、加鎖、再檢查」還牽涉記憶體可見性與安全發佈，通常先用 Lazy 或框架提供的機制。
+預設 Lazy 的 ExecutionAndPublication 協調一次初始化，並保留 factory 的例外。自行實作「先檢查、加鎖、再檢查」還牽涉記憶體可見性與安全發布，通常先用 Lazy 或框架提供的機制。
 
 ConcurrentDictionary.GetOrAdd 在鎖外執行 factory；不要把扣款、寄信等必須恰好一次的副作用放進去。多 Pod 的資料競爭也不會被 process 內的 lock 解決，需由資料庫約束、交易或分散式協調處理。
+
+## 套用到電商情境
+
+程序內的名額控制可以限制同一 Worker 的並發，lock 可以保護短小同步狀態。它們不會協調兩個 Pod 的庫存或 Outbox 領取訊息；跨程序結果改由資料庫或相應租約協定保護。
+
+[閱讀對應的電商章節](/projects/ecommerce/ordering-inventory/)，把本篇概念接到整個用例。

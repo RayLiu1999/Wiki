@@ -15,7 +15,10 @@ lastReviewed: "2026-10-08"
 takeaway: "把工作交給佇列後，發布、排隊與完成是不同階段；API 的回應契約要說清楚已完成哪一步。"
 noteDates: []
 sources: [{"title":"RabbitMQ：AMQP 0-9-1 Model","url":"https://www.rabbitmq.com/tutorials/amqp-concepts"},{"title":"RabbitMQ：Tutorials","url":"https://www.rabbitmq.com/tutorials"},{"title":"RabbitMQ：Reliability","url":"https://www.rabbitmq.com/docs/reliability"}]
+learningDepth: "basic"
 ---
+
+訂單成立後，通知可以晚一點完成。RabbitMQ 以外部訊息邊界連接發布與消費，讓 HTTP 提交、排隊與背景結果成為不同的階段。
 
 ## 從訂單成立後的工作開始
 
@@ -44,12 +47,18 @@ Producer 是產生訊息的程式；Exchange 依規則選擇目標；Binding 描
 
 ## 程序內 Channel 與外部 Broker
 
-`Channel<T>` 在一個程序的記憶體中協調工作；程序重啟後，尚未完成的項目會遺失。RabbitMQ 提供外部佇列與相關耐久機制，但仍需正確設定持久化、確認與應用程式恢復。
+`Channel<T>` 在一個程序的記憶體中協調工作；程序重新啟動後，尚未完成的項目會遺失。RabbitMQ 提供外部佇列與相關耐久機制，但仍需正確設定持久化、確認與應用程式恢復。
 
 資料庫已提交，也不代表訂單事件已送到 Broker；Broker 已確認，也不代表通知已完成。後續 Outbox 文章會處理資料庫與發布之間的故障窗口。
 
 ## 本機觀察與回應契約
 
-先執行 pnpm lab:up，再執行 pnpm lab:rabbit。管理介面預設位於 http://127.0.0.1:15673/，帳密取自本機實驗的 .env 或 .env.example；使用 devwiki vhost 觀察 Exchange 與 Queue。
+[快取與訊息實作指南](/practice/ecommerce/cache-messaging/)示範發布、消費與管理頁觀察，並提供各工具前提。這裡先核對 HTTP 和背景結果的契約。
 
 範例 API 的 POST /orders 表示訂單與 Outbox 已寫入。GET /orders/{id} 的 notificationRecorded 表示本機模擬通知結果是否存在，並不表示外部郵件送達。真實產品也應以這種方式區分已接受、已成立與已完成背景效果。
+
+## 套用到電商情境
+
+一個通知 Queue 分配給多個 Consumer，是競爭工作；通知與分析都要收到事件則需各自 Queue。API 回應 201 只表示已定義的建立階段完成，狀態查詢提供後續結果。本機通知是資料庫記錄，尚未實際寄信。
+
+[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。

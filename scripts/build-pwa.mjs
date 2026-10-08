@@ -18,7 +18,7 @@ for (const file of await filesIn('dist')) {
   const contents = await readFile(file);
   hash.update(file);
   hash.update(contents);
-  if (file.endsWith('.html') && load(contents.toString())('.article-heading[data-article-id]').length) {
+  if (file.endsWith('.html') && load(contents.toString())('.article-heading[data-article-id], .guide-heading[data-guide-id]').length) {
     articlePaths.push('/' + path.relative('dist', file).replaceAll(path.sep, '/').replace(/index\.html$/, ''));
   }
 }
@@ -49,11 +49,19 @@ const result = await injectManifest({
     'data-access/index.html',
     'infrastructure/redis/index.html',
     'infrastructure/rabbitmq/index.html',
+    'infrastructure/containers/index.html',
+    'infrastructure/networking/index.html',
+    'platforms/kubernetes/index.html',
+    'platforms/gke/index.html',
     'platforms/dotnet/index.html',
     'engineering/index.html',
     'topics/index.html',
     'work-notes/index.html',
     'learning-paths/**/index.html',
+    'knowledge-maps/**/index.html',
+    'start/index.html',
+    'projects/ecommerce/index.html',
+    'practice/ecommerce/index.html',
     'saved/index.html',
   ],
   maximumFileSizeToCacheInBytes: 2 * 1024 * 1024,

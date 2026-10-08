@@ -11,11 +11,14 @@ prerequisites: ["csharp-classes", "csharp-interfaces"]
 relatedArticles: ["csharp-extensions-attributes", "architecture-domain-modeling"]
 applicableVersions: "以 .NET 10 / C# 14 核對；個別語法與 API 的最低版本見內文。"
 verifiedWith: ".NET SDK 10.0.105 / net10.0 / C# 14；完整 Program.cs 已納入編譯與輸出驗證。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "存取範圍、繼承能力與檔案拆分是不同決策；每個修飾詞都應對應明確的用途。"
 noteDates: ["2026-05-27", "2026-05-28", "2026-06-24"]
 sources: [{"title": "Microsoft Learn：類別", "url": "https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/types/classes"}, {"title": "Microsoft Learn：partial 類別與方法", "url": "https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/classes-and-structs/partial-classes-and-methods"}]
+learningDepth: "deep"
 ---
+
+internal、sealed、virtual、abstract 和 partial 各處理不同的類別邊界。設計商品或通知服務時，先指出允許替換的行為與組件範圍，再決定繼承與存取方式。
 
 ## 分清三種邊界
 
@@ -58,3 +61,9 @@ internal sealed partial class OrderReport
 ## 為何不把所有行為設成 virtual
 
 若子類可以繞過關鍵驗證，領域不變量就不再可靠。優先讓公開方法維持規則，再用介面或組合提供真正需要的替換點。`partial` 也不會自動改善責任過多的類別；拆成檔案後仍需檢查型別的職責。
+
+## 套用到電商情境
+
+不同運費規則常可用策略組合，未必要繼承整個訂單。virtual／override 表達動態替換，sealed 可以限制繼承；partial 只拆分同一型別的宣告，不會建立新的服務責任。對外擴充要有穩定契約。
+
+[閱讀對應的電商章節](/projects/ecommerce/catalog/)，把本篇概念接到整個用例。

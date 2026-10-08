@@ -11,11 +11,14 @@ prerequisites: ["aspnet-core-middleware", "csharp-extensions-attributes"]
 relatedArticles: ["aspnet-core-model-binding", "engineering-metrics-tracing"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
+lastReviewed: "2026-10-08"
 takeaway: "驗證建立身分，授權判斷能否存取；沒憑證與憑證無效是不同結果。"
 noteDates: ["2026-05-21", "2026-05-28", "2026-06-04", "2026-10-05"]
 sources: [{"title": "Microsoft Learn：Authentication", "url": "https://learn.microsoft.com/en-us/aspnet/core/security/authentication/?view=aspnetcore-10.0"}, {"title": "Microsoft Learn：Policy 授權", "url": "https://learn.microsoft.com/en-us/aspnet/core/security/authorization/policies?view=aspnetcore-10.0"}, {"title": "Microsoft Learn：AuthenticateResult", "url": "https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.authentication.authenticateresult?view=aspnetcore-10.0"}]
+learningDepth: "deep"
 ---
+
+有效登入憑證讓 API 知道呼叫者是誰；授權 Policy 決定他能做什麼。訂單屬於某個買家，因此還要把資源所有權和使用者身分一起核對。
 
 ## 身分與權限分開
 
@@ -53,3 +56,9 @@ app.MapGet("/health", () => Results.Ok()).AllowAnonymous();
 Controller 可使用 `[Authorize(Policy = "CanReadOrders")]`、`[AllowAnonymous]`。AllowAnonymous 略過該端點的授權要求；不是讓所有請求都變成已驗證。
 
 把商業資料的所有權檢查放進適當的 policy 或應用程式流程；光有一個已登入使用者，不能推論他能讀取路由中的每個 id。
+
+## 套用到電商情境
+
+買家 A 不能透過改 orderId 存取 B 的訂單。端點要求登入後，用資源授權或帶所有者範圍的查詢保護結果；賣家權限也應限制對應商品。本機實驗尚未加入認證，因此本篇框架片段屬於獨立整合示意。
+
+[閱讀對應的電商章節](/projects/ecommerce/identity/)，把本篇概念接到整個用例。
