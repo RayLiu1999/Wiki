@@ -20,8 +20,10 @@ assert.ok(Array.isArray(catalog) && catalog.length > 0, '搜尋目錄必須包�
 const pages = new Set([
   '/', '/topics/', '/work-notes/', '/learning-paths/',
   '/learning-paths/csharp-beginner/', '/learning-paths/dotnet-backend-practice/',
+  '/learning-paths/dotnet-cache-messaging/',
   '/languages/csharp/', '/frameworks/aspnet-core/', '/architecture/',
   '/data-access/', '/platforms/dotnet/', '/engineering/', '/saved/', '/offline/',
+  '/infrastructure/redis/', '/infrastructure/rabbitmq/',
   ...catalog.map((article) => article.url),
 ]);
 const pageBodies = new Map(await Promise.all([...pages].map(async (pathname) => {

@@ -22,6 +22,16 @@ export const topics = {
     { id: 'transactions', name: '交易與批次', description: 'Dapper、交易、批次更新' },
     { id: 'database-runtime', name: '部署與連線', description: 'Migration、連線池與鎖' },
   ] },
+  redis: { name: 'Redis', path: 'infrastructure/redis', mark: 'Redis', icon: 'layers', description: '從資料型別與 TTL 到 .NET 快取、一致性、併發與故障處理，理解 Redis 的使用邊界。', categories: [
+    { id: 'redis-basics', name: '基礎與資料模型', description: '共享快取、資料型別、Key 與 TTL' },
+    { id: 'redis-caching', name: '快取與應用', description: '.NET 整合、Cache-Aside 與併發控制' },
+    { id: 'redis-reliability', name: '可靠性與維運', description: '持久化、淘汰、故障降級與觀測' },
+  ] },
+  rabbitmq: { name: 'RabbitMQ', path: 'infrastructure/rabbitmq', mark: 'MQ', icon: 'network', description: '掌握訊息路由、.NET 發布與消費、確認、重試及死信，建立可恢復的背景工作。', categories: [
+    { id: 'rabbitmq-basics', name: '基礎與路由', description: '工作佇列、Exchange、Binding 與 Routing Key' },
+    { id: 'rabbitmq-integration', name: '.NET 整合', description: 'Connection、Channel、Worker 與傳遞確認' },
+    { id: 'rabbitmq-reliability', name: '可靠性與維運', description: '冪等、重試、死信、佇列類型與順序' },
+  ] },
   dotnet: { name: '.NET 執行環境', path: 'platforms/dotnet', mark: '.NET', icon: 'layers', description: '整理 SDK、NuGet、Hosting、時間與識別碼，讓開發與部署有一致的基準。', categories: [
     { id: 'toolchain', name: 'SDK 與套件', description: 'global.json、NuGet 與集中版本管理' },
     { id: 'runtime-models', name: 'Hosting 模型', description: 'Generic Host、Minimal Hosting 與 Startup' },

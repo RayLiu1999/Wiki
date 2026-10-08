@@ -8,7 +8,7 @@ order: 2
 tags: ["Repository", "Unit of Work", "Mediator", "CQRS", "Command", "Query", "Handler", "DTO", "Validator"]
 difficulty: "intermediate"
 prerequisites: ["architecture-domain-modeling"]
-relatedArticles: ["data-access-transactions", "data-access-ef-core", "engineering-business-tests", "aspnet-core-model-binding"]
+relatedArticles: ["data-access-transactions", "data-access-ef-core", "engineering-business-tests", "aspnet-core-model-binding", "architecture-outbox-inbox", "architecture-communication-boundaries"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-07"

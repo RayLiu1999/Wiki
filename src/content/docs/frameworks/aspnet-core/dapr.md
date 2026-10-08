@@ -8,7 +8,7 @@ order: 9
 tags: ["Dapr", "sidecar", "DaprClient", "HTTP", "gRPC", "服務整合", "pub/sub"]
 difficulty: "intermediate"
 prerequisites: ["aspnet-core-grpc", "aspnet-core-http-client-factory"]
-relatedArticles: ["engineering-metrics-tracing", "data-access-pools-locks"]
+relatedArticles: ["engineering-metrics-tracing", "data-access-pools-locks", "architecture-communication-boundaries", "redis-getting-started", "rabbitmq-getting-started"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-07"

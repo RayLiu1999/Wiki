@@ -47,6 +47,8 @@ const result = await injectManifest({
     'frameworks/aspnet-core/index.html',
     'architecture/index.html',
     'data-access/index.html',
+    'infrastructure/redis/index.html',
+    'infrastructure/rabbitmq/index.html',
     'platforms/dotnet/index.html',
     'engineering/index.html',
     'topics/index.html',

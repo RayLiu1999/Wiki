@@ -8,7 +8,7 @@ order: 23
 tags: ["Channel<T>", "Channel", "背壓", "生產者", "消費者", "ValueTask", "IAsyncEnumerable"]
 difficulty: "intermediate"
 prerequisites: ["csharp-async-coordination", "csharp-cancellation"]
-relatedArticles: ["csharp-thread-safety", "aspnet-core-dependency-injection"]
+relatedArticles: ["csharp-thread-safety", "aspnet-core-dependency-injection", "rabbitmq-getting-started", "architecture-communication-boundaries"]
 applicableVersions: "以 .NET 10 / C# 14 核對；個別語法與 API 的最低版本見內文。"
 verifiedWith: ".NET SDK 10.0.105 / net10.0 / C# 14；完整 Program.cs 已納入編譯與輸出驗證。"
 lastReviewed: "2026-10-07"

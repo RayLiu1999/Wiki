@@ -8,7 +8,7 @@ order: 2
 tags: [".NET Runtime", "GC", "ThreadPool", "HTTP", "RPS", "OpenTelemetry", "Activity.Current", "traceparent", "tracestate", "W3C", "trace", "metrics"]
 difficulty: "intermediate"
 prerequisites: ["csharp-async-await", "aspnet-core-middleware"]
-relatedArticles: ["aspnet-core-http-client-factory", "aspnet-core-grpc", "data-access-pools-locks"]
+relatedArticles: ["aspnet-core-http-client-factory", "aspnet-core-grpc", "data-access-pools-locks", "redis-reliability", "rabbitmq-queues-ordering", "engineering-cache-messaging-tests"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-07"

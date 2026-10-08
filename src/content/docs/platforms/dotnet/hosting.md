@@ -8,7 +8,7 @@ order: 2
 tags: ["IHostBuilder", "Generic Host", "Startup", "Program.cs", "Minimal Hosting", "WebApplication", "BackgroundService"]
 difficulty: "intermediate"
 prerequisites: ["aspnet-core-dependency-injection"]
-relatedArticles: ["aspnet-core-middleware", "aspnet-core-api-styles-aot", "dotnet-sdk-packages"]
+relatedArticles: ["aspnet-core-middleware", "aspnet-core-api-styles-aot", "dotnet-sdk-packages", "rabbitmq-dotnet-integration", "architecture-outbox-inbox"]
 applicableVersions: "Minimal Hosting 預設範本自 .NET 6 起；Generic Host 與 Startup 型設定仍可使用。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-07"

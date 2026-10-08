@@ -1,6 +1,6 @@
 # DevWiki 軟體知識庫
 
-以繁體中文整理軟體知識的靜態 PWA，目前提供 6 個主題、48 篇文章。介面沿用已確認的「書頁閱讀」設計，預設淺色與紫色點綴，提供深色切換。
+以繁體中文整理軟體知識的靜態 PWA，目前提供 8 個主題、63 篇文章。介面沿用已確認的「書頁閱讀」設計，預設淺色與紫色點綴，提供深色切換。
 
 ## 開始使用
 
@@ -57,8 +57,9 @@ docker compose down
 
 ## 已提供功能
 
-- C# 25 篇、ASP.NET Core 9 篇、架構設計 2 篇、資料存取 6 篇、.NET 執行環境 4 篇、測試與觀測 2 篇。
-- 保留 15 篇的 C# 入門路徑，另提供 22 篇的 .NET 後端工作實務路徑。
+- C# 25 篇、ASP.NET Core 9 篇、架構設計 4 篇、資料存取 6 篇、.NET 執行環境 4 篇、測試與觀測 3 篇、Redis 6 篇、RabbitMQ 6 篇。
+- 提供 15 篇的 C# 入門、22 篇的 .NET 後端工作實務，以及 23 篇的 .NET 快取與可靠訊息處理路徑。
+- 可執行 Redis、RabbitMQ 與 PostgreSQL 實驗，以商品快取、訂單 Outbox、Inbox 與模擬通知串起文章；具備實際服務的故障恢復驗證。
 - 工作筆記概念對照頁，保留使用者提供摘要的相關日期、概念與文章對應；未直接匯入原始 46 篇筆記。
 - Markdown 內容、固定文章網址、版本資料、先備知識、相關文章與官方來源。
 - 頁內目錄、C# 語法標色與程式碼複製。
@@ -84,13 +85,31 @@ prerequisites、relatedArticles 與 src/lib/learning-paths.ts 使用穩定 artic
 | pnpm typecheck | Astro 與 TypeScript 嚴格型別檢查 |
 | pnpm lint | JavaScript、TypeScript 與建置腳本的靜態檢查 |
 | pnpm test | 收藏資料的損壞、持久化與儲存失敗行為 |
+| pnpm test:snippets | 比對六段 Redis、RabbitMQ、Cache-Aside 與 Outbox／Inbox 文章程式碼與來源 |
 | pnpm test:container | 對已啟動的容器驗證文章路由、搜尋／PWA 資源、快取標頭與 404 |
 | pnpm build | 靜態頁面、Pagefind、Workbox，以及連結與產物完整性檢查 |
-| pnpm check | 依序執行型別、lint、單元測試與正式建置 |
+| pnpm check | 依序執行型別、lint、文章片段核對、單元測試與正式建置 |
 | pnpm test:examples | 比對文章與範例程式，編譯並執行 25 個 C# 範例、核對輸出 |
+| pnpm test:infrastructure | 建立隔離 Redis／RabbitMQ／PostgreSQL 容器，核對快取、交易、重試、重送、HTTP 與重啟恢復 |
 | pnpm icons | 從本站 SVG 識別產生 PWA 與 Apple 圖示 |
 
 Astro 型別檢查也檢查 .astro 元件；ESLint 負責獨立腳本與模組。CI 保留靜態建置產物，沒有自動正式部署。
+
+## Redis 與 RabbitMQ 實驗
+
+學習路徑位於 /learning-paths/dotnet-cache-messaging/。六篇 Redis 文章介紹資料型別、TTL、.NET 整合、Cache-Aside、併發與故障；六篇 RabbitMQ 文章介紹路由、.NET 用戶端、確認、重試冪等與佇列。架構與測試文章另外串接通訊選擇、Outbox／Inbox 與故障演練。
+
+閱讀文章不需要啟動外部服務。要實作範例，另需 .NET SDK 與 Docker：
+
+~~~sh
+pnpm lab:up
+pnpm lab:redis
+pnpm lab:rabbit
+pnpm test:infrastructure
+pnpm lab:down
+~~~
+
+實驗使用自己的 devwiki-labs project，port 綁定本機，停止時保留資料。API 與 Worker 分別使用 pnpm lab:api、pnpm lab:worker 啟動。完整設定、curl 步驟、資料重設與驗證範圍見 [實驗 README](examples/infrastructure/README.md)；本例的通知是資料庫結果，未實際寄信。
 
 ## PWA 行為
 
@@ -116,4 +135,4 @@ Workbox 的獨立建置步驟會在 Pagefind 建好後執行。基本頁面、�
 
 正式公開發布前仍需確認網域、託管平台、內容授權，以及 Android Chrome / iOS Safari 的實際安裝體驗。
 
-完整規劃見 [專案規劃書](docs/PROJECT_PLAN.md)，歷史驗收見 [首版實作與驗收紀錄](docs/IMPLEMENTATION.md)，本次整理見 [工作筆記整合紀錄](docs/WORK_NOTES_INTEGRATION.md)。
+完整規劃見 [專案規劃書](docs/PROJECT_PLAN.md)，歷史驗收見 [首版實作與驗收紀錄](docs/IMPLEMENTATION.md)與[工作筆記整合紀錄](docs/WORK_NOTES_INTEGRATION.md)，最新擴充見 [Redis／RabbitMQ 整合紀錄](docs/REDIS_RABBITMQ_INTEGRATION.md)。

@@ -47,3 +47,16 @@ jobs:
         run: docker compose logs --no-color
       - if: always()
         run: docker compose down
+  infrastructure-examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: node scripts/check-infrastructure-snippets.mjs
+      - run: node scripts/infrastructure-lab.mjs test

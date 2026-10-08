@@ -19,6 +19,16 @@ export const learningPaths = [
       { title: '把部署與診斷串起來', description: '固定工具環境，用行為測試與追蹤確認系統。', articleIds: ['dotnet-sdk-packages', 'dotnet-time-zones', 'engineering-business-tests', 'engineering-metrics-tracing'] },
     ],
   },
+  {
+    id: 'dotnet-cache-messaging', title: '.NET 快取與可靠訊息處理', description: '用商品查詢與訂單通知，串起 Redis、RabbitMQ、交易與故障恢復。', audience: '適合熟悉 C# 與 Web API，準備處理跨程序工作的開發者',
+    stages: [
+      { title: '先掌握程序與交易邊界', description: '理解非同步、取消、DI、背景工作與本地交易。', articleIds: ['csharp-async-await', 'csharp-cancellation', 'csharp-channels', 'aspnet-core-dependency-injection', 'dotnet-hosting', 'data-access-transactions'] },
+      { title: '讓讀取有可理解的快取行為', description: '從 Redis 資料模型到 .NET 整合與 Cache-Aside。', articleIds: ['redis-getting-started', 'redis-data-types-ttl', 'redis-dotnet-integration', 'redis-cache-aside', 'redis-concurrency', 'redis-reliability'] },
+      { title: '把工作交給可確認的訊息流程', description: '理解路由、發布與消費，以及確認各自負責的階段。', articleIds: ['rabbitmq-getting-started', 'rabbitmq-routing', 'rabbitmq-dotnet-integration', 'rabbitmq-acknowledgements'] },
+      { title: '面對重送、失敗與資料延遲', description: '安排重試、冪等、訊息順序與 Outbox。', articleIds: ['rabbitmq-retries-idempotency', 'rabbitmq-queues-ordering', 'architecture-communication-boundaries', 'architecture-outbox-inbox'] },
+      { title: '用結果與故障演練確認系統', description: '用行為測試與觀測串起商品快取和訂單背景通知。', articleIds: ['engineering-business-tests', 'engineering-metrics-tracing', 'engineering-cache-messaging-tests'] },
+    ],
+  },
 ];
 
 export const learningPathUrl = (id: string) => '/learning-paths/' + id + '/';
