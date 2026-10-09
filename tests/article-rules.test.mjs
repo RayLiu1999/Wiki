@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bodyCharacterCount, checkArticle, requiredSections, splitFrontmatter } from '../scripts/lib/article-rules.mjs';
 
-const filler = '這是一段精煉重點的說明文字。'.repeat(6); // 每個章節約 84 字，6 個章節共約 500 字，符合 400~1200 字範圍
+const filler = '這是一段精煉重點的說明文字。'.repeat(8); // 4 個章節共約 448 字，符合 400~1200 字範圍
 const fullBody = requiredSections.map((section) => '## ' + section.id + '\n\n' + filler).join('\n\n');
 
 test('完整章節且字數符合 1000 字以內標準的文章通過', () => {
@@ -16,22 +16,22 @@ test('字數超過上限會回報需精煉', () => {
 });
 
 test('缺少必要章節時回報章節名稱', () => {
-  const body = fullBody.replace('## 反模式', '## 其他');
+  const body = fullBody.replace('## 反模式與正確解法', '## 其他');
   const issues = checkArticle({ frontmatter: {}, body });
   assert.equal(issues.length, 1);
-  assert.match(issues[0], /反模式/);
+  assert.match(issues[0], /反模式與正確解法/);
 });
 
 test('omitSections 附理由即可省略章節', () => {
-  const body = fullBody.replace('## 反模式', '## 其他');
-  const frontmatter = { omitSections: [{ section: '反模式', reason: '本篇為參考速查，無對應反模式' }] };
+  const body = fullBody.replace('## 反模式與正確解法', '## 其他');
+  const frontmatter = { omitSections: [{ section: '反模式與正確解法', reason: '本篇為參考速查，無對應反模式' }] };
   assert.deepEqual(checkArticle({ frontmatter, body }), []);
 });
 
 test('omitSections 的未知章節或空白理由會被拒絕', () => {
   const unknown = checkArticle({ frontmatter: { omitSections: [{ section: '不存在', reason: 'x' }] }, body: fullBody });
   assert.match(unknown.join('\n'), /未知章節/);
-  const blank = checkArticle({ frontmatter: { omitSections: [{ section: '反模式', reason: '  ' }] }, body: fullBody.replace('## 反模式', '## 其他') });
+  const blank = checkArticle({ frontmatter: { omitSections: [{ section: '反模式與正確解法', reason: '  ' }] }, body: fullBody.replace('## 反模式與正確解法', '## 其他') });
   assert.match(blank.join('\n'), /缺少理由/);
 });
 

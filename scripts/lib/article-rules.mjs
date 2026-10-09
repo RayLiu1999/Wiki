@@ -1,13 +1,11 @@
 import { parse } from 'yaml';
 
-// 文章模板的必要章節。「延伸閱讀」由 frontmatter 的 sources 渲染為「參考來源」，不在正文重複。
+// 文章模板的必要章節（四段式實務架構：案發現場 -> 反模式與解法 -> 避坑指南 -> 排查指令）。
 export const requiredSections = [
-  { id: '問題情境', keyword: '問題情境' },
-  { id: '運作機制', keyword: '運作機制' },
-  { id: '反模式', keyword: '反模式' },
-  { id: '邊界與故障情境', keyword: '邊界' },
-  { id: '觀測與排查', keyword: '觀測' },
-  { id: '決策清單', keyword: '決策' },
+  { id: '案發現場', keywords: ['案發現場', '問題情境'] },
+  { id: '反模式與正確解法', keywords: ['反模式', '正確解法'] },
+  { id: '踩坑與避坑指南', keywords: ['避坑', '邊界', '踩坑'] },
+  { id: '線上排查指令', keywords: ['排查', '指令', '觀測'] },
 ];
 
 // 正文字數標準（不含空白與程式碼區塊）：講求重點，以 1,000 字以內為目標。
@@ -59,7 +57,7 @@ export function checkArticle({ frontmatter, body }) {
   const headings = [...prose.matchAll(/^##\s+(.+)$/gm)].map((match) => match[1]);
   for (const section of requiredSections) {
     if (omitted.has(section.id)) continue;
-    if (!headings.some((heading) => heading.includes(section.keyword))) {
+    if (!headings.some((heading) => section.keywords.some((kw) => heading.includes(kw)))) {
       issues.push('缺少必要章節「' + section.id + '」（或於 omitSections 說明省略理由）');
     }
   }
