@@ -3,7 +3,7 @@ using System.Diagnostics.Metrics;
 
 namespace DevWiki.Labs;
 
-public static class LabDiagnostics
+public static class Diagnostics
 {
     public static readonly ActivitySource Traces = new("DevWiki.Labs");
     public static readonly Meter Metrics = new("DevWiki.Labs");

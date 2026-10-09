@@ -18,7 +18,7 @@ try
     BasicGetResult? delivery;
     while ((delivery = await channel.BasicGetAsync(topology.WorkQueue, autoAck: false, token)) is null)
         await Task.Delay(50, token);
-    OrderPlaced received = LabJson.ReadEvent(delivery.Body.Span);
+    OrderPlaced received = JsonDefaults.ReadEvent(delivery.Body.Span);
     Console.WriteLine("消費內容: 商品 " + received.ProductId + "，數量 " + received.Quantity);
     await channel.BasicAckAsync(delivery.DeliveryTag, multiple: false, token);
     Console.WriteLine("消費確認: 已完成處理");

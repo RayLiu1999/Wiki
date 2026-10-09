@@ -7,7 +7,7 @@ public sealed record ProductRead(Product Product, string Source);
 public sealed record OrderPlaced(Guid MessageId, Guid OrderId, int ProductId, int Quantity, DateTimeOffset OccurredAt, int Version = 1);
 public sealed record OrderStatus(Guid OrderId, bool NotificationRecorded);
 
-public static class LabJson
+public static class JsonDefaults
 {
     public static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
 

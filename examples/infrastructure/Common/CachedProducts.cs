@@ -18,22 +18,22 @@ public sealed class CachedProducts(OrderStore store, IDatabase cache, TimeSpan l
             RedisValue value = await cache.StringGetAsync(Key(id)).WaitAsync(token);
             if (value.HasValue)
             {
-                Product? product = JsonSerializer.Deserialize<Product>((string)value!, LabJson.Options);
+                Product? product = JsonSerializer.Deserialize<Product>((string)value!, JsonDefaults.Options);
                 if (product is null || product.Id != id || product.Version <= 0 || string.IsNullOrWhiteSpace(product.Name)
                     || product.Price < 0 || product.Price > 9999999999.99m || decimal.Round(product.Price, 2) != product.Price)
                     throw new JsonException("商品副本與 Key 或資料契約不符。");
-                LabDiagnostics.CacheHits.Add(1);
+                Diagnostics.CacheHits.Add(1);
                 return new ProductRead(product, "redis");
             }
         }
         catch (Exception error) when (error is RedisException or JsonException)
         {
             unavailable = true;
-            LabDiagnostics.CacheErrors.Add(1);
+            Diagnostics.CacheErrors.Add(1);
         }
 
+        Diagnostics.CacheMisses.Add(1);
         // wiki:start:cache-aside
-        LabDiagnostics.CacheMisses.Add(1);
         Interlocked.Increment(ref databaseReads);
         Product? current = await store.GetProductAsync(id, token);
         if (current is null) return null;
@@ -41,12 +41,12 @@ public sealed class CachedProducts(OrderStore store, IDatabase cache, TimeSpan l
         {
             try
             {
-                await cache.StringSetAsync(Key(id), JsonSerializer.Serialize(current, LabJson.Options), lifetime).WaitAsync(token);
+                await cache.StringSetAsync(Key(id), JsonSerializer.Serialize(current, JsonDefaults.Options), lifetime).WaitAsync(token);
             }
             catch (RedisException)
             {
                 unavailable = true;
-                LabDiagnostics.CacheErrors.Add(1);
+                Diagnostics.CacheErrors.Add(1);
             }
         }
         return new ProductRead(current, unavailable ? "database-fallback" : "database");
@@ -63,7 +63,7 @@ public sealed class CachedProducts(OrderStore store, IDatabase cache, TimeSpan l
         catch (RedisException)
         {
             // 資料庫已提交；快取靠 TTL 界定舊值存活時間，正式系統另安排失效重試。
-            LabDiagnostics.CacheErrors.Add(1);
+            Diagnostics.CacheErrors.Add(1);
         }
         return true;
     }

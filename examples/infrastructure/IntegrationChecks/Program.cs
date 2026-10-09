@@ -94,8 +94,8 @@ await Check("損壞的快取不影響商品資料", async () =>
     foreach (string payload in new[]
     {
         "{invalid-json", "null", "{}",
-        JsonSerializer.Serialize(new Product(2, "錯誤商品", 1.00m, 1), LabJson.Options),
-        JsonSerializer.Serialize(new Product(1, "商品名稱", -1.00m, 1), LabJson.Options)
+        JsonSerializer.Serialize(new Product(2, "錯誤商品", 1.00m, 1), JsonDefaults.Options),
+        JsonSerializer.Serialize(new Product(1, "商品名稱", -1.00m, 1), JsonDefaults.Options)
     })
     {
         await cache.StringSetAsync(CachedProducts.Key(1), payload, TimeSpan.FromSeconds(30));
@@ -191,7 +191,7 @@ await Check("資料庫提交後 Ack 前中斷，重送仍只有一份效果", as
     await using (var channel = await connection.CreateChannelAsync(cancellationToken: token))
     {
         BasicGetResult delivery = await Get(channel, topology.WorkQueue);
-        Require(await store.RecordNotificationAsync(LabJson.ReadEvent(delivery.Body.Span), token), "首次處理須提交。");
+        Require(await store.RecordNotificationAsync(JsonDefaults.ReadEvent(delivery.Body.Span), token), "首次處理須提交。");
         await channel.CloseAsync(cancellationToken: token); // 故意不 Ack，觸發重送。
     }
     int duplicateDeliveries = 0;
@@ -236,7 +236,7 @@ await Check("持續失敗最多三次並進入死信", async () =>
     await publisher.PublishAsync(message, token: token);
     await using var channel = await connection.CreateChannelAsync(cancellationToken: token);
     BasicGetResult dead = await Get(channel, topology.FailedQueue, consumer);
-    Require(LabJson.ReadEvent(dead.Body.Span).MessageId == message.MessageId && attempts == 3, "失敗訊息須在三次後保存至死信。");
+    Require(JsonDefaults.ReadEvent(dead.Body.Span).MessageId == message.MessageId && attempts == 3, "失敗訊息須在三次後保存至死信。");
     Require(NotificationConsumer.ReadAttempt(dead.BasicProperties.Headers) == 2, "最後一次的重試 header 應保留。");
     Require(await store.GetOrderAsync(message.OrderId, token) is { NotificationRecorded: false }, "失敗工作不能留下成功通知。");
     await channel.BasicAckAsync(dead.DeliveryTag, false, token);
@@ -255,7 +255,7 @@ await Check("毒訊息與無效重試 header 直接隔離", async () =>
             DeliveryMode = DeliveryModes.Persistent, MessageId = message.MessageId.ToString(), ContentType = "application/json",
             Headers = new Dictionary<string, object?> { ["x-lab-attempt"] = invalidHeader ? -1 : 0 }
         };
-        byte[] body = invalidHeader ? JsonSerializer.SerializeToUtf8Bytes(message, LabJson.Options) : Encoding.UTF8.GetBytes("{invalid-json");
+        byte[] body = invalidHeader ? JsonSerializer.SerializeToUtf8Bytes(message, JsonDefaults.Options) : Encoding.UTF8.GetBytes("{invalid-json");
         await publisher.PublishRawAsync(topology.Events, BrokerTopology.RoutingKey, properties, body, token);
         await using var channel = await connection.CreateChannelAsync(cancellationToken: token);
         BasicGetResult dead = await Get(channel, topology.FailedQueue, consumer);

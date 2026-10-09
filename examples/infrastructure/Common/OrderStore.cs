@@ -47,7 +47,7 @@ public sealed class OrderStore(NpgsqlDataSource database)
             connection, transaction);
         outbox.Parameters.AddWithValue(message.MessageId);
         outbox.Parameters.AddWithValue(message.OrderId);
-        outbox.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(message, LabJson.Options));
+        outbox.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(message, JsonDefaults.Options));
         outbox.Parameters.AddWithValue(message.OccurredAt);
         outbox.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Text, Value = (object?)Activity.Current?.Id ?? DBNull.Value });
         await outbox.ExecuteNonQueryAsync(token);
@@ -64,7 +64,7 @@ public sealed class OrderStore(NpgsqlDataSource database)
         var messages = new List<PendingEvent>();
         while (await reader.ReadAsync(token))
         {
-            var message = JsonSerializer.Deserialize<OrderPlaced>(reader.GetString(0), LabJson.Options)
+            var message = JsonSerializer.Deserialize<OrderPlaced>(reader.GetString(0), JsonDefaults.Options)
                 ?? throw new JsonException("Outbox 事件不可為 null。");
             messages.Add(new PendingEvent(message, reader.IsDBNull(1) ? null : reader.GetString(1)));
         }

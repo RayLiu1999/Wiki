@@ -140,7 +140,7 @@ flowchart LR
 | Common/OrderStore.cs | 商品與訂單存取、Outbox／Inbox 的本地交易 |
 | Common/Broker.cs | 拓樸、確認發布、Dispatcher、手動 Ack、重試與死信 |
 | Common/Contracts.cs | orders.placed.v1 契約與輸入驗證 |
-| Common/LabDiagnostics.cs | ActivitySource、Meter 與用例計數器 |
+| Common/Diagnostics.cs | ActivitySource、Meter 與用例計數器 |
 | OrderApi、OrderWorker | HTTP 輸入與狀態查詢、獨立背景工作程序 |
 | IntegrationChecks | 真實服務的行為與故障窗口驗證 |
 | schema.sql | 初始化五張表、約束、索引、範例商品及資料庫註解 |

@@ -76,7 +76,7 @@ public sealed class ConfirmedPublisher : IAsyncDisposable
         string? parent = Activity.Current?.Id ?? traceParent;
         if (parent is not null) properties.Headers["traceparent"] = parent;
         return PublishRawAsync(topology.Events, routingKey ?? BrokerTopology.RoutingKey,
-            properties, JsonSerializer.SerializeToUtf8Bytes(message, LabJson.Options), token);
+            properties, JsonSerializer.SerializeToUtf8Bytes(message, JsonDefaults.Options), token);
     }
 
     public Task RetryAsync(BasicDeliverEventArgs delivery, int attempt, byte[] body, CancellationToken token)
@@ -176,15 +176,15 @@ public sealed class NotificationConsumer : IAsyncDisposable
             try
             {
                 attempt = ReadAttempt(delivery.BasicProperties.Headers);
-                OrderPlaced message = LabJson.ReadEvent(body);
+                OrderPlaced message = JsonDefaults.ReadEvent(body);
                 if (!Guid.TryParse(delivery.BasicProperties.MessageId, out Guid id) || id != message.MessageId)
                     throw new JsonException("AMQP MessageId 與事件內容不一致。");
                 string? parent = ReadText(delivery.BasicProperties.Headers, "traceparent");
                 ActivityContext.TryParse(parent, null, isRemote: true, out var context);
-                using var activity = LabDiagnostics.Traces.StartActivity("orders.consume", ActivityKind.Consumer, context);
+                using var activity = Diagnostics.Traces.StartActivity("orders.consume", ActivityKind.Consumer, context);
                 bool first = await handle(message, token);
-                if (first) LabDiagnostics.Processed.Add(1);
-                else LabDiagnostics.Duplicates.Add(1);
+                if (first) Diagnostics.Processed.Add(1);
+                else Diagnostics.Duplicates.Add(1);
                 // 只有業務結果與 Inbox 已提交後才 Ack。
                 await channel.BasicAckAsync(delivery.DeliveryTag, multiple: false, cancellationToken: token);
             }
@@ -196,14 +196,14 @@ public sealed class NotificationConsumer : IAsyncDisposable
                 if (poison || attempt + 1 >= MaximumAttempts)
                 {
                     await channel.BasicNackAsync(delivery.DeliveryTag, multiple: false, requeue: false, cancellationToken: token);
-                    LabDiagnostics.DeadLettered.Add(1);
+                    Diagnostics.DeadLettered.Add(1);
                 }
                 else
                 {
                     // 新的重試訊息確認後才刪除原訊息；中斷仍可能造成重複。
                     await retryPublisher.RetryAsync(delivery, attempt + 1, body, token);
                     await channel.BasicAckAsync(delivery.DeliveryTag, multiple: false, cancellationToken: token);
-                    LabDiagnostics.Retried.Add(1);
+                    Diagnostics.Retried.Add(1);
                 }
             }
         }
