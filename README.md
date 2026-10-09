@@ -93,6 +93,7 @@ prerequisites、relatedArticles 與 src/lib/learning-paths.ts 使用穩定 artic
 | pnpm lint | JavaScript、TypeScript 與建置腳本的靜態檢查 |
 | pnpm test | 收藏資料的損壞、持久化與儲存失敗行為 |
 | pnpm test:snippets | 比對六段 Redis、RabbitMQ、Cache-Aside 與 Outbox／Inbox 文章程式碼與來源 |
+| pnpm test:articles | 檢驗文章結構（必要章節）、最低字數（3,000 字）與禁止之內部雜訊 |
 | pnpm test:container | 對已啟動的容器驗證文章路由、搜尋／PWA 資源、快取標頭與 404 |
 | pnpm build | 靜態頁面、Pagefind、Workbox，以及連結與產物完整性檢查 |
 | pnpm check | 依序執行型別、lint、文章片段核對、單元測試與正式建置 |
@@ -141,6 +142,6 @@ Workbox 的獨立建置步驟會在 Pagefind 建好後執行。基本頁面、�
 
 建議讓 sw.js 與 HTML 使用需要重新驗證的快取設定；具內容雜湊的 _astro/ 資源可使用長期快取。每次部署保存上一版完整產物。回復時重發上一版整包，讓 Service Worker 偵測並提示切換。
 
-正式公開發布前仍需確認網域、託管平台、內容授權，以及 Android Chrome / iOS Safari 的實際安裝體驗。
+開發與驗證指南詳見 [CONTRIBUTING.md](CONTRIBUTING.md)；文章架構與寫作規範詳見 [CONTENT_GUIDE.md](CONTENT_GUIDE.md)。
 
-完整規劃見 [專案規劃書](docs/PROJECT_PLAN.md)，歷史驗收見 [首版實作與驗收紀錄](docs/IMPLEMENTATION.md)與[工作筆記整合紀錄](docs/WORK_NOTES_INTEGRATION.md)，Redis／RabbitMQ 實驗紀錄見 [整合紀錄](docs/REDIS_RABBITMQ_INTEGRATION.md)，全面改寫見 [內容與驗收紀錄](docs/CONTENT_REWRITE.md)，新加入的 MySQL／PostgreSQL 設計見 [資料庫容量架構](docs/DATABASE_SCALE_KNOWLEDGE_ARCHITECTURE.md)。
+歷史規劃與驗收紀錄存檔於 `docs/archive/`，包含 [專案規劃書](docs/archive/PROJECT_PLAN.md)、[首版實作與驗收紀錄](docs/archive/IMPLEMENTATION.md)、[工作筆記整合紀錄](docs/archive/WORK_NOTES_INTEGRATION.md)、[Redis／RabbitMQ 整合紀錄](docs/archive/REDIS_RABBITMQ_INTEGRATION.md)、[內容與驗收紀錄](docs/archive/CONTENT_REWRITE.md) 與 [資料庫容量架構](docs/archive/DATABASE_SCALE_KNOWLEDGE_ARCHITECTURE.md)。
