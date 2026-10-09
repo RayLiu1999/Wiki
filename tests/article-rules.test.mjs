@@ -2,11 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bodyCharacterCount, checkArticle, requiredSections, splitFrontmatter } from '../scripts/lib/article-rules.mjs';
 
-const filler = '這是一段用來湊足字數的說明文字。'.repeat(220);
+const filler = '這是一段精煉重點的說明文字。'.repeat(6); // 每個章節約 84 字，6 個章節共約 500 字，符合 400~1200 字範圍
 const fullBody = requiredSections.map((section) => '## ' + section.id + '\n\n' + filler).join('\n\n');
 
-test('完整章節且字數足夠的文章通過', () => {
+test('完整章節且字數符合 1000 字以內標準的文章通過', () => {
   assert.deepEqual(checkArticle({ frontmatter: {}, body: fullBody }), []);
+});
+
+test('字數超過上限會回報需精煉', () => {
+  const overlong = fullBody + '\n\n' + '這是一段多餘的灌水文字。'.repeat(100);
+  const issues = checkArticle({ frontmatter: {}, body: overlong });
+  assert.ok(issues.some((issue) => issue.includes('超過上限')));
 });
 
 test('缺少必要章節時回報章節名稱', () => {
