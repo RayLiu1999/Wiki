@@ -44,7 +44,7 @@ await using var outbox = new NpgsqlCommand(
     connection, transaction);
 outbox.Parameters.AddWithValue(message.MessageId);
 outbox.Parameters.AddWithValue(message.OrderId);
-outbox.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(message, LabJson.Options));
+outbox.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(message, JsonDefaults.Options));
 outbox.Parameters.AddWithValue(message.OccurredAt);
 outbox.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Text, Value = (object?)Activity.Current?.Id ?? DBNull.Value });
 await outbox.ExecuteNonQueryAsync(token);

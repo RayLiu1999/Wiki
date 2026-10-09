@@ -28,7 +28,7 @@ ConnectionFactory 由環境設定取得帳號、port 與 devwiki vhost。Connect
 
 ## 讀懂發布與接收片段
 
-下方是整合片段。外層提供 IConnection、讀取用 IChannel 和 CancellationToken。ConfirmedPublisher 是自訂的確認發布包裝，topology 是自訂的 Exchange／Queue 設定，OrderPlaced 是帶 MessageId、OrderId、商品、數量與發生時間的事件，LabJson 負責契約序列化。這些自訂型別與完整啟動程式見[實作指南](/practice/ecommerce/cache-messaging/)；不是 RabbitMQ 套件自動提供的類別。
+下方是整合片段。外層提供 IConnection、讀取用 IChannel 和 CancellationToken。ConfirmedPublisher 是自訂的確認發布包裝，topology 是自訂的 Exchange／Queue 設定，OrderPlaced 是帶 MessageId、OrderId、商品、數量與發生時間的事件，JsonDefaults 負責契約序列化。這些自訂型別與完整啟動程式見[實作指南](/practice/ecommerce/cache-messaging/)；不是 RabbitMQ 套件自動提供的類別。
 
 ~~~csharp title="RabbitMqDemo/Program.cs（已納入完整範例）"
 await using var publisher = await ConfirmedPublisher.CreateAsync(connection, topology, token);
@@ -39,7 +39,7 @@ Console.WriteLine("發布確認: broker 已接收");
 BasicGetResult? delivery;
 while ((delivery = await channel.BasicGetAsync(topology.WorkQueue, autoAck: false, token)) is null)
     await Task.Delay(50, token);
-OrderPlaced received = LabJson.ReadEvent(delivery.Body.Span);
+OrderPlaced received = JsonDefaults.ReadEvent(delivery.Body.Span);
 Console.WriteLine("消費內容: 商品 " + received.ProductId + "，數量 " + received.Quantity);
 await channel.BasicAckAsync(delivery.DeliveryTag, multiple: false, token);
 Console.WriteLine("消費確認: 已完成處理");
@@ -69,6 +69,6 @@ Automatic Recovery 協助連線中斷後恢復，仍需處理初次連線失敗�
 
 ## 套用到電商情境
 
-下方 ConfirmedPublisher、OrderPlaced 和 LabJson 是教學程式自訂的型別，非 RabbitMQ 內建 API。發布與消費使用不同 Channel；穩定 MessageId 用於去重，DeliveryTag 只用於目前 Channel 確認。現有 Console Worker 尚需補平台停止訊號與多程序的工作領取協定。
+下方 ConfirmedPublisher、OrderPlaced 和 JsonDefaults 是教學程式自訂的型別，非 RabbitMQ 內建 API。發布與消費使用不同 Channel；穩定 MessageId 用於去重，DeliveryTag 只用於目前 Channel 確認。現有 Console Worker 尚需補平台停止訊號與多程序的工作領取協定。
 
 [閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。
