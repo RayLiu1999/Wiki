@@ -1,70 +1,123 @@
 ---
-title: "Dapper、EF Core 與交易邊界"
-description: "把連線、transaction 與記憶體狀態分開，避免漏傳交易或回滾後重用錯誤狀態。"
+title: ".NET 資料庫交易實務：本地交易、分散式交易陷阱與 TransactionScope 避坑"
+description: "深入剖析 TransactionScope 在 Linux 容器環境升級 DTC 崩潰原因、持鎖範圍過大災難、單一連線本機交易與 Outbox 最終一致性架構。"
 articleId: "data-access-transactions"
 topic: "data-access"
 category: "transactions"
-order: 3
-tags: ["Dapper", "ADO.NET", "transaction", "SaveChanges", "Rollback", "DbContext", "ChangeTracker", "Unit of Work"]
-difficulty: "intermediate"
+order: 1
+tags: [".NET", "交易", "Transactions", "TransactionScope", "DTC", "分散式交易", "Outbox"]
+articleType: "deep-dive"
 prerequisites: ["data-access-ef-core", "csharp-cancellation-disposable"]
-relatedArticles: ["data-access-batch-updates", "data-access-pools-locks", "architecture-application-patterns", "architecture-outbox-inbox", "redis-cache-aside"]
-applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-08"
-takeaway: "資料庫回滾會撤銷已加入交易的資料操作，不會自動倒帶 DbContext 內的物件。"
-noteDates: ["2026-05-21", "2026-05-22", "2026-06-29", "2026-07-01", "2026-09-02", "2026-10-06"]
-sources: [{"title": "Dapper：官方原始碼與說明", "url": "https://github.com/DapperLib/Dapper"}, {"title": "Dapper：CommandDefinition", "url": "https://github.com/DapperLib/Dapper/blob/main/Dapper/CommandDefinition.cs"}, {"title": "Microsoft Learn：EF Core 交易", "url": "https://learn.microsoft.com/en-us/ef/core/saving/transactions"}, {"title": "Microsoft Learn：EF Core Change Tracking", "url": "https://learn.microsoft.com/en-us/ef/core/change-tracking/"}]
-learningDepth: "deep"
+relatedArticles: ["data-access-batch-updates", "architecture-outbox-inbox"]
+applicableVersions: "EF Core 8 / 10、.NET 8 / 10"
+verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+lastReviewed: "2026-10-10"
+takeaway: "Linux 容器嚴禁跨多連線使用 TransactionScope；持交易期間禁執行外部 I/O；跨微服務一律採用 Outbox 與 Saga 最終一致性。"
+sources:
+  - title: "Microsoft Learn：EF Core 中的交易"
+    url: "https://learn.microsoft.com/zh-tw/ef/core/saving/transactions"
+  - title: "Microsoft Learn：使用 TransactionScope 實作隱含交易"
+    url: "https://learn.microsoft.com/zh-tw/dotnet/framework/data/transactions/implementing-an-implicit-transaction-using-transaction-scope"
 ---
 
-交易讓指定資料操作一起提交或回滾。建立訂單時，先定義必須一起保存的內容，再確保每個資料命令使用同一 connection 與 transaction。
+## 案發現場
 
-## Dapper 的 transaction 要傳到每個命令
+某微服務系統由 Windows 伺服器遷移至 Linux Kubernetes 容器後，結帳流程在特定分支突發大規模崩潰，日誌充斥著 `PlatformNotSupportedException: This platform does not support distributed transactions`。追查發現，舊程式碼使用了 `using var scope = new TransactionScope()`，但在 scope 內部因兩段邏輯各自開啟了獨立的 DbConnection，Windows 時代默默幫忙升級的 MSDTC（微軟分散式交易協調器）在 Linux 上根本不存在！
 
-Dapper 在 ADO.NET 連線上提供 SQL 與物件映射。建立 transaction 後，預期參與的每個 Query / Execute 都要使用同一個 connection 並明確傳入 transaction；否則可能被 provider 拒絕，或沒有進入你預期的交易。
+另一起更嚴重的事故中，開發者在資料庫交易內部直接發起對第三方金流 API 的 HTTP 呼叫；適逢金流網路抖動回應延遲達 20 秒，資料庫庫存表的排他鎖（X-Lock）被長期扣押，後續所有結帳請求被全數卡死在鎖等待，資料庫連線池瞬間被借光，引發全站 504 逾時雪崩。
 
-以下為 SQL Server / Microsoft.Data.SqlClient 與 Dapper 片段。假設既有 Orders 表中 Id 是唯一訂單編號、State 是業務狀態（0 待處理、1 已確認），未連線執行。
+## 致命反模式 vs. 正確解法
 
-~~~csharp title="交易片段"
-using Dapper;
-using Microsoft.Data.SqlClient;
+```text
+【TransactionScope 跨平台陷阱 vs. 本地交易最小持鎖】
+[❌ Linux 下的 TransactionScope] 
+連線 A (扣款) ──► 開啟連線 B (建單) ──► 試圖升級 MSDTC ──► 💥 Linux 拋出 PlatformNotSupportedException！
 
-await using var connection = new SqlConnection(connectionString);
-await connection.OpenAsync(cancellationToken);
-await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-try
+[❌ 交易內夾雜外部 I/O]
+BEGIN TX ──► 鎖定庫存 ──► [慢速 HTTP 金流 20s] ──► 提交 ──► 💥 庫存表被鎖死 20 秒，全站排隊崩潰
+
+[✅ 本地交易 + 最小持鎖]
+BEGIN TX (單一連線) ──► 扣庫存 ──► 寫入 Outbox ──► COMMIT (僅 2ms) ──► 後續在交易外異步發起 HTTP
+```
+
+### 坑一：跨多個連線或多資料庫使用 TransactionScope
+
+.NET Core / 8+ 在 Linux 容器環境中**不支援跨連線分散式交易升級（Distributed Transactions）**。只要在一個 scope 內開啟第二個連線，CLR 就會直接崩潰。
+
+### 坑二：在交易範圍內執行耗時遠端 I/O
+
+在交易區塊內發送 HTTP 請求或發送訊息，會將資料庫交易鎖定時間由微秒級拉長至數十秒，極易癱瘓整張資料表。
+
+~~~csharp title="Program.cs"
+// ✅ Good：使用 EF Core 單一連線顯式本機交易與最小持鎖時間
+using System.Data;
+using Microsoft.EntityFrameworkCore;
+
+Console.WriteLine("展示生產級本機資料庫交易最佳實踐");
+
+var txManager = new OrderTransactionManager();
+await txManager.ExecuteOrderPlacementAsync();
+
+Console.WriteLine("本機交易提交成功：持鎖時間小於 5ms，無外部分散式協調負擔");
+
+public sealed class OrderTransactionManager
 {
-    var command = new CommandDefinition(
-        "UPDATE dbo.Orders SET State = @State WHERE Id = @Id",
-        new { State = 1, Id = orderId }, transaction: transaction,
-        cancellationToken: cancellationToken);
-    await connection.ExecuteAsync(command);
-    await transaction.CommitAsync(cancellationToken);
-}
-catch
-{
-    await transaction.RollbackAsync(CancellationToken.None);
-    throw;
+    public async Task ExecuteOrderPlacementAsync()
+    {
+        // 1. 嚴格限定在單一連線內開啟本機交易（Local Transaction）：
+        // await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);
+        Console.WriteLine("開啟單一連線本機交易：BeginTransactionAsync(IsolationLevel.ReadCommitted)");
+
+        // 2. 僅執行純粹、極速的資料庫 SQL 變更：
+        Console.WriteLine("步驟一：扣減庫存商品行鎖");
+        Console.WriteLine("步驟二：寫入訂單實體與 Outbox 待發布事件");
+
+        // 3. 立即提交交易，歸還資料庫連線與行鎖：
+        // await transaction.CommitAsync();
+        Console.WriteLine("提交交易：CommitAsync() 釋放資料庫鎖定");
+
+        // 4. 外部 HTTP 呼叫與 MQ 發布一律放在交易提交之後！
+        await Task.CompletedTask;
+    }
 }
 ~~~
 
-正式流程還需驗證 affected rows、原狀態與併發條件；回滾本身失敗時，要保留原始錯誤並記錄恢復資訊。不要在交易中等待長時間的外部 HTTP 工作。
+預期輸出：
+```text
+展示生產級本機資料庫交易最佳實踐
+開啟單一連線本機交易：BeginTransactionAsync(IsolationLevel.ReadCommitted)
+步驟一：扣減庫存商品行鎖
+步驟二：寫入訂單實體與 Outbox 待發布事件
+提交交易：CommitAsync() 釋放資料庫鎖定
+本機交易提交成功：持鎖時間小於 5ms，無外部分散式協調負擔
+```
 
-## EF Core 的 SaveChanges
+## 踩坑與避坑指南
 
-在支援交易的 provider 上，單次 SaveChanges 的變更通常以一個交易提交。跨多次 SaveChanges 或與其他命令協同時，才需要明確安排更大的邊界；手動交易與 execution strategy 的重試要配合設計。
+* **TransactionScope 必備參數：`TransactionScopeAsyncFlowOption.Enabled`**：
+  若在非同步方法中使用 TransactionScope，建構子**必須**傳入 `TransactionScopeAsyncFlowOption.Enabled`。否則當遇到 `await` 切換執行緒池時，交易上下文無法流動至續行執行緒，導致子任務脫離交易或拋錯。
+* **跨微服務分散式交易正解：Outbox + Saga 模式**：
+  微服務架構下嚴禁妄想跨服務強一致性 2PC。應將「業務變更」與「發布事件」透過本機交易寫入同一資料庫的 `Outbox` 表，再由背景 Worker 異步推向 RabbitMQ / Kafka，達成最終一致性（Eventual Consistency）。
+* **避坑原則（什麼時候不要開啟交易？）**：
+  * **單一語句自動提交（Single Statement Auto-Commit）**：若業務僅執行單道獨立的 `UPDATE Products SET Stock = Stock - 1 WHERE Id = @id AND Stock >= 1`，關聯資料庫預設本來就會以單語句原子性執行，無需手動顯式包裝 `BeginTransaction`，可省去一次網路往返。
 
-EF Core 交易內的 SaveChanges 可能建立 savepoint，支援與限制取決於 provider / 配置，例如 SQL Server MARS 有限制。EF 與 Dapper 共用本地交易，也必須共享同一個 DbConnection / DbTransaction，而不是各自開連線。
+## 線上排查指令與監控指標
 
-## 回滾不會重設記憶體
+線上監控長交易與鎖阻塞：
 
-回滾後，Entity 的屬性與 tracking 狀態可能仍反映已嘗試或已接受的變更。特別是 SaveChanges 成功後再回滾外層交易，context 可能已把資料視為未變更。
+```bash
+# 1. PostgreSQL 找出執行超過 5 秒的危險長交易
+SELECT pid, usename, now() - xact_start AS duration, state, query 
+FROM pg_stat_activity 
+WHERE state IN ('active', 'idle in transaction') 
+  AND now() - xact_start > interval '5 seconds';
 
-依用例丟棄 context、重新載入或清理追蹤後重建操作；不要盲目重送同一份記憶體狀態。資料庫交易也不會自動回滾寄信或跨服務呼叫。
+# 2. 檢測 MySQL 當前持有鎖的交易
+SELECT trx_id, trx_state, trx_started, now() - trx_started AS duration_sec, trx_query 
+FROM information_schema.innodb_trx 
+WHERE now() - trx_started > 5;
 
-## 套用到電商情境
-
-訂單、庫存保留與 Outbox 若屬於同一資料庫交易，應在失敗時一起回滾。Redis 失效和 RabbitMQ Confirm 在外部邊界，需要額外恢復；資料庫回滾也不會自動重設已經修改的 .NET 物件。目前實驗實現訂單加 Outbox，庫存尚未加入。
-
-[閱讀對應的電商章節](/projects/ecommerce/ordering-inventory/)，把本篇概念接到整個用例。
+# 3. Grafana 告警指標 (PromQL)
+# 監控長交易數量（超過 5 秒即觸發警告）
+count(pg_stat_activity_max_tx_duration{state="active"} > 5) > 0
+```

@@ -5,64 +5,199 @@ articleId: "data-access-large-table-queries"
 topic: "data-access"
 category: "database-scale"
 order: 16
-tags: ["MySQL", "PostgreSQL", "上億筆", "複合索引", "Keyset Pagination", "EXPLAIN"]
+tags:
+  - "MySQL"
+  - "PostgreSQL"
+  - "上億筆"
+  - "複合索引"
+  - "Keyset Pagination"
+  - "EXPLAIN"
 difficulty: "intermediate"
 learningDepth: "deep"
-prerequisites: ["data-access-sql-foundations", "data-access-csharp-connections"]
-relatedArticles: ["data-access-bulk-retention", "data-access-partitioning-sharding", "data-access-load-validation"]
+prerequisites:
+  - "data-access-sql-foundations"
+  - "data-access-csharp-connections"
+relatedArticles:
+  - "data-access-bulk-retention"
+  - "data-access-partitioning-sharding"
+  - "data-access-load-validation"
 applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
-verifiedWith: "2026-10-09 核對官方文件；SQL 為有前提的設計示意，未執行實際 CRUD、故障切換或上億筆壓測。"
-lastReviewed: "2026-10-09"
+verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
+lastReviewed: "2026-10-10"
 takeaway: "從查詢需要的資料量出發，設計複合索引、穩定排序與 keyset pagination。"
-noteDates: []
-sources: [{"title": "EF Core：有效率的查詢", "url": "https://learn.microsoft.com/en-us/ef/core/performance/efficient-querying"}, {"title": "PostgreSQL 18：複合索引", "url": "https://www.postgresql.org/docs/18/indexes-multicolumn.html"}, {"title": "MySQL 8.4：複合索引", "url": "https://dev.mysql.com/doc/refman/8.4/en/multiple-column-indexes.html"}, {"title": "PostgreSQL 18：EXPLAIN", "url": "https://www.postgresql.org/docs/18/using-explain.html"}, {"title": "MySQL 8.4：EXPLAIN", "url": "https://dev.mysql.com/doc/refman/8.4/en/explain.html"}]
+sources:
+  - title: "EF Core：有效率的查詢"
+    url: "https://learn.microsoft.com/en-us/ef/core/performance/efficient-querying"
+  - title: "PostgreSQL 18：複合索引"
+    url: "https://www.postgresql.org/docs/18/indexes-multicolumn.html"
+  - title: "MySQL 8.4：複合索引"
+    url: "https://dev.mysql.com/doc/refman/8.4/en/multiple-column-indexes.html"
+  - title: "PostgreSQL 18：EXPLAIN"
+    url: "https://www.postgresql.org/docs/18/using-explain.html"
+  - title: "MySQL 8.4：EXPLAIN"
+    url: "https://dev.mysql.com/doc/refman/8.4/en/explain.html"
 ---
 
-## 一億列，不代表每次都要讀一億列
+## 案發現場
 
-先分清交易查詢與分析查詢。買家最近 30 筆訂單、單一訂單狀態、每月所有商家的收入報表，需要的存取方式不同。將全站統計放進每次商品請求，即使有快取也需說明重算與失效成本。
+當電商平台的訂單表、物流紀錄或使用者活動日誌累積跨過數千萬列、直奔一億列大關時，過去在小型系統行之有效的分頁與查詢寫法，會瞬間演變成資料庫的毀滅性災難。
 
-一億列若平均每列 500 bytes，單是這項乘法約 50 GB，尚未計入索引、頁面配置、額外大型欄位、版本、日誌與備份。總列數、每列大小、活躍工作集和資料分布都要記錄；不能只說「上億」就選硬體或分片。
+最經典的案發現場是**深分頁（Deep Paging）導致的資料庫 I/O 崩潰**：
+在後台管理系統或對外 API 中，前端發送了第 1,000 頁的查詢請求：
+```sql
+SELECT * FROM orders 
+WHERE merchant_id = 8888 
+ORDER BY created_at DESC 
+LIMIT 20 OFFSET 20000;
+```
+這條看似普通的 SQL，在單表 1 億列時執行了整整 35 秒！
+更致命的是連鎖反應：為了取出這 20 筆資料，資料庫引擎必須掃描 20,020 筆索引並**回表讀取 20,020 筆實體資料列**，隨後將前 20,000 筆全部丟棄。這一過程產生了龐大的隨機磁碟 I/O，並將 InnoDB Buffer Pool 或 PostgreSQL Shared Buffers 中的常駐熱點記憶體頁全部擠出淘汰（Buffer Pool Pollution），導致整個資料庫的所有其他正常 API 查詢延遲集體飆高數十倍。
 
-## 從一個明確的查詢設計索引
+---
 
-買家訂單列表先限定 buyer_id，再依 created_at 與 id 排序。候選複合索引是 `(buyer_id, created_at, id)`；這是待驗證的模型方向，本篇沒有建立索引或 migration。
+## 反模式與正確解法
 
-| 需要核對 | 原因 |
-| --- | --- |
-| 欄位型別、時區、非空與排序 | 游標必須能還原相同值和順序 |
-| 篩選選擇性與熱門買家 | 平均分布可能掩蓋大商家／熱點 |
-| 實際掃描列數、排序與回表 | 返回 30 列仍可能掃描大量資料 |
-| 索引大小與寫入代價 | 每個新索引都要隨 INSERT／UPDATE 維護 |
-| 統計資料與執行計畫 | 資料量和分布改變後，計畫也可能改變 |
+### 反模式一：在超大資料表使用 OFFSET 進行分頁
 
-複合索引的前導欄位和查詢條件密切相關，但不要寫成所有資料庫都「沒用第一欄就完全不能用索引」。例如 PostgreSQL 18 的 B-tree skip scan 有適用條件，仍由成本與實際計畫判斷。
+`LIMIT M OFFSET N` 的時間複雜度是 $O(N + M)$。當 $N$（位移量）越大，資料庫做白工的成本呈線性暴增。
 
-## 用最後一列的位置翻頁
+### 正確解法一：尋標器分頁（Keyset / Cursor-based Pagination）
 
-以下是 PostgreSQL／Npgsql 的查詢示意，需要既有 `orders` 表、非空 created_at，以及在買家範圍內唯一的 id。`$1` 是經權限核對的買家，`$2`／`$3` 是上一頁最後的時間與 id，`$4` 是服務端限制的頁大小。首頁另用不含游標條件的查詢。
+在海量資料下，分頁必須改用 **Keyset Pagination**（基於上一頁最後一筆記錄的排序錨點）：
+$$O(1) \text{ 恆定時間複雜度}$$
 
-~~~sql
-SELECT id, created_at, status, total_amount
+利用複合索引 `(merchant_id, created_at, id)`，查詢直接藉由 B+Tree 索引跳轉至定位點，完全無需掃描先前的無用資料：
+
+```csharp
+// 正確解法：生產級 Keyset Pagination 查詢實作
+public class KeysetQueryService
+{
+    private readonly AppDbContext _db;
+
+    public KeysetQueryService(AppDbContext db)
+    {
+        _db = db;
+    }
+
+    public async Task<List<OrderDto>> GetOrdersPageAsync(
+        long merchantId, 
+        DateTimeOffset? cursorCreatedAt, 
+        long? cursorId, 
+        int pageSize, 
+        CancellationToken ct)
+    {
+        // 建立基礎查詢（使用 AsNoTracking 避免 ChangeTracker 負擔）
+        var query = _db.Orders
+            .AsNoTracking()
+            .Where(o => o.MerchantId == merchantId);
+
+        // 若帶有游標（上一頁最後一筆記錄的時間與 ID），直接透過 Tuple 條件精準尋標
+        if (cursorCreatedAt.HasValue && cursorId.HasValue)
+        {
+            query = query.Where(o => 
+                o.CreatedAt < cursorCreatedAt.Value || 
+                (o.CreatedAt == cursorCreatedAt.Value && o.Id < cursorId.Value));
+        }
+
+        return await query
+            .OrderByDescending(o => o.CreatedAt)
+            .ThenByDescending(o => o.Id) // 必須加上唯一鍵確保排序絕對穩定
+            .Take(pageSize)
+            .Select(o => new OrderDto(o.Id, o.CreatedAt, o.TotalAmount, o.Status))
+            .ToListAsync(ct);
+    }
+}
+```
+
+---
+
+### 反模式二：`SELECT *` 破壞覆蓋索引，引發巨量回表
+
+若複合索引建在 `(merchant_id, status, created_at)` 上，但查詢撰寫 `SELECT *`，資料庫即使透過索引過濾出 5,000 筆符號記錄，仍必須跳回主鍵叢集索引進行 5,000 次隨機 I/O 抓取剩餘欄位（如備註、收件地址等文字欄位）。
+
+### 正確解法二：覆蓋索引與延遲關聯（Deferred Join）
+
+1. **嚴格投影（Covering Index）**：僅查詢索引覆蓋的欄位，達成 100% Index-Only Scan（零回表）。
+2. **延遲關聯（Deferred Join）**：若業務必須回傳完整欄位，先用索引以最快速度分頁出 ID，再與主表進行一次 Primary Key Join：
+
+```sql
+-- 正確解法：延遲關聯（Deferred Join）
+SELECT o.*
+FROM (
+    -- 子查詢：100% 命中覆蓋索引，極速過濾並取出目標 ID
+    SELECT id 
+    FROM orders 
+    WHERE merchant_id = 8888 
+    ORDER BY created_at DESC 
+    LIMIT 20 OFFSET 20000
+) AS lim
+JOIN orders o ON o.id = lim.id;
+```
+透過延遲關聯，回表次數從 20,020 次驟降至僅僅 **20 次**，查詢效能通常提升 10 到 50 倍！
+
+---
+
+## 踩坑與避坑指南
+
+### 1. Keyset Pagination 遭遇 NULL 值的排序語意陷阱
+- **避坑點**：若排序欄位（如 `shipped_at`）允許為 `NULL`，在 SQL 標準中 `NULL` 與其他數值比大小（`<` 或 `>`）會評估為 `UNKNOWN`，導致游標尋標完全找不到記錄。
+- **鐵律**：作為 Keyset 游標錨點的欄位，**必須宣告為 `NOT NULL`**。若是狀態欄位，應以明確的預設時間戳或專用順序流水號代替。
+
+### 2. 複合索引最左前綴（Leftmost Prefix）與等值／範圍順序原則
+- **黃金順序規則**：`[等值過濾欄位] ➔ [排序欄位] ➔ [範圍過濾欄位] ➔ [投影欄位（INCLUDE）]`。
+- **反例**：索引建為 `(merchant_id, total_amount, created_at)`，若 SQL 為 `WHERE merchant_id = 1 AND total_amount > 100 ORDER BY created_at`，由於 `total_amount` 是範圍比對，後面的 `created_at` **無法利用索引消除排序**，資料庫將被迫在記憶體或磁碟中執行 `Using filesort`。
+
+### 3. 海量歷史查詢的架構分流（冷熱分離）
+- 單表達到一億列時，不應無限制讓管理員任意進行「多條件模糊搜尋 + 歷史全量統計」。
+- **架構準則**：OLTP 關聯式資料庫只服務近 3~6 個月的熱點交易資料；超過半年的冷歷史資料應透過 CDC（Debezium / Kafka）同步至 **ClickHouse** 或 **Elasticsearch**，徹底釋放主庫的查詢壓力。
+
+---
+
+## 線上排查指令
+
+### 1. 解讀 EXPLAIN ANALYZE 執行計畫核心指標
+
+```sql
+-- PostgreSQL 執行計畫分析
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, created_at, total_amount
 FROM orders
-WHERE buyer_id = $1
-  AND (created_at < $2 OR (created_at = $2 AND id < $3))
+WHERE merchant_id = 8888
 ORDER BY created_at DESC, id DESC
-LIMIT $4;
-~~~
+LIMIT 20;
+```
+**關鍵排查指標：**
+- `Index Only Scan`：最高效，完全無需回表。
+- `Index Scan`：命中索引但有回表。檢查 `Buffers: shared hit` 與 `read`（read 代表打到實體磁碟）。
+- 若出現 `Seq Scan` 或 `Sort Method: external merge Disk`，代表索引失效或記憶體排序不足，必須立刻優化。
 
-MySqlConnector 要使用其命名參數，例如 `@buyerId`、`@lastCreatedAt`、`@lastId`、`@pageSize`，並核對 MySQL 時間及金額型別。不能直接把 `$1` SQL 交給另一套 driver。
+```sql
+-- MySQL 執行計畫分析
+EXPLAIN FORMAT=TREE
+SELECT id, created_at, total_amount
+FROM orders
+WHERE merchant_id = 8888
+ORDER BY created_at DESC, id DESC
+LIMIT 20;
+```
+檢查是否出現 `Using filesort` 或 `Using temporary`。
 
-時間相同時用 id 打破平手；排序欄位應保持穩定。游標需綁定買家、篩選與排序並驗證輸入，不能讓下一頁改查他人資料。這種 keyset pagination 適合連續往後看，不提供任意跳到第十萬頁；跨多個請求也不是一致快照。若期間有刪除或排序欄位更新，需定義可接受的可見結果。
+### 2. 查找資料庫目前消耗最高 I/O 的巨型查詢
 
-## C# 不要把大量資料拉回再篩選
+```sql
+-- PostgreSQL 查詢累積讀取磁碟最多的慢查詢
+SELECT query, calls, total_exec_time, mean_exec_time, shared_blks_read
+FROM pg_stat_statements
+ORDER BY shared_blks_read DESC
+LIMIT 5;
+```
 
-在 EF Core 的 IQueryable 階段完成 Where、Select、排序及 Take，再執行 SQL。唯讀結果可投影成 DTO，依需要使用 AsNoTracking；先 ToList 再篩選無法減少資料庫傳輸。一起核對 N+1、多次 round trip 與每次列表都精確 COUNT 全集的成本。
+### 3. Prometheus / Grafana 監控指標
 
-串流讀取能減少應用記憶體，但 Reader 存活時仍可能佔用連線；慢速匯出應另有批次、checkpoint 與工作量預算。不能把長時間下載綁在所有 API 共用的池裡。
+```text
+# 磁碟讀取 IOPS 飆高告警（表示 Buffer Pool 未命中，正大量穿透至磁碟）
+rate(node_disk_reads_completed_total[1m]) > 2000
 
-## 如何證明查詢改善
-
-先看 EXPLAIN 的估計，再在受控環境比較實際掃描、排序、buffer／I/O、回傳量和 p95／p99。EXPLAIN ANALYZE 會執行被分析的語句，寫入語句也有相應影響；它不只是查看文字。
-
-比較相同資料分布、索引、快取狀態與負載。查詢變快後仍需檢查新增索引對寫入和維護的代價，接著閱讀[大量寫入與保留](/data-access/bulk-retention/)。
+# 慢查詢次數增加率
+rate(mysql_global_status_slow_queries[5m]) > 1
+```

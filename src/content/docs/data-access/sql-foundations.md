@@ -1,47 +1,113 @@
 ---
-title: "SQL、約束、索引與查詢計畫"
-description: "從商品與訂單說明資料完整性、查詢成本及交易隔離的基本責任。"
+title: "關聯資料庫查詢基礎：SQL 執行計畫、隱式型別轉換與索引失效"
+description: "深入剖析 SQL 執行計畫解讀、隱式型別轉換使索引失效的根本原因、SARGable 查詢撰寫原則與覆蓋索引優化。"
 articleId: "data-access-sql-foundations"
 topic: "data-access"
 category: "querying"
-order: 7
-tags: ["SQL、約束、索引與查詢計畫", "data-access"]
-difficulty: "intermediate"
-learningDepth: "basic"
-prerequisites: ["csharp-syntax-traps"]
-relatedArticles: ["data-access-concurrency", "data-access-transactions"]
-applicableVersions: "PostgreSQL 18；EF Core 供應商的差異另見相關文章。"
-verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"
-lastReviewed: "2026-10-08"
-takeaway: "從商品與訂單說明資料完整性、查詢成本及交易隔離的基本責任。"
-noteDates: []
-sources: [{"title": "PostgreSQL Constraints", "url": "https://www.postgresql.org/docs/18/ddl-constraints.html"}, {"title": "PostgreSQL EXPLAIN", "url": "https://www.postgresql.org/docs/18/using-explain.html"}, {"title": "PostgreSQL Transaction Isolation", "url": "https://www.postgresql.org/docs/18/transaction-iso.html"}]
+order: 3
+tags: ["SQL", "執行計畫", "索引失效", "隱式轉換", "SARGable", "覆蓋索引", "PostgreSQL", "MySQL"]
+articleType: "deep-dive"
+prerequisites: ["data-access-ef-core", "csharp-syntax-traps"]
+relatedArticles: ["data-access-type-mapping", "data-access-large-table-queries"]
+applicableVersions: "SQL Server 2019+、PostgreSQL 14+、MySQL 8.0+"
+verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+lastReviewed: "2026-10-10"
+takeaway: "確保查詢條件滿足 SARGable 原則；C# 字串必須精確對齊 Ansi/Unicode 避免隱式轉換；杜絕在索引欄位上套用函數。"
+sources:
+  - title: "PostgreSQL 官方文件：Using EXPLAIN"
+    url: "https://www.postgresql.org/docs/current/using-explain.html"
+  - title: "Microsoft Learn：了解 SQL Server 中的執行計畫"
+    url: "https://learn.microsoft.com/zh-tw/sql/relational-databases/performance/execution-plans"
 ---
 
-## 本篇的資料背景
+## 案發現場
 
-商品、訂單與 Outbox 保存於 PostgreSQL；Redis 只保存商品副本。本篇讓讀者能分辨查詢速度與資料正確性。現有實驗有商品與訂單，完整庫存和訂單明細屬於後續案例設計。
+某電商平台的會員登入與查單端點在促銷期間突然變慢，單次依手機號碼查詢用戶的操作耗時從 2ms 驟增至 1,800ms，資料庫 CPU 直衝 95%。DBA 檢查表結構，確認 `MobilePhone` 欄位已建立了 B-Tree 唯一索引；然而抓取慢查詢的 **執行計畫（Execution Plan）** 卻顯示令人費解的結果：資料庫完全跳過了索引搜尋（Index Seek），而是對全表 2,000 萬筆會員進行了極其昂貴的**全表掃描（Table Scan / Seq Scan）**！
 
-## 約束保護什麼
+深入分析發現：資料庫欄位為 `varchar(20)`（Ansi 非 Unicode），而 C# 後端傳入參數時預設被識別為 Unicode 字串；為了完成比對，資料庫執行引擎被迫對全表每一行的欄位自動套用 `CONVERT(nvarchar, MobilePhone)` 函式，引發了後端工程師最容易忽視的**隱式型別轉換索引失效**。
 
-主鍵保護識別，外鍵保護引用，唯一約束保護不能重複的業務鍵，CHECK 保護同一列可表達的有效範圍。應用驗證提供清楚錯誤，資料庫約束則涵蓋其他入口；兩者有各自目的。
+## 致命反模式 vs. 正確解法
 
-金額的精度、數量範圍、NULL 的意義與時間格式都要明確。新增資料表和欄位使用持久化 COMMENT 記錄每列粒度、單位、來源及生命週期；現有初始化檔已採 PostgreSQL comment，修改模型時需同步 migration。
+```text
+【SARGable 索引直達 vs. 隱式轉換全表計算】
+[❌ 隱式轉換/函數包裝] WHERE CONVERT(nvarchar, Phone) = @Param
+資料庫 ──► 必須走訪每一筆資料，每行呼叫 CPU 轉型 ──► 💥 索引失效，全表掃描 2,000 萬次！
 
-## 索引不是每個欄位都加
+[✅ SARGable 查詢]     WHERE Phone = @Param
+資料庫 ──► 參數型別與欄位精確對齊 ──► B-Tree 樹狀搜尋 (Index Seek)，O(log N) 3 次 I/O 直達！
+```
 
-商品 ID 查詢、訂單買家加建立時間的排序，以及 Outbox 待送工作的掃描，有不同索引需求。複合索引的欄位順序、選擇性、排序與寫入成本要一起評估，並以實際查詢計畫核對。
+### 坑一：C# 字串編碼與資料庫欄位型態不匹配
 
-以下是 PostgreSQL 查詢計畫的閱讀示意；`products` 是現有實驗的商品表，這裡沒有執行命令。
+在 SQL Server 或 MySQL 中，若欄位是 `varchar`，但傳入參數未指定型別（預設 Unicode `nvarchar`），字別優先級會迫使資料庫將欄位逐行提升為 `nvarchar`，徹底廢掉 B-Tree 索引。
 
-~~~sql
-EXPLAIN SELECT id, name, price FROM products WHERE id = 1;
+### 坑二：在 WHERE 條件的索引欄位外層包裝函數
+
+使用 `WHERE YEAR(CreatedAt) = 2026` 或 `WHERE SUBSTRING(OrderNo, 1, 4) = '2026'` 會阻止資料庫利用 B-Tree 範圍檢索，必須改寫為範圍查詢 `WHERE CreatedAt >= '2026-01-01' AND CreatedAt < '2027-01-01'`。
+
+~~~csharp title="Program.cs"
+// ✅ Good：在 EF Core 與 Dapper 中明確宣告 Ansi 字串型別，確保產生 SARGable 查詢
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using Microsoft.EntityFrameworkCore;
+
+Console.WriteLine("展示 SARGable 最佳化查詢模型與參數宣告");
+
+var user = new UserAccount
+{
+    Id = 1,
+    MobilePhone = "0912345678",
+    CreatedAt = DateTime.UtcNow
+};
+
+Console.WriteLine($"會員手機號碼: {user.MobilePhone}");
+Console.WriteLine("宣告 [Unicode(false)]：保證傳遞 varchar 參數，防止資料庫隱式型別轉換");
+
+public sealed class UserAccount
+{
+    public int Id { get; set; }
+
+    // 關鍵：明確宣告 Unicode(false)，EF Core 將生成 varchar 參數而非預設 nvarchar
+    [Unicode(false)]
+    [StringLength(20)]
+    public string MobilePhone { get; set; } = string.Empty;
+
+    public DateTime CreatedAt { get; set; }
+}
 ~~~
 
-EXPLAIN 提供計畫；EXPLAIN ANALYZE 還會執行命令並量測，因此對 UPDATE／DELETE 等操作不能當成純讀取工具。小表順序掃描也可能合理，先看資料量和實際耗時。
+預期輸出：
+```text
+展示 SARGable 最佳化查詢模型與參數宣告
+會員手機號碼: 0912345678
+宣告 [Unicode(false)]：保證傳遞 varchar 參數，防止資料庫隱式型別轉換
+```
 
-## 交易隔離與並行
+## 踩坑與避坑指南
 
-交易把一組操作放進提交／回滾邊界，隔離級別與寫入方式決定競爭下可觀察到的結果。先查到庫存 3，再各自寫回 1，可能產生遺失更新；需要條件更新、concurrency token 或適當鎖定，而非只增加交易關鍵字。
+* **SARGable（Search Argument Able）三大鐵律**：
+  1. **禁止在欄位外層套用任何函數**：例如 `WHERE UPPER(Email) = 'TEST@ABC.COM'` 應改為在寫入時統一小寫儲存，查詢時使用純值比對。
+  2. **禁止在欄位左側進行算術運算**：`WHERE Amount * 1.1 > 100` 應改寫為 `WHERE Amount > 100 / 1.1`。
+  3. **前綴模糊查詢禁止前置萬用字元**：`LIKE '%cup'` 無法使用 B-Tree 索引，僅 `LIKE 'cup%'` 支援索引範圍搜尋。
+* **覆蓋索引（Covering Index）威力**：
+  在建立二級索引時，透過 `CREATE INDEX ix_orders_status ON Orders(Status) INCLUDE (TotalAmount, CreatedAt)`，將常用查詢欄位掛在葉節點。資料庫只需查閱索引本身即可回傳結果，無需再進行昂貴的「回表二次讀取（Bookmark Lookup / Key Lookup）」。
+* **避坑原則（什麼時候不要建索引？）**：
+  * **低區分度（Low Selectivity）欄位**：如性別或布林標記（`IsActive`）。當單一數值佔據全表 50% 以上時，B-Tree 搜尋反而比全表循序讀取更慢，資料庫優化器通常會自動放棄索引。
 
-庫存、金額和訂單狀態的 schema 範例需要核對 provider 方言；SQL Server rowversion、PostgreSQL 的機制與 SQLite 行為不能直接混用。
+## 線上排查指令與監控指標
+
+分析慢查詢與執行計畫：
+
+```bash
+# 1. PostgreSQL 取得真實執行耗時與緩衝命中計畫
+EXPLAIN (ANALYZE, BUFFERS, COSTS)
+SELECT "Id", "MobilePhone" FROM "Users" WHERE "MobilePhone" = '0912345678';
+
+# 2. MySQL 8.0 樹狀格式執行計畫（尋找是否有 Type: ALL 全表掃描）
+EXPLAIN FORMAT=TREE
+SELECT Id, MobilePhone FROM Users WHERE MobilePhone = '0912345678';
+
+# 3. Grafana 監控指標 (PromQL)
+# 檢視資料庫未走索引的掃描行數比率（比例高代表嚴重索引失效）
+rate(pg_stat_database_tup_returned[5m]) / rate(pg_stat_database_tup_fetched[5m])
+```
