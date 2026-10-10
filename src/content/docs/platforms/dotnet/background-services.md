@@ -8,7 +8,7 @@ order: 10
 tags: ["BackgroundService 的啟停、Scope 與工作結果", "dotnet"]
 difficulty: "intermediate"
 learningDepth: "deep"
-prerequisites: ["dotnet-hosting", "aspnet-core-dependency-injection", "csharp-cancellation"]
+prerequisites: ["dotnet-hosting", "aspnet-core-dependency-injection", "csharp-cancellation-disposable"]
 relatedArticles: ["rabbitmq-dotnet-integration", "kubernetes-probes-resources"]
 applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
 verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"

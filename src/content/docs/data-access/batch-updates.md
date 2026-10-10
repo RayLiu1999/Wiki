@@ -7,7 +7,7 @@ category: "transactions"
 order: 4
 tags: ["批次 SQL", "Dapper", "Task.Delay", "連線管理", "批次大小", "資料庫鎖", "keyset"]
 difficulty: "intermediate"
-prerequisites: ["data-access-transactions", "csharp-cancellation"]
+prerequisites: ["data-access-transactions", "csharp-cancellation-disposable"]
 relatedArticles: ["data-access-pools-locks", "csharp-thread-safety", "engineering-metrics-tracing"]
 applicableVersions: "SQL 範例限定 SQL Server T-SQL；其他資料庫需重寫批次語法與鎖定策略。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"

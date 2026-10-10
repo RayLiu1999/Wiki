@@ -7,7 +7,7 @@ category: "services"
 order: 3
 tags: ["IHttpClientFactory", "AddHttpClient", "HttpClient", "命名 client", "HttpMessageHandler", "DelegatingHandler", "連線池"]
 difficulty: "intermediate"
-prerequisites: ["aspnet-core-dependency-injection", "csharp-disposable"]
+prerequisites: ["aspnet-core-dependency-injection", "csharp-cancellation-disposable"]
 relatedArticles: ["aspnet-core-http-resilience", "engineering-metrics-tracing"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"

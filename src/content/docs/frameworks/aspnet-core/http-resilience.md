@@ -7,8 +7,8 @@ category: "services"
 order: 4
 tags: ["HttpRequestException", "TaskCanceledException", "OperationCanceledException", "SocketException", "JsonException", "EnsureSuccessStatusCode", "ReadAsStringAsync", "ReadAsStreamAsync", "Polly", "429", "Retry-After"]
 difficulty: "intermediate"
-prerequisites: ["aspnet-core-http-client-factory", "csharp-cancellation", "csharp-exceptions"]
-relatedArticles: ["csharp-query-abstractions", "engineering-metrics-tracing"]
+prerequisites: ["aspnet-core-http-client-factory", "csharp-cancellation-disposable", "csharp-syntax-traps"]
+relatedArticles: ["csharp-collections-linq", "engineering-metrics-tracing"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-08"

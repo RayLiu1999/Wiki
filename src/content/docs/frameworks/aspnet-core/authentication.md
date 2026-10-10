@@ -7,7 +7,7 @@ category: "services"
 order: 5
 tags: ["Authentication Scheme", "Authorization Policy", "AllowAnonymous", "IsAuthenticated", "AuthenticateResult.NoResult", "AuthenticateResult.Fail", "401", "403"]
 difficulty: "intermediate"
-prerequisites: ["aspnet-core-middleware", "csharp-extensions-attributes"]
+prerequisites: ["aspnet-core-middleware", "csharp-syntax-traps"]
 relatedArticles: ["aspnet-core-model-binding", "engineering-metrics-tracing"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"

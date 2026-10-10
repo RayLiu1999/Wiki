@@ -7,7 +7,7 @@ category: "querying"
 order: 1
 tags: ["EF Core", "DbContext", "DbSet", "LINQ", "Fluent API", "OnModelCreating", "ApplyConfigurationsFromAssembly", "AsNoTracking", "SQL"]
 difficulty: "intermediate"
-prerequisites: ["csharp-query-abstractions", "aspnet-core-dependency-injection"]
+prerequisites: ["csharp-collections-linq", "aspnet-core-dependency-injection"]
 relatedArticles: ["data-access-migrations", "data-access-transactions", "data-access-type-mapping"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"

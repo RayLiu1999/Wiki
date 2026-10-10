@@ -5,7 +5,7 @@ group: "ecommerce"
 order: 1
 environment: "reading"
 verification: "電商設計案例；本章描述規則與方案，尚未提供完整業務實作。"
-linkedArticles: ["csharp-classes", "csharp-records-invariants", "csharp-structs-equality", "architecture-domain-modeling", "architecture-creation-patterns", "data-access-large-table-queries"]
+linkedArticles: ["csharp-syntax-traps", "csharp-value-reference-types", "architecture-domain-modeling", "architecture-creation-patterns", "data-access-large-table-queries"]
 prerequisites: ["ecommerce/overview"]
 sources: [{"title": "Microsoft modern web application architecture", "url": "https://learn.microsoft.com/en-us/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures"}]
 ---

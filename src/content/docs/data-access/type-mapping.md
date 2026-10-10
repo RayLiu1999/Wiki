@@ -7,8 +7,8 @@ category: "querying"
 order: 6
 tags: ["byte", "sbyte", "tinyint", "SQL Server", "MySQL", "PostgreSQL", "checked", "型別對應"]
 difficulty: "intermediate"
-prerequisites: ["csharp-variables", "data-access-ef-core"]
-relatedArticles: ["data-access-migrations", "csharp-records-invariants"]
+prerequisites: ["csharp-syntax-traps", "data-access-ef-core"]
+relatedArticles: ["data-access-migrations", "csharp-syntax-traps"]
 applicableVersions: "比較 SQL Server、MySQL 8.4 與 PostgreSQL；實際 CLR 對應由選用 provider 驗證。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-08"

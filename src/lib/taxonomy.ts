@@ -1,9 +1,7 @@
 export const categories = [
-  { id: 'basics', name: '語法入門', description: '環境、變數、流程控制與方法', icon: 'code', step: '先讓程式跑起來' },
-  { id: 'types', name: '型別與物件', description: 'class、值型別、record 與空值處理', icon: 'box', step: '理解型別與物件' },
-  { id: 'oop', name: '物件導向', description: '介面、多型、類別設計與擴充方法', icon: 'network', step: '讓行為可以重用' },
-  { id: 'data', name: '資料處理', description: '泛型集合、LINQ 與列舉模型', icon: 'list', step: '把資料整理成結果' },
-  { id: 'practice', name: '實務與非同步', description: '資源、非同步、取消與並行控制', icon: 'layers', step: '處理真實世界的工作' },
+  { id: 'syntax-runtime', name: '語法與執行期', description: '後端語法陷阱、記憶體佈局與不可變性', icon: 'code', step: '掌握核心語言特性' },
+  { id: 'async-threading', name: '非同步與並行', description: '狀態機、ValueTask、取消協調與 Channels 管道', icon: 'layers', step: '構建高吞吐服務' },
+  { id: 'collections-memory', name: '集合與效能', description: 'LINQ 延遲評估、Span 零拷貝與併發集合', icon: 'list', step: '消除熱路徑開銷' },
 ] as const;
 
 export const topics = {

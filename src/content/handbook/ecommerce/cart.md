@@ -5,7 +5,7 @@ group: "ecommerce"
 order: 4
 environment: "reading"
 verification: "電商設計案例；本章描述規則與方案，尚未提供完整業務實作。"
-linkedArticles: ["csharp-collections", "redis-data-types-ttl", "redis-concurrency", "csharp-thread-safety", "data-access-concurrency"]
+linkedArticles: ["csharp-collections-linq", "redis-data-types-ttl", "redis-concurrency", "csharp-thread-safety", "data-access-concurrency"]
 prerequisites: ["ecommerce/identity"]
 sources: [{"title": "Redis data types", "url": "https://redis.io/docs/latest/develop/data-types/"}]
 ---

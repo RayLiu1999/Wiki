@@ -1,70 +1,108 @@
 ---
-title: "Channel 與有界背景工作"
-description: "用生產者與消費者模型控制工作流量，理解背壓、完成與取消。"
+title: "C# 高效生產者消費者模式：System.Threading.Channels 與背壓實戰"
+description: "深入剖析行程內非同步佇列 Channels 的高效無鎖設計、背壓控制策略（Backpressure），以及正確關閉管線最佳實務。"
 articleId: "csharp-channels"
 topic: "csharp"
-category: "practice"
-order: 23
-tags: ["Channel<T>", "Channel", "背壓", "生產者", "消費者", "ValueTask", "IAsyncEnumerable"]
-difficulty: "intermediate"
-prerequisites: ["csharp-async-coordination", "csharp-cancellation"]
-relatedArticles: ["csharp-thread-safety", "aspnet-core-dependency-injection", "rabbitmq-getting-started", "architecture-communication-boundaries"]
-applicableVersions: "以 .NET 10 / C# 14 核對；個別語法與 API 的最低版本見內文。"
-verifiedWith: ".NET SDK 10.0.105 / net10.0 / C# 14；完整 Program.cs 已納入編譯與輸出驗證。"
-lastReviewed: "2026-10-08"
-takeaway: "有界 Channel 能控制積壓的工作量；滿載時的等待或丟棄策略必須由業務決定。"
-noteDates: ["2026-05-21", "2026-05-27"]
-sources: [{"title": "Microsoft Learn：System.Threading.Channels", "url": "https://learn.microsoft.com/en-us/dotnet/core/extensions/channels"}]
-learningDepth: "deep"
+category: "async-threading"
+order: 5
+tags: ["C#", "Channels", "生產者消費者", "背壓", "非同步", "高吞吐"]
+articleType: "deep-dive"
+prerequisites: ["csharp-async-await"]
+relatedArticles: ["csharp-valuetask-tcs", "csharp-thread-safety"]
+applicableVersions: "C# 10+ / 14、.NET 6+ / .NET 10"
+verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+lastReviewed: "2026-10-10"
+takeaway: "行程內解耦首選 BoundedChannel 並設定有界容量以實現背壓；消費者搭配 await foreach，生產結束必須顯式 Complete()。"
+sources:
+  - title: "Microsoft .NET Blog：An Introduction to System.Threading.Channels"
+    url: "https://devblogs.microsoft.com/dotnet/an-introduction-to-system-threading-channels/"
 ---
 
-Channel 在一個程序內將產生與處理資料的步驟接起來。有界 Channel 能限制積壓並提供背壓，適合可接受程序生命週期內保存的工作。
+## 案發現場
 
-## 先決定可積壓多少工作
+促銷大促期間，結帳微服務在每筆訂單完成後需要非同步寫入審計軌跡與推送通知。團隊採用了 `ConcurrentQueue` 作為內部緩衝，並以定時 Worker 批次寫入。然而下游外部推播服務因網路抖動出現 10 秒延遲，生產端的訂單流量卻以每秒 5,000 筆持續湧入。
 
-Channel 連接生產者與消費者，提供並行安全的寫入與非同步讀取。無界佇列使用方便，但消費速度跟不上時可能持續增加記憶體；有界 Channel 可以讓生產者等待空間，形成背壓。
+緩衝佇列在幾分鐘內暴增至數百萬筆物件，行程記憶體直線衝破 4GB 上限，微服務觸發 OOM（Out Of Memory）直接重啟，造成記憶體中大量未處理的推播事件永久遺失。
+
+## 致命反模式 vs. 正確解法
+
+```text
+【BoundedChannel 背壓機制 (Backpressure)】
+生產者 (API Request) ──► 寫入通道 ──► [ 容量上限: 100 ] ──► 消費者 (背景 Worker)
+                                            │
+                                  (佇列滿載時非同步等待)
+                                 生產者暫停，反推上游限流防崩潰
+```
+
+### 坑一：使用無界佇列，缺乏流量背壓防護
+
+```csharp
+// 💣 Bad：無界佇列在下游堵塞時會無限制吞噬記憶體，直到 OOM 崩潰
+private readonly ConcurrentQueue<LogItem> _queue = new();
+```
+
+### 坑二：遺漏 Complete() 造成消費者死等
+
+消費者端使用 `ReadAllAsync()` 時，若生產者在結束時未呼叫 `Writer.Complete()`，消費者的 `await foreach` 迴圈將永遠無法正常結束退出。
 
 ~~~csharp title="Program.cs"
+// ✅ Good：有界佇列提供背壓防護，並優雅消費
 using System.Threading.Channels;
 
-var channel = Channel.CreateBounded<int>(new BoundedChannelOptions(2)
+var options = new BoundedChannelOptions(capacity: 2)
 {
-    FullMode = BoundedChannelFullMode.Wait,
+    FullMode = BoundedChannelFullMode.Wait, // 滿載時生產者非同步等待（背壓）
     SingleWriter = true,
     SingleReader = true
-});
-Task consumer = ConsumeAsync(channel.Reader);
-for (int i = 1; i <= 3; i++) await channel.Writer.WriteAsync(i);
-channel.Writer.TryComplete();
-await consumer;
+};
+var channel = Channel.CreateBounded<string>(options);
 
-static async Task ConsumeAsync(ChannelReader<int> reader)
+// 啟動消費者 Worker
+var consumerTask = Task.Run(async () =>
 {
-    await foreach (int item in reader.ReadAllAsync())
-        Console.WriteLine(item);
-}
+    await foreach (var item in channel.Reader.ReadAllAsync())
+    {
+        Console.WriteLine($"消費事件: {item}");
+    }
+});
+
+// 生產者寫入事件
+await channel.Writer.WriteAsync("訂單付款完成");
+await channel.Writer.WriteAsync("庫存扣減通知");
+
+// 生產完畢，明確告知管線關閉
+channel.Writer.Complete();
+
+// 等待所有排隊事件消費完畢
+await consumerTask;
+Console.WriteLine("所有通道事件處理完畢");
 ~~~
 
 預期輸出：
+```text
+消費事件: 訂單付款完成
+消費事件: 庫存扣減通知
+所有通道事件處理完畢
+```
 
-~~~text
-1
-2
-3
-~~~
+## 踩坑與避坑指南
 
-Channel 在 .NET Core 3.0 以上共享框架中提供；本例用 .NET 10 驗證。WriteAsync 在無空間時非同步等待，ReadAllAsync 在完成且已排空後結束。
+* **佇列滿載策略（BoundedChannelFullMode）**：
+  * `Wait`（預設）：生產者以非同步方式等待空位，保障資料零遺失，但會將延遲反推給上游調用方（背壓）。
+  * `DropOldest` / `DropWrite`：丟棄最舊或最新資料。適合「可遺失的高頻監控指標」或「最新股價推播」，以丟包換取系統存活。
+* **單一讀寫者優化（SingleWriter / SingleReader）**：若業務確認只有單一 Producer 或 Consumer，應將此選項設為 `true`。Channel 會切換為專屬的高效無鎖演算法，進一步減少內部 CAS 開銷。
+* **避坑原則（什麼時候千萬不要用 Channels？）**：
+  * **跨伺服器節點的非同步解耦**：`System.Threading.Channels` 是純**記憶體內（In-Process）**佇列。若微服務重啟、當機，記憶體內的事件會立即遺失。需要「跨伺服器可靠投遞」、「持久化落地」或「水平分散式消費」的任務，必須選用 RabbitMQ、Kafka 等外部訊息中間件。
 
-## 完成、取消與丟棄
+## 線上排查指令
 
-正式流程需在生產者的 finally 完成 writer，失敗時可以把例外交給 TryComplete；WriteAsync 與 ReadAllAsync 也應接收關閉流程的取消 token。若消費者失敗，需通知生產者，避免一直等不到空間。
+監測行程內記憶體與執行緒狀況：
 
-DropOldest、DropNewest、DropWrite 會失去項目，適合允許丟棄的資料，不能直接套到付款或訂單。SingleReader / SingleWriter 是對實際使用的承諾，不能在多個讀寫者下隨意設成 true。
+```bash
+# 1. 抓取行程 CoreDump
+dotnet-dump collect -p $(pgrep -n -f "dotnet.*MyService") -o dump.dmp
 
-Channel 只在 process 記憶體中，重啟會失去未處理項目；需要耐久性或跨 Pod 傳遞時，應選擇有對應保證的訊息系統。
-
-## 套用到電商情境
-
-暫時圖片處理或可重新產生的計算可以用有界 Channel；已提交訂單的通知若必須在重新啟動後恢復，就要有外部持久工作與交付契約。容量滿時等待、拒絕或丟棄，需要讓呼叫端知道結果。
-
-[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。
+# 2. 檢視堆積中積壓的 Channel 與佇列項目數量
+dotnet-dump analyze dump.dmp
+> dumpheap -stat -type System.Threading.Channels
+```

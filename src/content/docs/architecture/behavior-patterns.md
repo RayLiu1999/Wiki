@@ -8,7 +8,7 @@ order: 6
 tags: ["Strategy、Decorator 與行為組合", "architecture"]
 difficulty: "intermediate"
 learningDepth: "deep"
-prerequisites: ["csharp-interfaces", "aspnet-core-dependency-injection"]
+prerequisites: ["csharp-syntax-traps", "aspnet-core-dependency-injection"]
 relatedArticles: ["redis-cache-aside", "architecture-cross-cutting"]
 applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
 verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"

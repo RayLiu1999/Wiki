@@ -1,18 +1,30 @@
+// ✅ Good：有界佇列提供背壓防護，並優雅消費
 using System.Threading.Channels;
 
-var channel = Channel.CreateBounded<int>(new BoundedChannelOptions(2)
+var options = new BoundedChannelOptions(capacity: 2)
 {
-    FullMode = BoundedChannelFullMode.Wait,
+    FullMode = BoundedChannelFullMode.Wait, // 滿載時生產者非同步等待（背壓）
     SingleWriter = true,
     SingleReader = true
-});
-Task consumer = ConsumeAsync(channel.Reader);
-for (int i = 1; i <= 3; i++) await channel.Writer.WriteAsync(i);
-channel.Writer.TryComplete();
-await consumer;
+};
+var channel = Channel.CreateBounded<string>(options);
 
-static async Task ConsumeAsync(ChannelReader<int> reader)
+// 啟動消費者 Worker
+var consumerTask = Task.Run(async () =>
 {
-    await foreach (int item in reader.ReadAllAsync())
-        Console.WriteLine(item);
-}
+    await foreach (var item in channel.Reader.ReadAllAsync())
+    {
+        Console.WriteLine($"消費事件: {item}");
+    }
+});
+
+// 生產者寫入事件
+await channel.Writer.WriteAsync("訂單付款完成");
+await channel.Writer.WriteAsync("庫存扣減通知");
+
+// 生產完畢，明確告知管線關閉
+channel.Writer.Complete();
+
+// 等待所有排隊事件消費完畢
+await consumerTask;
+Console.WriteLine("所有通道事件處理完畢");

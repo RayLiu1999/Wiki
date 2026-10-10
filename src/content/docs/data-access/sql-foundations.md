@@ -8,7 +8,7 @@ order: 7
 tags: ["SQL、約束、索引與查詢計畫", "data-access"]
 difficulty: "intermediate"
 learningDepth: "basic"
-prerequisites: ["csharp-classes"]
+prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["data-access-concurrency", "data-access-transactions"]
 applicableVersions: "PostgreSQL 18；EF Core 供應商的差異另見相關文章。"
 verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"

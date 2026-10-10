@@ -7,7 +7,7 @@ category: "services"
 order: 2
 tags: ["DI", "Transient", "Scoped", "Singleton", "AddTransient", "AddScoped", "Options Pattern", "IServiceScopeFactory", "captured dependency"]
 difficulty: "intermediate"
-prerequisites: ["csharp-interfaces", "csharp-disposable"]
+prerequisites: ["csharp-syntax-traps", "csharp-cancellation-disposable"]
 relatedArticles: ["aspnet-core-http-client-factory", "data-access-ef-core", "dotnet-hosting", "redis-dotnet-integration", "rabbitmq-dotnet-integration"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"

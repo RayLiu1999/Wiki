@@ -8,7 +8,7 @@ order: 10
 tags: ["HTTP、JSON 與電商 API 契約", "aspnet-core"]
 difficulty: "intermediate"
 learningDepth: "basic"
-prerequisites: ["csharp-classes"]
+prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["aspnet-core-model-binding", "architecture-outbox-inbox"]
 applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
 verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"

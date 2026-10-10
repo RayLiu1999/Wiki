@@ -7,7 +7,7 @@ category: "web-api"
 order: 1
 tags: ["Model Binding", "ApiController", "FromBody", "FromQuery", "FromRoute", "FromHeader", "FromForm", "FromServices"]
 difficulty: "intermediate"
-prerequisites: ["csharp-nullable", "csharp-extensions-attributes"]
+prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["aspnet-core-dependency-injection", "architecture-application-patterns"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"

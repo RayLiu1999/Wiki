@@ -7,7 +7,7 @@ category: "time-identifiers"
 order: 3
 tags: ["DateTimeOffset", "DateTime", "UTC", "Unix timestamp", "DST", "日光節約時間", "TimeZoneInfo", "時區"]
 difficulty: "intermediate"
-prerequisites: ["csharp-variables"]
+prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["dotnet-identifiers", "data-access-type-mapping", "engineering-metrics-tracing"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"

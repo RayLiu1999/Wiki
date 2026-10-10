@@ -8,7 +8,7 @@ order: 10
 tags: ["C#", "MySQL", "PostgreSQL", "DataSource", "DbContext", "Dapper", "ADO.NET"]
 difficulty: "intermediate"
 learningDepth: "basic"
-prerequisites: ["csharp-async-disposable", "aspnet-core-dependency-injection"]
+prerequisites: ["csharp-cancellation-disposable", "aspnet-core-dependency-injection"]
 relatedArticles: ["data-access-mysql-dotnet", "data-access-postgresql-dotnet", "data-access-pool-capacity"]
 applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
 verifiedWith: "2026-10-09：.NET SDK 10.0.105 編譯與 --validate 離線設定解析通過；價格 SQL 方法未被呼叫，未驗證資料庫連線、CRUD 或效能。"

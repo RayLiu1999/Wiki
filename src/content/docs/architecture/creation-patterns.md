@@ -8,7 +8,7 @@ order: 5
 tags: ["Factory、Builder 與物件建立邊界", "architecture"]
 difficulty: "intermediate"
 learningDepth: "deep"
-prerequisites: ["csharp-records-invariants", "architecture-domain-modeling"]
+prerequisites: ["csharp-syntax-traps", "architecture-domain-modeling"]
 relatedArticles: ["architecture-behavior-patterns", "aspnet-core-dependency-injection"]
 applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
 verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"

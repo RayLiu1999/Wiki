@@ -5,7 +5,7 @@ import ArticleRow from '../components/ArticleRow.astro';
 import TopicCards from '../components/TopicCards.astro';
 import { getArticles } from '../lib/catalog';
 const articles = await getArticles();
-const featured = ['csharp-getting-started', 'csharp-value-reference-types', 'csharp-async-await']
+const featured = ['csharp-syntax-traps', 'csharp-value-reference-types', 'csharp-async-await']
   .map((id) => articles.find((article) => article.data.articleId === id)!);
 ---
 <SiteLayout title="DevWiki">

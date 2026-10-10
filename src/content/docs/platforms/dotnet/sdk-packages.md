@@ -7,7 +7,7 @@ category: "toolchain"
 order: 1
 tags: ["global.json", "SDK", "version", "rollForward", "allowPrerelease", "NuGet.config", "clear", "Directory.Packages.props", "中央套件管理"]
 difficulty: "intermediate"
-prerequisites: ["csharp-getting-started"]
+prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["dotnet-hosting", "data-access-migrations", "aspnet-core-api-styles-aot"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"

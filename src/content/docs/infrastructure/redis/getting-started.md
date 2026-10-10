@@ -5,16 +5,16 @@ articleId: "redis-getting-started"
 topic: "redis"
 category: "redis-basics"
 order: 1
-tags: ["Redis","分散式快取","IMemoryCache","cache hit","cache miss","延遲"]
+tags: ["Redis", "分散式快取", "IMemoryCache", "cache hit", "cache miss", "延遲"]
 difficulty: "beginner"
-prerequisites: ["csharp-collections"]
-relatedArticles: ["redis-data-types-ttl","redis-cache-aside","architecture-communication-boundaries"]
+prerequisites: ["csharp-collections-linq"]
+relatedArticles: ["redis-data-types-ttl", "redis-cache-aside", "architecture-communication-boundaries"]
 applicableVersions: "Redis 8.2.10／StackExchange.Redis 3.3.1／.NET 10；版本相關限制見內文。"
 verifiedWith: "已以 Redis 8.2.10 容器及 .NET 10 執行 String、Hash、TTL 範例；網站本身仍為靜態 PWA。"
 lastReviewed: "2026-10-08"
 takeaway: "快取是可重建的資料副本；導入 Redis 前，先決定哪些舊值可以接受，以及故障時如何讀取。"
 noteDates: []
-sources: [{"title":"Redis：資料型別","url":"https://redis.io/docs/latest/develop/data-types/"},{"title":"Microsoft Learn：分散式快取","url":"https://learn.microsoft.com/en-us/aspnet/core/performance/caching/distributed?view=aspnetcore-10.0"},{"title":"Microsoft Learn：Cache-Aside","url":"https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside"}]
+sources: [{"title":"Redis：資料型別", "url":"https://redis.io/docs/latest/develop/data-types/"}, {"title":"Microsoft Learn：分散式快取", "url":"https://learn.microsoft.com/en-us/aspnet/core/performance/caching/distributed?view=aspnetcore-10.0"}, {"title":"Microsoft Learn：Cache-Aside", "url":"https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside"}]
 learningDepth: "basic"
 ---
 

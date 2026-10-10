@@ -1,76 +1,103 @@
 ---
-title: 理解 async 與 await
-description: 理解 Task 如何代表作業，讓等待中的方法交還控制權，並在完成後繼續執行。
-articleId: csharp-async-await
-topic: csharp
-category: practice
-order: 14
-tags: [C#, csharp, 非同步, asynchronous, async, await, Task, I/O]
-difficulty: intermediate
-prerequisites: [csharp-methods, csharp-exceptions]
-relatedArticles: ["csharp-cancellation", "csharp-disposable", "csharp-async-coordination", "csharp-configure-await", "csharp-channels", "csharp-thread-safety"]
-applicableVersions: async / await 自 C# 5 起提供；完整頂層範例使用 C# 9 以上。
-verifiedWith: .NET SDK 10.0.105 / net10.0 / C# 14
-lastReviewed: "2026-10-08"
-takeaway: await 等待的是作業結果；未完成時可交還控制權，不代表自動建立新執行緒。
+title: "非同步狀態機（async/await）與執行緒上下文"
+description: "直擊 Sync-over-Async 造成的 ThreadPool 飢餓與死結，剖析編譯器狀態機時序與生產排查方法。"
+articleId: "csharp-async-await"
+topic: "csharp"
+category: "async-threading"
+order: 1
+tags: ["C#", "非同步", "async", "await", "狀態機", "ThreadPool", "死結"]
+articleType: "deep-dive"
+prerequisites: ["csharp-syntax-traps"]
+relatedArticles: ["csharp-valuetask-tcs", "csharp-cancellation-disposable", "csharp-thread-safety"]
+applicableVersions: "C# 12+ / 14、.NET 8+ / .NET 10"
+verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+lastReviewed: "2026-10-10"
+takeaway: "一路非同步到底（Async all the way down），絕不在非同步方法上呼叫 .Result 或 .Wait()；杜絕 async void。"
 sources:
-  - title: Microsoft Learn：非同步程式設計
-    url: https://learn.microsoft.com/en-us/dotnet/csharp/asynchronous-programming/
-noteDates: ["2026-05-21", "2026-05-27", "2026-06-22"]
-learningDepth: "basic"
+  - title: "Microsoft Learn：以非同步方式使用 async 和 await 進行程式設計"
+    url: "https://learn.microsoft.com/zh-tw/dotnet/csharp/asynchronous-programming/"
+  - title: "Stephen Cleary：Async and Await"
+    url: "https://blog.stephencleary.com/2012/02/async-and-await.html"
 ---
 
-商品 API 等資料庫，通知程序等 Broker，等待期間不需要持續佔用執行緒。async／await 表達可等待的控制流程；它不保證每個方法都新增一條執行緒或同時處理多筆工作。
+## 案發現場
 
-## 作業與執行緒
+流量尖峰時，線上微服務的所有 API 突然集體超時。令人費解的是，伺服器 CPU 使用率極低（不到 15%），但 ThreadPool 執行緒數量卻從 20 條一路狂飆到數百條，最終引發全站雪崩停擺！
 
-<code>Task</code> 表示作業的完成狀態；<code>Task&lt;T&gt;</code> 還會提供結果。宣告 <code>async</code> 方法，讓方法可以使用 <code>await</code> 等待可等待的作業。
+這正是因為在非同步呼叫鏈中混用了 `.Result` 或 `.Wait()`，引發了後端最致命的「Sync-over-Async（同步阻塞非同步）」與「ThreadPool 執行緒飢餓（Starvation）」。
 
-方法會先同步執行。當 <code>await</code> 遇到尚未完成的作業時，方法可以暫停並把控制權交還呼叫端；作業完成後，才繼續處理後面的程式。
+## 致命反模式 vs. 正確解法
 
-## 等待一段小作業
+### 時序圖：Sync-over-Async 造成的雪崩死鎖
+
+```text
+時間軸 ────────────────────────────────────────────────────────►
+Thread A : 呼叫 Async 方法 ──► 呼叫 .Result (阻塞 Thread A，等待 Callback)
+ThreadPool : 忙碌中，延遲分配新執行緒 ──► 找不到可用 Thread 執行 Callback ──► 💥 互相卡死！
+```
+
+### 坑一：使用 .Result 或 .Wait() 同步阻塞
+
+在非同步呼叫上同步等待，會強行佔用當前執行緒；而非同步操作完成後的延續（Continuation）又需要執行緒池調度執行緒來處理，極易在負載升高時造成執行緒注入速率（Hill Climbing 每秒僅 1~2 條）趕不上阻塞速度。
 
 ~~~csharp title="Program.cs"
-Console.WriteLine("開始");
-string message = await ReadMessageAsync();
-Console.WriteLine(message);
+// ✅ Good：一路非同步到底（Async all the way），交還執行緒控制權
+Console.WriteLine("非同步作業開始");
+string data = await FetchDataAsync();
+Console.WriteLine($"非同步作業完成: {data}");
 
-static async Task<string> ReadMessageAsync()
+static async Task<string> FetchDataAsync()
 {
+    // await 遇到未完成的作業時，立即釋放當前執行緒給 ThreadPool 去服務其他 HTTP 請求
     await Task.Delay(10);
-    return "完成";
+    return "結果資料";
 }
 ~~~
 
 預期輸出：
+```text
+非同步作業開始
+非同步作業完成: 結果資料
+```
 
-~~~text
-開始
-完成
-~~~
+```csharp
+// 💣 Bad：在同步方法硬叫 .Result 或 .GetAwaiter().GetResult()
+public string GetDataBad()
+{
+    // 致命反模式：強行阻塞執行緒，在負載升高時迅速拖垮 ThreadPool
+    return FetchDataAsync().Result;
+}
+```
 
-<code>Task.Delay</code> 用來示範等待。方法交還 <code>Task&lt;string&gt;</code>；呼叫端透過 <code>await</code> 取得字串，而不是直接把工作物件當成結果。
+### 坑二：使用 async void（未捕捉例外將崩潰進程）
 
-## 依工作性質選擇
+`async void` 僅限於 UI 事件處理器。在後端使用時，其內部拋出的任何例外皆無法被呼叫端的 `try-catch` 捕捉，會直接升級為未處理例外導致整座 .NET 伺服器程序 Crash 退出！
 
-等待網路或檔案等 I/O 時，優先使用相應的非同步 API。CPU 密集計算是另一種情況，可能需要適當排程；單純加上 <code>async</code> 不會讓計算自動平行。
+```csharp
+// 💣 Bad：拋出例外時整座 API 進程直接當機退出
+public async void FireAndForgetBad() { await DoWorkAsync(); }
 
-## 常見錯誤
+// ✅ Good：回傳 Task，並由呼叫端明確 await 或妥善處理例外
+public async Task FireAndForgetGood() { await DoWorkAsync(); }
+```
 
-- <code>.Result</code> 與 <code>.Wait()</code> 會同步阻塞，某些執行環境也可能死結；通常應一路使用 <code>await</code>。
-- 除了必要的事件處理器，避免使用 <code>async void</code>，讓呼叫端能等待及觀察例外。
-- 忘記等待作業，可能使錯誤無法被正確觀察，或讓程式提早結束。
+## 踩坑與避坑指南
 
-## 深入理解：先分清等待、協調與排程
+* **編譯器狀態機真相**：宣告 `async` 的方法會被編譯為實作 `IAsyncStateMachine` 的 Struct。遇到 `await` 時，若作業已同步完成（`IsCompleted == true`），會原地繼續執行；若未完成，則註冊回呼並將控制權交還。
+* **ASP.NET Core 與 ConfigureAwait**：ASP.NET Core 已移除舊版 .NET Framework 的 `SynchronizationContext`，在 Controller/Service 層無需強制加上 `ConfigureAwait(false)`；但若是開發通用 NuGet 套件，仍建議加上以提升跨平台效能。
+* **避坑原則（什麼時候不要用 Task.Run？）**：
+  * 面對 I/O 密集操作（資料庫、Redis、HTTP 呼叫），直接使用非同步 API，絕不要在外層包 `Task.Run`，那只會平白浪費一次執行緒排程切換。
 
-Task / ValueTask 是作業結果的表示，Task.WhenAll 協調多個作業，CancellationToken 讓取消要求傳到真正的等待處。Channel 則適合把工作從生產者交給消費者。
+## 線上排查指令
 
-async/await 不會自動建立額外執行緒；未完成的 await 可交還控制權，已完成的 await 則可能同步繼續。共享狀態用 lock 或其他協調工具保護；SemaphoreSlim 的 WaitAsync 與阻塞的 Wait 也不能混用來解釋非同步。
+若線上懷疑發生 ThreadPool 飢餓或非同步死結：
 
-ConfigureAwait 處理延續是否嘗試回到捕捉內容，不負責併發限制，也不替代取消或錯誤處理。
+```bash
+# 監控執行緒池佇列積壓與即時執行緒數（queue-length 持續 > 0 即代表執行緒飢餓）
+dotnet-counters monitor System.Runtime --counters threadpool-thread-count,threadpool-queue-length
 
-## 套用到電商情境
-
-查商品時 await 資料來源，完成後返回 HTTP 回應；通知則在獨立 Worker 依交付契約執行。Task.Run 適合特定 CPU 工作的排程，不能用來讓每次資料庫呼叫假裝非同步；作業也需要有人等待和觀察例外。
-
-[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。
+# 抓取進程 dump 並分析是否有大量執行緒卡在 Task.Wait
+dotnet-dump collect -p <PID>
+dotnet-dump analyze <dump_file>
+> clrstack -all
+```

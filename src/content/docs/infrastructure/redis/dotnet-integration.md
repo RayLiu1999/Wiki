@@ -5,16 +5,16 @@ articleId: "redis-dotnet-integration"
 topic: "redis"
 category: "redis-caching"
 order: 3
-tags: ["IDistributedCache","StackExchange.Redis","ConnectionMultiplexer","DI","序列化","timeout"]
+tags: ["IDistributedCache", "StackExchange.Redis", "ConnectionMultiplexer", "DI", "序列化", "timeout"]
 difficulty: "intermediate"
-prerequisites: ["redis-data-types-ttl","aspnet-core-dependency-injection","csharp-cancellation"]
-relatedArticles: ["redis-cache-aside","data-access-pools-locks","redis-reliability"]
+prerequisites: ["redis-data-types-ttl", "aspnet-core-dependency-injection", "csharp-cancellation-disposable"]
+relatedArticles: ["redis-cache-aside", "data-access-pools-locks", "redis-reliability"]
 applicableVersions: ".NET 10／Microsoft.Extensions.Caching.StackExchangeRedis 10.0.5／StackExchange.Redis 3.3.1／Redis 8.2.10。"
 verifiedWith: "已以 SDK 10.0.105 編譯並執行 RedisDemo，核對 IDistributedCache、共享 ConnectionMultiplexer、Hash 與 TTL 輸出。"
 lastReviewed: "2026-10-08"
 takeaway: "IDistributedCache 提供快取抽象，原生 client 提供 Redis 操作；連線由應用程式生命週期管理。"
 noteDates: []
-sources: [{"title":"Microsoft Learn：分散式快取","url":"https://learn.microsoft.com/en-us/aspnet/core/performance/caching/distributed?view=aspnetcore-10.0"},{"title":"StackExchange.Redis：Basic Usage","url":"https://seredis.dev/Basics"},{"title":"Redis：.NET 用戶端","url":"https://redis.io/docs/latest/develop/clients/dotnet/"}]
+sources: [{"title":"Microsoft Learn：分散式快取", "url":"https://learn.microsoft.com/en-us/aspnet/core/performance/caching/distributed?view=aspnetcore-10.0"}, {"title":"StackExchange.Redis：Basic Usage", "url":"https://seredis.dev/Basics"}, {"title":"Redis：.NET 用戶端", "url":"https://redis.io/docs/latest/develop/clients/dotnet/"}]
 learningDepth: "deep"
 ---
 

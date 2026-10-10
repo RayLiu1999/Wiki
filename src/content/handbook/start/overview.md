@@ -5,7 +5,7 @@ group: "start"
 order: 0
 environment: "reading"
 verification: "情境與設計說明；實作範圍及跟做前提見內文。"
-linkedArticles: ["csharp-getting-started", "redis-cache-aside", "kubernetes-workloads"]
+linkedArticles: ["csharp-syntax-traps", "redis-cache-aside", "kubernetes-workloads"]
 prerequisites: []
 sources: [{"title": "Microsoft modern web application architecture", "url": "https://learn.microsoft.com/en-us/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures"}]
 ---

@@ -8,7 +8,7 @@ order: 6
 tags: ["GC、記憶體配置、保留與容器限制", "dotnet"]
 difficulty: "intermediate"
 learningDepth: "deep"
-prerequisites: ["csharp-disposable", "dotnet-clr-jit"]
+prerequisites: ["csharp-cancellation-disposable", "dotnet-clr-jit"]
 relatedArticles: ["dotnet-profiling", "kubernetes-probes-resources"]
 applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
 verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"

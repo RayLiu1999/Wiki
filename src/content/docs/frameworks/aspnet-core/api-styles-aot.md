@@ -7,7 +7,7 @@ category: "web-api"
 order: 7
 tags: ["Minimal API", "Controller", "JIT", "Native AOT", "trimming", "反射", "來源產生器", "JsonSerializerContext"]
 difficulty: "intermediate"
-prerequisites: ["dotnet-hosting", "csharp-type-operators"]
+prerequisites: ["dotnet-hosting", "csharp-syntax-traps"]
 relatedArticles: ["aspnet-core-model-binding", "engineering-metrics-tracing"]
 applicableVersions: "API 比較以 ASP.NET Core 10 文件核對；AOT 支援表可能隨版本變動。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
