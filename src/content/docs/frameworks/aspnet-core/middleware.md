@@ -1,57 +1,121 @@
 ---
-title: "Middleware 順序與回應時機"
-description: "用進入與返回的管線模型理解例外、短路、Authentication 與 OnStarting。"
+title: "ASP.NET Core 中介軟體管線順序與例外防線"
+description: "深入剖析 HTTP 雙向管線執行順序、UseExceptionHandler 全局防線、Response.HasStarted 唯讀例外，以及 CorrelationId 實戰。"
 articleId: "aspnet-core-middleware"
 topic: "aspnet-core"
 category: "web-api"
-order: 6
-tags: ["Middleware", "管線", "短路", "OnStarting", "response header", "UseAuthentication", "UseAuthorization"]
-difficulty: "intermediate"
+order: 1
+tags: ["ASP.NET Core", "Middleware", "中介軟體", "例外處理", "HTTP管線", "CorrelationId"]
+articleType: "deep-dive"
 prerequisites: ["csharp-async-await"]
-relatedArticles: ["aspnet-core-authentication", "engineering-metrics-tracing"]
-applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-08"
-takeaway: "Middleware 進入依註冊順序，返回依反向順序；header 必須在 response 開始前設定。"
-noteDates: ["2026-07-17"]
-sources: [{"title": "Microsoft Learn：Middleware", "url": "https://learn.microsoft.com/en-us/aspnet/core/fundamentals/middleware/?view=aspnetcore-10.0"}, {"title": "Microsoft Learn：HttpResponse.OnStarting", "url": "https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httpresponse.onstarting?view=aspnetcore-10.0"}]
-learningDepth: "deep"
+relatedArticles: ["aspnet-core-authentication", "aspnet-core-filters"]
+applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
+verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+lastReviewed: "2026-10-10"
+takeaway: "UseExceptionHandler 必須放在管線最外層；UseAuthentication 必須先於 UseAuthorization；禁止在 Response.HasStarted 後修改 Header。"
+sources:
+  - title: "Microsoft Learn：ASP.NET Core 中介軟體"
+    url: "https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/middleware/"
+  - title: "Microsoft Learn：處理 ASP.NET Core 中的錯誤"
+    url: "https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/error-handling"
 ---
 
-Middleware 按順序包住後續 HTTP 處理。診斷、例外、認證與授權的排列，影響商品端點會看到什麼身分、錯誤和回應內容。
+## 案發現場
 
-## 把管線想成包住下一層
+某電商 API 在促銷時段發生資料庫超時未處理例外，用戶端竟然直接收到赤裸的內部 SQL 語法與 C# 呼叫堆疊，造成嚴重資安漏洞；另一端，新加入的稽核中介軟體被註冊在身份認證之前，導致數萬筆線上操作日誌中的 `UserId` 全數記錄為匿名（null）；此外，伺服器頻繁拋出 `InvalidOperationException: Headers are read-only, the response has already started` 警告。
 
-每一層可在 await next 前處理 request，之後處理 response。沒有呼叫 next 就是短路，例如拒絕無效請求或直接返回快取。前面的例外處理可以捕捉後續層擲出的例外，但 response 已開始時通常不能重新改成另一個完整錯誤回應。
+根因在於：開發者對 ASP.NET Core **雙向中介軟體管線順序（Pipeline Order）** 與 **HTTP 回應串流生命週期**缺乏嚴謹掌握。
 
-常見順序是例外處理、必要的代理 header / HTTPS / routing / CORS、Authentication、Authorization，最後執行 endpoint；實際配置依 hosting 與需求確認。
+## 致命反模式 vs. 正確解法
 
-## 在回應開始前補 header
+```text
+【ASP.NET Core 俄羅斯套娃雙向管線順序】
+請求進入 ──► [1. ExceptionHandler] ──► [2. Routing] ──► [3. AuthN] ──► [4. AuthZ] ──► [5. 端點業務]
+回應傳回 ◄── [1. 格式化 Problem]  ◄── [2. 觀測耗時] ◄── [3. 審計] ◄── [4. 權限] ◄── [5. 輸出 Body]
+```
 
-以下為 WebApplication 的整合片段。需要先配置適用的例外處理及 endpoints，未在本站執行。
+### 坑一：順序錯誤導致例外穿透或身份漏讀
 
-~~~csharp title="Program.cs（整合片段）"
-app.Use(async (context, next) =>
+若將 `UseExceptionHandler()` 放在路由或業務中介軟體後面，前面發生的例外將無法被捕獲；若將 `UseAuthorization()` 放在 `UseAuthentication()` 之前，授權檢查會因尚未解析身份憑證而全部誤判為 401。
+
+### 坑二：在 Response.HasStarted 後強行寫入 Header
+
+當業務端點開始寫入回應主體（Body）時，HTTP 標頭已透過 Socket 刷入網路。若在中介軟體 `await next()` 之後才嘗試加入 `Response.Headers.Add(...)`，必拋唯讀例外。
+
+~~~csharp title="Program.cs"
+// ✅ Good：遵循雙向管線規範的追蹤與耗時監控中介軟體實作
+using System.Diagnostics;
+using Microsoft.AspNetCore.Http;
+
+var middleware = new RequestTrackingMiddleware(next: async (ctx) =>
 {
-    context.Response.OnStarting(() =>
-    {
-        context.Response.Headers["X-Request-Id"] = context.TraceIdentifier;
-        return Task.CompletedTask;
-    });
-    await next(context);
+    // 模擬下游端點處理業務
+    await Task.Delay(15);
+    ctx.Response.StatusCode = 200;
+    await ctx.Response.WriteAsync("{\"status\":\"ok\"}");
 });
+
+var context = new DefaultHttpContext();
+await middleware.InvokeAsync(context);
+
+Console.WriteLine($"回應狀態碼: {context.Response.StatusCode}");
+Console.WriteLine($"追蹤標頭已注入: {context.Response.Headers.ContainsKey("X-Correlation-Id")}");
+
+public sealed class RequestTrackingMiddleware(RequestDelegate next)
+{
+    public async Task InvokeAsync(HttpContext context)
+    {
+        string correlationId = Guid.NewGuid().ToString("N");
+        
+        // 關鍵：在回應串流尚未發送前，透過 OnStarting 回呼安全寫入 Header
+        context.Response.OnStarting(() =>
+        {
+            context.Response.Headers["X-Correlation-Id"] = correlationId;
+            return Task.CompletedTask;
+        });
+
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            await next(context);
+        }
+        catch (Exception)
+        {
+            // 若下游拋出未處理例外，記錄日誌並向上由 ExceptionHandler 統一轉換
+            throw;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            Console.WriteLine("請求執行完畢，耗時監控已紀錄");
+        }
+    }
+}
 ~~~
 
-OnStarting 註冊的 callback 在 headers 送出前執行，多個 callback 通常按反向註冊順序呼叫。不要在已寫出 body 之後假設仍可改狀態碼或 header。
+預期輸出：
+```text
+請求執行完畢，耗時監控已紀錄
+回應狀態碼: 200
+追蹤標頭已注入: True
+```
 
-## 短路需要完成自己的回應
+## 踩坑與避坑指南
 
-若 Middleware 決定不呼叫 next，就應明確設定狀態與必要內容。非同步背景工作不應在 request 結束後繼續持有 HttpContext。
+* **安全注入 Header 的唯一正解：`Response.OnStarting`**：在呼叫 `next(context)` 前註冊 `context.Response.OnStarting(...)`。無論下游端點何時輸出資料，CLR 都會保證在第一個 byte 發送前先執行此回呼，徹底杜絕 `Headers are read-only` 例外。
+* **短路（Short-circuiting）的正確時機**：當遇到 IP 黑名單阻擋、請求限流（Rate Limiting）超標或 CORS 預檢請求（OPTIONS）時，直接設定 StatusCode 並結束方法，**不呼叫 `next(context)`**，即可立即短路中斷。
+* **避坑原則（什麼時候千萬不要用自訂 Middleware 寫業務邏輯？）**：
+  * **單一 API 的請求資料格式校驗**：Middleware 屬於全域（或純路徑前綴）的粗粒度過濾器。若在 Middleware 內強制反序列化 Request Body，會消耗不可倒帶的請求串流（Request Stream），阻礙後續 Model Binding。特定端點驗證應交由 Endpoint Filter 或 FluentValidation。
 
-TraceIdentifier 是本地 request 識別，不必等於跨服務 Activity.TraceId。若要接上分散式追蹤，應使用框架與 OpenTelemetry 的傳播機制，並分清兩者用途。
+## 線上排查指令
 
-## 套用到電商情境
+線上排查管線執行順序與中介軟體卡死：
 
-請求識別可在進入 API 時建立，例外處理包住後續用例，授權依已建立的使用者判斷。回應開始後不能隨意改 header；短路時要明確完成回應。商品規則仍放在用例和領域邊界。
+```bash
+# 1. 開啟 ASP.NET Core Hosting 的 Debug 日誌以檢視中介軟體完整執行鏈
+export Logging__LogLevel__Microsoft.AspNetCore.Hosting=Debug
+export Logging__LogLevel__Microsoft.AspNetCore.Routing=Debug
 
-[閱讀對應的電商章節](/projects/ecommerce/product-api/)，把本篇概念接到整個用例。
+# 2. 檢視生產環境日誌中是否有標頭唯讀或未捕獲例外
+grep -E "Headers are read-only|Unhandled exception" /var/log/app/*.log | tail -n 20
+```

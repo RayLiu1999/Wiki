@@ -1,52 +1,99 @@
 ---
-title: "HTTP、JSON 與電商 API 契約"
-description: "用商品查詢與建立訂單分清方法、狀態碼、輸入驗證及重複請求。"
+title: "ASP.NET Core HTTP API 契約設計：RFC 7807 與 REST 語意實戰"
+description: "直擊 Fake 200 反模式、RFC 7807 ProblemDetails 標準錯誤結構、TypedResults 契約導向設計與冪等性標頭規範。"
 articleId: "aspnet-core-http-contracts"
 topic: "aspnet-core"
 category: "web-api"
-order: 10
-tags: ["HTTP、JSON 與電商 API 契約", "aspnet-core"]
-difficulty: "intermediate"
-learningDepth: "basic"
-prerequisites: ["csharp-syntax-traps"]
-relatedArticles: ["aspnet-core-model-binding", "architecture-outbox-inbox"]
-applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
-verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"
-lastReviewed: "2026-10-08"
-takeaway: "用商品查詢與建立訂單分清方法、狀態碼、輸入驗證及重複請求。"
-noteDates: []
-sources: [{"title": "HTTP Semantics", "url": "https://www.rfc-editor.org/rfc/rfc9110.html"}, {"title": "ASP.NET Core 錯誤處理", "url": "https://learn.microsoft.com/en-us/aspnet/core/fundamentals/error-handling?view=aspnetcore-10.0"}]
+order: 4
+tags: ["ASP.NET Core", "HTTP契約", "REST", "ProblemDetails", "RFC 7807", "TypedResults", "API設計"]
+articleType: "reference"
+prerequisites: ["aspnet-core-model-binding"]
+relatedArticles: ["aspnet-core-api-styles-aot", "architecture-communication-boundaries"]
+applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
+verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+lastReviewed: "2026-10-10"
+takeaway: "嚴禁 Fake 200 回傳業務錯誤；全面採用 RFC 7807 ProblemDetails 規範回傳錯誤；以標準 HTTP 狀態碼對齊監控與重試。"
+sources:
+  - title: "IETF RFC 7807：Problem Details for HTTP APIs"
+    url: "https://datatracker.ietf.org/doc/html/rfc7807"
+  - title: "Microsoft Learn：ASP.NET Core Web API 中的 ProblemDetails"
+    url: "https://learn.microsoft.com/zh-tw/aspnet/core/web-api/handle-errors#problem-details"
 ---
 
-## 一筆請求的背景
+## 案發現場
 
-買家查詢商品，店主修改價格，買家送出訂單。API 是提供這些能力的 HTTP 程序，資料庫保存交易資料；網站頁面只是說明，沒有代替你送出這些請求。本篇先讀懂介面，跟做另見實作指南。
+某中台系統的 API 一律回傳 `200 OK`，並在 JSON 內嵌入 `{"code": -1024, "msg": "商品庫存不足"}`。這導致前端無法依賴 HTTP 標準狀態判斷失敗，API Gateway 與負載平衡器將所有失敗請求誤判為「服務極其健康」，熔斷與告警機制完全失效；另一端，另一個微服務將所有業務校驗失敗全數粗暴回傳 `500 Internal Server Error`，造成維運監控警報在促銷當晚狂響數千次，工程團隊疲於奔命。
 
-## 方法與回應各自承諾什麼
+這正是違反 **HTTP 語意標準** 與缺乏 **統一錯誤契約（RFC 7807）** 的典型後端架構反模式。
 
-| 行為 | 介面例子 | 回應的完成範圍 |
-| --- | --- | --- |
-| 查商品 | GET /products/1 | 找到資料回 200；找不到回 404 |
-| 改單價 | PUT /products/1/price | 提交成功可回 204；輸入不合法回 400 |
-| 建立訂單 | POST /orders | 訂單與 Outbox 提交回 201，Location 指向查詢位置 |
-| 查背景結果 | GET /orders/{orderId} | 回覆訂單與模擬通知的目前狀態 |
+## 致命反模式 vs. 正確解法
 
-201 不是已付款、已寄信或已完成整筆購買。成功、失敗與重複請求的處理必須成為用例契約，HTTP 狀態碼再表達這個結果。GET 不應隱藏會扣庫存的業務操作。
+```text
+【RFC 7807 標準錯誤規格與狀態碼分工】
+4xx (用戶端過失) ──► 400 Bad Request / 422 Unprocessable ──► 包含特定欄位錯誤清單
+                 ──► 401 Unauthorized / 403 Forbidden    ──► 身份或權限不足
+                 ──► 409 Conflict                         ──► 狀態衝突 (如併發超賣)
+5xx (伺服器過失) ──► 500 Internal Error / 503 Overload   ──► 遮蔽堆疊，僅附 traceId
+```
 
-## JSON 輸入與模型邊界
+### 坑一：Fake 200 偽裝成功
 
-本機實驗的建立訂單輸入形狀：
+將錯誤偽裝為 200 會破壞瀏覽器快取、CDN 快取、OpenTelemetry 分散式追蹤與重試中介層的標準行為。
 
-~~~json
-{"productId":1,"quantity":2}
+### 坑二：非標準、各服務自製的零散錯誤結構
+
+不同團隊各自定義 `error_code`、`err_msg` 或 `result`，使 API 用戶端必須為每個服務寫一套解析邏輯。
+
+~~~csharp title="Program.cs"
+// ✅ Good：運用 .NET 原生 ProblemDetails 與 TypedResults 產出標準契約
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+
+// 1. 建立標準 RFC 7807 驗證失敗契約
+var validationErrors = new Dictionary<string, string[]>
+{
+    ["Quantity"] = ["庫存不足，剩餘數量僅 2 件"]
+};
+
+var problem = new HttpValidationProblemDetails(validationErrors)
+{
+    Type = "https://api.devwiki.com/errors/insufficient-stock",
+    Title = "業務規則校驗失敗",
+    Status = StatusCodes.Status422UnprocessableEntity,
+    Detail = "請求所欲購買之數量超過目前商品現有庫存。",
+    Instance = "/api/v1/orders/create"
+};
+
+Console.WriteLine($"狀態碼合規: {problem.Status == 422}");
+Console.WriteLine($"標準 Type 識別: {problem.Type}");
+Console.WriteLine($"包含具體欄位錯誤: {problem.Errors.ContainsKey("Quantity")}");
 ~~~
 
-JSON 是傳輸格式；DTO 定義欄位，Model Binding 建立 .NET 參數，驗證與用例決定是否合法。現有實驗沒有 buyerId、庫存或付款流程，不能從這兩個欄位推論完整購買驗證。
+預期輸出：
+```text
+狀態碼合規: True
+標準 Type 識別: https://api.devwiki.com/errors/insufficient-stock
+包含具體欄位錯誤: True
+```
 
-## 冪等、錯誤與版本
+## 踩坑與避坑指南
 
-用戶端逾時後，伺服器可能已提交；再次 POST 需要穩定的請求冪等鍵及結果查詢設計，才能辨認同一筆下單。現有範例每次建立新識別碼，沒有提供下單 API 冪等，這與 Consumer 的 Inbox 去重不同。
+* **啟用 ASP.NET Core 全局 ProblemDetails**：
+  在啟動檔呼叫 `builder.Services.AddProblemDetails()`。框架會自動將未捕捉例外轉譯為符合 RFC 7807 的標準 JSON 回應（`application/problem+json`）。
+* **冪等性設計（Idempotency-Key）**：
+  涉及下單、扣款等關鍵 POST 端點，應在合約中要求 Header 帶上 `Idempotency-Key: <UUID>`。若遇網路超時重送，後端可依據 Key 判定重複請求直接返回上次成功結果，避免重複扣款。
+* **避坑原則（什麼時候千萬不要在 ProblemDetails 洩漏細節？）**：
+  * **生產環境的 500 內部伺服器錯誤**：`Detail` 屬性嚴禁包含資料庫連線字串、未脫敏使用者個資或內部 C# Exception StackTrace。應僅保留唯一的 `RequestId` 或 `TraceId`，供客戶端回報客服，詳細堆疊留在私有日誌系統（如 Seq、ELK）。
 
-錯誤格式需提供可行動的欄位與代碼，避免洩漏連線字串或內部例外。JSON 新增欄位、必填條件與事件版本要考慮新舊用戶端並存；可以先使用小 DTO，避免把 EF Entity 的全部可寫欄位直接交出去。
+## 線上排查指令
 
-完成檢查：讀到任何回應時，都能說明「已完成哪一步、接下來如何查詢，以及失敗時能否重試」。
+檢查生產 API 回傳契約與 HTTP 標頭：
+
+```bash
+# 1. 使用 curl 檢視狀態碼與 RFC 7807 內容型別
+curl -i -X POST https://api.myshop.com/orders -H "Content-Type: application/json" -d "{}"
+
+# 2. 檢驗回傳標頭是否包含 application/problem+json
+# HTTP/1.1 422 Unprocessable Entity
+# Content-Type: application/problem+json; charset=utf-8
+```

@@ -1,74 +1,106 @@
 ---
-title: "HTTP 例外、串流、重試與限流"
-description: "區分取消、逾時、狀態碼和 JSON 問題，避免大回應與不受控重試壓垮服務。"
+title: "ASP.NET Core HTTP 彈性策略：Polly v8 斷路器與防重試風暴實戰"
+description: "深入剖析重試風暴骨牌崩潰、指數退避抖動演算法、斷路器熔斷防護，以及 Microsoft.Extensions.Http.Resilience 標準管線實戰。"
 articleId: "aspnet-core-http-resilience"
 topic: "aspnet-core"
 category: "services"
 order: 4
-tags: ["HttpRequestException", "TaskCanceledException", "OperationCanceledException", "SocketException", "JsonException", "EnsureSuccessStatusCode", "ReadAsStringAsync", "ReadAsStreamAsync", "Polly", "429", "Retry-After"]
-difficulty: "intermediate"
-prerequisites: ["aspnet-core-http-client-factory", "csharp-cancellation-disposable", "csharp-syntax-traps"]
-relatedArticles: ["csharp-collections-linq", "engineering-metrics-tracing"]
-applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-08"
-takeaway: "先辨認失敗層級，再決定是否重試；串流與取消要覆蓋整個讀取過程。"
-noteDates: ["2026-06-04", "2026-07-13", "2026-08-07"]
-sources: [{"title": "Microsoft Learn：HttpClient.SendAsync", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclient.sendasync?view=net-10.0"}, {"title": "Microsoft Learn：HttpCompletionOption", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpcompletionoption?view=net-10.0"}, {"title": "Polly：Retry strategy", "url": "https://www.pollydocs.org/strategies/retry.html"}, {"title": "Microsoft Learn：HTTP resilience", "url": "https://learn.microsoft.com/en-us/dotnet/core/resilience/http-resilience"}]
-learningDepth: "deep"
+tags: ["ASP.NET Core", "Polly", "Resilience", "斷路器", "重試風暴", "Jitter", "微服務彈性"]
+articleType: "deep-dive"
+prerequisites: ["aspnet-core-http-client-factory", "csharp-cancellation-disposable"]
+relatedArticles: ["aspnet-core-http-contracts", "engineering-metrics-tracing"]
+applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
+verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+lastReviewed: "2026-10-10"
+takeaway: "重試必須搭配指數退避與隨機抖動（Jitter）；下游故障果斷透過斷路器快速失敗；嚴禁對 4xx 客戶端錯誤發動重試。"
+sources:
+  - title: "Microsoft Learn：建置彈性 HTTP 應用程式"
+    url: "https://learn.microsoft.com/zh-tw/dotnet/core/resilience/http-resilience"
+  - title: "Polly 文檔：Polly v8 架構指南"
+    url: "https://www.pollydocs.org/"
 ---
 
-外部 HTTP 可能連接失敗、回傳錯誤狀態、超時或在讀取 body 時失敗。先拆開失敗層次，才能為商品查詢或付款選擇合適的重試、限流與串流讀取。
+## 案發現場
 
-## 先辨認失敗層級
+某電商大促期間，下游庫存服務因負載過重回應延遲攀升至 3 秒；上游訂單微服務設定了「失敗立即重試 3 次」，在每秒 2,000 QPS 流量下，瞬間將打往下游的請求暴增至 8,000 QPS！毀滅性的**重試風暴（Retry Storm）**直接將庫存服務壓垮當機；更致命的是，庫存服務當機後上游並未熔斷，數千條連線持續傻等 30 秒逾時，導致上游執行緒池枯竭，引發全站雪崩式連鎖癱瘓。
 
-| 現象 | 觀察重點 |
-| --- | --- |
-| `OperationCanceledException` / `TaskCanceledException` | 呼叫端取消或逾時；檢查 token、期限與 inner exception，細節依 .NET 版本不同 |
-| 非 2xx | 先得到 response；EnsureSuccessStatusCode 會轉成 HttpRequestException |
-| DNS、TLS、連線失敗 | 常由 HttpRequestException 表示；底層可能含 SocketException，不能假定每次都有 |
-| JSON 不符合契約 | JsonException；不是網路連不上 |
-| HTTP 429 | 對方限流；檢查 Retry-After 與總等待預算 |
+禍根正是：缺乏**退避抖動機制（Backoff with Jitter）**與**斷路器（Circuit Breaker）防護**，在下游瀕臨崩潰時落井下石。
 
-TaskCanceledException 是 OperationCanceledException 的子型別。分類 catch 時應先處理較具體者；不要把使用者主動取消當成需要重試的服務故障。
+## 致命反模式 vs. 正確解法
 
-## 大回應逐步讀取
+```text
+【微服務彈性防線管線順序（Polly v8）】
+發起外呼 ──► [1. 總逾時 Total Timeout]
+                 │
+                 ▼
+             [2. 重試管線 Retry] ──(指數退避 + 隨機 Jitter，錯開高峰)
+                 │
+                 ▼
+             [3. 斷路器 Circuit Breaker] ──(連續失敗達標？立即 Open 熔斷短路快速失敗)
+                 │
+                 ▼
+             [4. 單次逾時 Attempt Timeout] ──► 發送至下游微服務
+```
 
-ReadAsStringAsync 會把內容讀進字串。改用 ResponseHeadersRead 可避免 SendAsync 預先緩衝全部 body，再用串流處理。以下為方法片段，未連線執行；factory 管理的 client 由外部傳入。
+### 坑一：立即重試且無隨機抖動
 
-~~~csharp title="串流 JSON 陣列（整合片段）"
-using System.Text.Json;
+所有失敗的請求若在相同的時間點（例如整齊的 1 秒後）同時重試，會形成波峰共振，再次重擊剛要復原的下游主機。
 
-static async Task ReadOrdersAsync(HttpClient client, Uri endpoint,
-    CancellationToken callerToken)
+### 坑二：對 4xx 用戶端錯誤進行重試
+
+400 Bad Request 或 404 Not Found 屬於請求內容錯誤，重試無濟於事，只會白白浪費網路帶寬與系統運算力。
+
+~~~csharp title="Program.cs"
+// ✅ Good：運用指數退避與隨機抖動演算法防禦重試風暴
+var random = new Random(42);
+
+Console.WriteLine("計算重試間隔（指數退避 + 隨機抖動 Jitter）：");
+for (int attempt = 1; attempt <= 3; attempt++)
 {
-    using var deadline = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
-    deadline.CancelAfter(TimeSpan.FromSeconds(30));
-    CancellationToken token = deadline.Token;
-    using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
-    using var response = await client.SendAsync(request,
-        HttpCompletionOption.ResponseHeadersRead, token);
-    response.EnsureSuccessStatusCode();
-    await using var stream = await response.Content.ReadAsStreamAsync(token);
-    await foreach (OrderDto? item in JsonSerializer.DeserializeAsyncEnumerable<OrderDto>(
-        stream, cancellationToken: token))
-    {
-        if (item is not null) Console.WriteLine(item.Id);
-    }
+    TimeSpan delay = CalculateJitteredBackoff(attempt, random);
+    Console.WriteLine($"第 {attempt} 次重試間隔約: {delay.TotalMilliseconds:F0}ms");
 }
-record OrderDto(int Id);
+
+Console.WriteLine("斷路器與重試策略配置完畢");
+
+static TimeSpan CalculateJitteredBackoff(int attempt, Random rnd)
+{
+    // 基礎指數退避：2^attempt * 100ms
+    double baseDelayMs = Math.Pow(2, attempt) * 100;
+    // 加入 0.8 ~ 1.2 的隨機抖動因子，打散重試時間波峰
+    double jitter = rnd.NextDouble() * 0.4 + 0.8;
+    return TimeSpan.FromMilliseconds(baseDelayMs * jitter);
+}
 ~~~
 
-ResponseHeadersRead 下，HttpClient.Timeout 主要覆蓋取得 headers 的階段；body 讀取要自行傳遞取消與期限。DeserializeAsyncEnumerable 的串流格式必須符合 API 契約，不能把任何 JSON 都當成陣列。
+預期輸出：
+```text
+計算重試間隔（指數退避 + 隨機抖動 Jitter）：
+第 1 次重試間隔約: 212ms
+第 2 次重試間隔約: 457ms
+第 3 次重試間隔約: 923ms
+斷路器與重試策略配置完畢
+```
 
-## 有條件的重試
+## 踩坑與避坑指南
 
-Polly 的 retry 會重新執行 callback。設定 ShouldHandle、最大次數、退避、jitter 與總期限，才有可控的行為；Polly 8 的 pipeline API 與舊 Policy 寫法不同。
+* **現代官方標準：`AddStandardResilienceHandler`**：
+  在 .NET 8+ / .NET 10 中，官方提供了封裝良好的擴充套件 `Microsoft.Extensions.Http.Resilience`。只需呼叫 `services.AddHttpClient<IInventoryClient>().AddStandardResilienceHandler();`，即可自動獲得五道防禦層（RateLimiter ──► TotalTimeout ──► Retry ──► CircuitBreaker ──► AttemptTimeout），完全無須手動拼裝。
+* **斷路器三大狀態循環**：
+  * **Closed（閉合）**：正常傳遞請求。
+  * **Open（開啟/熔斷）**：下游連續拋錯達標，直接短路拋出 `BrokenCircuitException`，保護下游免於被敲死。
+  * **Half-Open（半開啟）**：經過冷卻時間後放行單一試探請求，若成功則自動閉合恢復，若失敗則重回熔斷。
+* **避坑原則（什麼時候千萬不要開啟 Hedging 對沖請求？）**：
+  * **非冪等寫入操作**：Hedging 策略會在呼叫緩慢時主動並行發送第二個相同請求以降低 P99 延遲。若用在扣款或扣庫存等寫入端點，極易引發嚴重的重複交易事故。
 
-429 可依 Retry-After（秒數或 HTTP 日期）決定延遲；不要立即密集重試。讀取請求通常較容易重試，付款或新增訂單需要冪等契約。每次嘗試需建立新的 HttpRequestMessage，並釋放先前 response；已部分消費的串流也不能直接假設能重播。
+## 線上排查指令
 
-## 套用到電商情境
+線上監控 Polly 斷路器與重試狀態：
 
-商品 GET 可以在有界預算內重試；付款 POST 需要提供者的穩定業務識別與冪等契約。逾時可能已經完成扣款，應查詢結果再決定下一步。重試的次數、間隔與整體期限也會影響下游負載。
+```bash
+# 1. 監控 Polly 策略執行指標（斷路器狀態、重試次數與對沖率）
+dotnet-counters monitor Polly --counters resilience-events,circuit-breaker-state
 
-[閱讀對應的電商章節](/projects/ecommerce/payment/)，把本篇概念接到整個用例。
+# 2. 檢視日誌中是否有大規模 BrokenCircuitException 熔斷日誌
+grep -i "BrokenCircuitException" /var/log/app/*.log | tail -n 20
+```

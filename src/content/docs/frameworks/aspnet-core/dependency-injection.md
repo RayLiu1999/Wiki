@@ -1,63 +1,110 @@
 ---
-title: "DI 生命週期與 Options Pattern"
-description: "理解 Transient、Scoped、Singleton 的持有關係，正確建立背景工作 scope 與設定存取。"
+title: "ASP.NET Core 相依性注入（DI）：生命週期陷阱與 Captive Dependency 防禦"
+description: "深入剖析 Transient/Scoped/Singleton 三大生命週期、Captive Dependency 捕捉性依賴災難、根容器記憶體洩漏與 ValidateScopes 防護。"
 articleId: "aspnet-core-dependency-injection"
 topic: "aspnet-core"
 category: "services"
-order: 2
-tags: ["DI", "Transient", "Scoped", "Singleton", "AddTransient", "AddScoped", "Options Pattern", "IServiceScopeFactory", "captured dependency"]
-difficulty: "intermediate"
-prerequisites: ["csharp-syntax-traps", "csharp-cancellation-disposable"]
-relatedArticles: ["aspnet-core-http-client-factory", "data-access-ef-core", "dotnet-hosting", "redis-dotnet-integration", "rabbitmq-dotnet-integration"]
-applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-08"
-takeaway: "較長生命週期的服務不可直接持有較短 scope 的資料；生命週期看的是物件持有關係。"
-noteDates: ["2026-05-21", "2026-05-22", "2026-05-28", "2026-06-29", "2026-07-01", "2026-10-06"]
-sources: [{"title": "Microsoft Learn：DI 概觀", "url": "https://learn.microsoft.com/en-us/dotnet/core/extensions/dependency-injection/overview"}, {"title": "Microsoft Learn：DI 使用指南", "url": "https://learn.microsoft.com/en-us/dotnet/core/extensions/dependency-injection/guidelines"}, {"title": "Microsoft Learn：Options Pattern", "url": "https://learn.microsoft.com/en-us/dotnet/core/extensions/options"}]
-learningDepth: "deep"
+order: 1
+tags: ["ASP.NET Core", "DI", "相依性注入", "生命週期", "CaptiveDependency", "ValidateScopes", "記憶體洩漏"]
+articleType: "deep-dive"
+prerequisites: ["csharp-syntax-traps"]
+relatedArticles: ["aspnet-core-options", "aspnet-core-http-client-factory"]
+applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
+verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+lastReviewed: "2026-10-10"
+takeaway: "長生命週期嚴禁直接注入短生命週期服務；CI 與啟動期務必開啟 ValidateScopes 與 ValidateOnBuild 阻斷 Captive Dependency。"
+sources:
+  - title: "Microsoft Learn：ASP.NET Core 中的相依性插入"
+    url: "https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/dependency-injection"
+  - title: "Microsoft Learn：.NET 相依性插入指導方針"
+    url: "https://learn.microsoft.com/zh-tw/dotnet/core/extensions/dependency-injection-guidelines"
 ---
 
-商品查詢、資料存取與通知提供者要被組裝成可執行用例。DI 管理建立與相依關係，Singleton、Scoped、Transient 則決定實例範圍和資源責任。
+## 案發現場
 
-## 註冊與持有時間
+某電商後端突發詭異事故：不同買家結帳時竟然查到了別人的購物車內容，且資料庫連線頻繁報錯 `A second operation was started on this context instance before a previous operation completed`；隨著服務運行，記憶體中的 DbContext 與實體物件持續暴增，最終被 Linux cgroup OOMKilled 重啟。
 
-| 註冊 | 建立時機 | 常見用途 |
-| --- | --- | --- |
-| `AddTransient` | 每次解析服務 | 輕量、無狀態行為 |
-| `AddScoped` | 每個 scope 一個實例 | Web request 中的 DbContext 與工作單位 |
-| `AddSingleton` | 根容器生命週期 | 可安全共享的設定、快取或協調器 |
+問題根源：工程師將預設為 Scoped 的 `OrderDbContext` 直接注入進了一個 Singleton 單例緩存服務。這觸發了致命的**捕捉性依賴（Captive Dependency）**，導致所有使用者的並行請求全數共用同一個 DbContext 實體，引發嚴重的資料競爭與記憶體洩漏。
 
-Scoped 並非天然等於 HTTP request：背景服務可自行建立 scope。Singleton 持有 Scoped 會讓本應短命的相依被延長，並可能讓 DbContext 被多個工作並行使用。啟用 scope validation 有助於提早發現，但不能替代設計。
+## 致命反模式 vs. 正確解法
 
-## 背景工作為每次處理建立 scope
+```text
+【Captive Dependency 捕捉性依賴災難】
+Singleton 服務 (行程存活期) ──[錯誤注入]──► Scoped 服務 (本應隨 HTTP 請求結束銷毀)
+                                            │
+                                            ▼
+                           Scoped 實體被強行續命，永久駐留記憶體！
+                           全站跨請求共用同一個實體 ──► 💥 資料競爭與 OOM
+```
 
-下列為整合片段；JobHandler 代表已註冊的應用程式服務，不是本站的實作。
+### 坑一：Singleton 直接依賴 Scoped 服務
 
-~~~csharp title="背景服務中的方法（整合片段）"
-static async Task RunJobAsync(IServiceScopeFactory scopeFactory,
-    CancellationToken cancellationToken)
+Singleton 實體在應用程式生命週期內僅建立一次，一旦在建構子注入 Scoped 服務，該 Scoped 實體將被長久捕捉，失去依請求隔離的保護。
+
+### 坑二：在根容器（Root Provider）解析 Scoped 服務
+
+若未透過 `CreateScope()`，直接在 `app.Services.GetRequiredService<TScoped>()` 解析，該實體會掛在根容器底下，直到應用程式關閉前永遠不會被 GC 回收。
+
+~~~csharp title="Program.cs"
+// ✅ Good：啟用啟動期範圍驗證並透過 IServiceScopeFactory 安全呼叫
+using Microsoft.Extensions.DependencyInjection;
+
+var services = new ServiceCollection();
+
+// 註冊不同生命週期之服務
+services.AddScoped<IOrderService, OrderService>();
+services.AddSingleton<OrderBatchProcessor>();
+
+// 關鍵：構建 ServiceProvider 時強制開啟範圍驗證（ValidateScopes）
+var serviceProvider = services.BuildServiceProvider(new ServiceProviderOptions
 {
-    await using var scope = scopeFactory.CreateAsyncScope();
-    var handler = scope.ServiceProvider.GetRequiredService<JobHandler>();
-    await handler.HandleAsync(cancellationToken);
+    ValidateScopes = true,
+    ValidateOnBuild = true
+});
+
+// 在單例服務中正確透過 IServiceScopeFactory 建立短暫生命週期
+var processor = serviceProvider.GetRequiredService<OrderBatchProcessor>();
+await processor.ProcessOrderAsync();
+
+public interface IOrderService { void Execute(); }
+public class OrderService : IOrderService { public void Execute() => Console.WriteLine("訂單邏輯在獨立 Scope 內安全執行"); }
+
+public sealed class OrderBatchProcessor(IServiceScopeFactory scopeFactory)
+{
+    public async Task ProcessOrderAsync()
+    {
+        // 每次處理業務時手動開啟 Scope，用完即自動釋放資源
+        using var scope = scopeFactory.CreateScope();
+        var orderService = scope.ServiceProvider.GetRequiredService<IOrderService>();
+        orderService.Execute();
+        await Task.CompletedTask;
+    }
 }
 ~~~
 
-scope 必須活到作業完成；不要返回尚未 await 的 Task 就先釋放 scope。
+預期輸出：
+```text
+訂單邏輯在獨立 Scope 內安全執行
+```
 
-## Options 的更新與生命週期
+## 踩坑與避坑指南
 
-`IOptions<T>` 提供穩定的設定存取；`IOptionsSnapshot<T>` 是 Scoped，適合每個 scope 的設定快照；`IOptionsMonitor<T>` 可供 Singleton 使用並支援變更通知，但來源是否能重新載入取決於 configuration provider。
+* **啟動期防禦：`ValidateScopes` 與 `ValidateOnBuild`**：
+  在 `Program.cs` 設定 `builder.Host.UseDefaultServiceProvider((_, opts) => { opts.ValidateScopes = true; opts.ValidateOnBuild = true; });`。只要有任何 Singleton 嘗試依賴 Scoped，程式在啟動或首個請求時便會立即拋出 `InvalidOperationException` 阻斷發布，防患於未然。
+* **`IDisposable` 資源釋放權歸屬**：
+  由 DI 容器解析建立的實體，在 Scope 結束（`scope.Dispose()`）時會由容器自動依反向順序呼叫其 `Dispose()`。若是自行 `new` 出來的實體，容器概不負責，必須由呼叫端手動釋放。
+* **避坑原則（什麼時候千萬不要使用 Transient？）**：
+  * **內含連線集區或大型狀態的重量級元件**：例如 `HttpClient`、`ConnectionMultiplexer` 或資料庫連接字串快取。若誤設為 Transient，高併發下每秒產生成千上萬個實體，會迅速打爆 Socket 資源並觸發嚴重的 GC 停頓。
 
-可用 AddOptions、BindConfiguration、Validate 與 ValidateOnStart 把必要設定錯誤移到啟動時。設定值不應散落在每個方法中解析，也不應把秘密值寫進 log。
+## 線上排查指令
 
-## 資源由誰釋放
+線上檢查 DI 洩漏與 Captive Dependency：
 
-容器建立的 IDisposable / IAsyncDisposable 服務由對應容器或 scope 釋放，使用端不應任意 Dispose 共用 Singleton。自行建立或註冊既有 instance 的資源，要確認自己的所有權與結束時機；Transient 若從根容器解析且需釋放，也可能被根容器持有很久。
+```bash
+# 1. 抓取 CoreDump 並分析堆積上留存的 Scoped 服務實體計數
+dotnet-dump analyze dump.dmp
+> dumpheap -stat -type OrderDbContext
 
-## 套用到電商情境
-
-商品快取 client 可長時間共用，DbContext 通常配合用例 scope。背景 Worker 沒有 HTTP request scope，需要自行為工作建立；Singleton 不能直接長期持有 Scoped 服務。Options 的設定更新則另外閱讀專篇。
-
-[閱讀對應的電商章節](/projects/ecommerce/configuration/)，把本篇概念接到整個用例。
+# 2. 檢視根容器（Root ServiceProvider）引用的存活鏈
+> gcroot <address_of_scoped_instance>
+```

@@ -1,59 +1,100 @@
 ---
-title: "IHttpClientFactory 與 Handler 管線"
-description: "以命名 client 管理設定和連線，理解 Handler 的重用、scope 與追蹤。"
+title: "IHttpClientFactory 實戰：Socket 耗盡與 DNS 刷新失效治理"
+description: "深入剖析 new HttpClient() 引發的 Socket 耗盡災難、單例用戶端 DNS 漂移失效、HttpMessageHandler 池化機制與 SocketsHttpHandler 最佳實務。"
 articleId: "aspnet-core-http-client-factory"
 topic: "aspnet-core"
 category: "services"
 order: 3
-tags: ["IHttpClientFactory", "AddHttpClient", "HttpClient", "命名 client", "HttpMessageHandler", "DelegatingHandler", "連線池"]
-difficulty: "intermediate"
+tags: ["ASP.NET Core", "HttpClient", "IHttpClientFactory", "Socket耗盡", "TIME_WAIT", "DNS刷新", "連線集區"]
+articleType: "deep-dive"
 prerequisites: ["aspnet-core-dependency-injection", "csharp-cancellation-disposable"]
 relatedArticles: ["aspnet-core-http-resilience", "engineering-metrics-tracing"]
-applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-08"
-takeaway: "工廠重用的是 Handler 與連線資源；client 的生命週期與 request scope 不必相同。"
-noteDates: ["2026-05-28", "2026-07-01"]
-sources: [{"title": "Microsoft Learn：IHttpClientFactory", "url": "https://learn.microsoft.com/en-us/dotnet/core/extensions/httpclient-factory"}, {"title": "Microsoft Learn：HttpClient 指南", "url": "https://learn.microsoft.com/en-us/dotnet/fundamentals/networking/http/httpclient-guidelines"}]
-learningDepth: "deep"
+applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
+verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+lastReviewed: "2026-10-10"
+takeaway: "嚴禁在請求迴圈中使用 using new HttpClient()；採用 IHttpClientFactory 或 SocketsHttpHandler 設定 PooledConnectionLifetime 兼顧池化與 DNS 刷新。"
+sources:
+  - title: "Microsoft Learn：在 .NET 中使用 IHttpClientFactory"
+    url: "https://learn.microsoft.com/zh-tw/dotnet/core/extensions/httpclient-factory"
+  - title: "Microsoft Learn：使用 HttpClient 的架構問題"
+    url: "https://learn.microsoft.com/zh-tw/dotnet/architecture/microservices/implement-resilient-applications/use-httpclientfactory-to-implement-resilient-http-requests"
 ---
 
-API 呼叫付款或物流服務時，要管理長時間連線、DNS 與 handler 管線。IHttpClientFactory 提供建立 client 與重用 handler 的方式，重試和業務結果仍需另外設計。
+## 案發現場
 
-## 避免每次請求都重建底層連線
+某電商結帳微服務在促銷高峰期間突發網路全面癱瘓，外呼金流與物流 API 頻繁拋出 `SocketException: Address already in use`。維運登入伺服器發現作業系統有上萬個 TCP 連線滯留在 `TIME_WAIT` 狀態，可用 Socket 埠號被消耗殆盡；為了解決問題，工程師將 HttpClient 改為 `static readonly` 單例，不料數週後第三方金流服務更換 DNS 指向新主機，微服務竟然在數天內持續向舊的已廢棄 IP 傳送封包，引發大規模扣款失敗。
 
-IHttpClientFactory 建立新的 HttpClient 包裝，並管理可重用的 HttpMessageHandler；底層 handler 管理連線。可依用途註冊命名 client、typed client，再統一設定 BaseAddress、timeout 與 handler。
+根因在於：對 **HttpClient 與作業系統底層 Socket 的生命週期** 理解不深，在「Socket 耗盡（Socket Exhaustion）」與「DNS 漂移失效（DNS Drift）」兩大極端陷阱間顧此失彼。
 
-下列為 Web 專案的註冊與使用片段；example.com 是示意網址。
+## 致命反模式 vs. 正確解法
 
-~~~csharp title="Program.cs（整合片段）"
-builder.Services.AddHttpClient("catalog", client =>
+```text
+【HttpClient 兩大傳統極端陷阱】
+[❌ 陷阱一：using new HttpClient()] ──► 每次拋棄連線 ──► OS Socket 滯留 TIME_WAIT ──► 💥 埠號耗盡
+[❌ 陷阱二：static 單例 HttpClient]  ──► 永久重用 Socket ──► 忽略 DNS 記錄更新 ──► 💥 請求打往死 IP
+[✅ 正解：IHttpClientFactory 池化]  ──► 外層 Client 隨用隨丟；底層 Handler 2 分鐘定期輪替刷新 DNS
+```
+
+### 坑一：在請求處理中反覆 new 與 Dispose HttpClient
+
+`HttpClient` 實作了 `IDisposable`，但 Dispose 僅關閉託管物件，作業系統底層的 TCP Socket 必須等待 240 秒的 `TIME_WAIT` 週期才會真正釋放。高併發下會迅速抽乾本機 65,535 個 Port 資源。
+
+### 坑二：單例用戶端永久鎖定連線
+
+單例 `HttpClient` 會長久保持底層連線連線池，除非伺服器主動中斷，否則不會重新查詢 DNS 解析。
+
+~~~csharp title="Program.cs"
+// ✅ Good：運用 SocketsHttpHandler 設定連線存活時間，兼顧池化與 DNS 刷新
+using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
+
+var services = new ServiceCollection();
+
+// 註冊具型別客戶端（Typed Client）並配置連線池生命週期（2 分鐘輪替一次刷新 DNS）
+services.AddHttpClient<LogisticsApiClient>()
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
+        MaxConnectionsPerServer = 50
+    });
+
+var provider = services.BuildServiceProvider();
+var client = provider.GetRequiredService<LogisticsApiClient>();
+
+Console.WriteLine($"Typed Client 初始化成功: {client != null}");
+Console.WriteLine("SocketsHttpHandler 已啟用 PooledConnectionLifetime 防護");
+
+public sealed class LogisticsApiClient(HttpClient httpClient)
 {
-    client.BaseAddress = new Uri("https://example.com/");
-    client.Timeout = TimeSpan.FromSeconds(10);
-});
-
-// 服務方法中，factory 由 DI 注入：
-using HttpClient client = factory.CreateClient("catalog");
-using HttpResponseMessage response = await client.GetAsync(
-    "items/42", cancellationToken);
-response.EnsureSuccessStatusCode();
+    private readonly HttpClient _client = httpClient;
+    public HttpClient InnerClient => _client;
+}
 ~~~
 
-釋放由工廠建立的 client 通常不會直接釋放仍被重用的 handler。另一種合理方式是長期 HttpClient 搭配 SocketsHttpHandler 的 PooledConnectionLifetime；需要依 DNS 更新與環境選擇。
+預期輸出：
+```text
+Typed Client 初始化成功: True
+SocketsHttpHandler 已啟用 PooledConnectionLifetime 防護
+```
 
-## Handler 的 scope 與安全記錄
+## 踩坑與避坑指南
 
-DelegatingHandler 可以在送出前後處理記錄、追蹤或認證。factory 的 handler scope 與 HTTP request scope 不同，且 handler 可能重用；不要把某次 request 的使用者、HttpContext 或 token 保存在 handler 欄位供之後請求使用。
+* **`PooledConnectionLifetime` 是現代最佳實務**：
+  在 .NET 6+ / .NET 10 中，`SocketsHttpHandler.PooledConnectionLifetime = TimeSpan.FromMinutes(2)` 是兼具極致吞吐與 DNS 自動感知的官方標準方案。連線在存活 2 分鐘後會被標記過期並優雅關閉，下次請求即會重新查詢 DNS。
+* **Typed Client 本質是 Transient**：
+  透過 `AddHttpClient<TClient>()` 註冊的類別本質是 Transient 服務。絕對不要將 Typed Client 快取在 Singleton 欄位中，否則外層的取消權杖與 Handler 切換將失去意義。
+* **避坑原則（什麼時候千萬不要在 HttpClientFactory 開啟過度重試？）**：
+  * **非冪等（Non-idempotent）操作**：例如信用卡刷卡扣款 API（POST）。若因網路超時自動重試，在伺服器端已扣款但回應逾時的情境下，會直接引發重複請款爭議！非冪等外呼應改由應用程式層的交易補償或掛起重查機制處理。
 
-Singleton 不宜長期捕捉短命的 typed client，否則可能失去預期的 handler 輪替。命名 client 可在需要時透過 factory 取得；記錄時只保留診斷必要資訊，避免輸出 body、Authorization 或秘密 query。
+## 線上排查指令
 
-## 連線與錯誤處理分工
+檢查生產環境 Socket 佔用與連線健康：
 
-工廠不會讓非 2xx 回應自動變成例外，也不會保證安全重試。狀態碼、response 釋放、取消、串流與重試條件仍由呼叫流程決定；HTTP trace 通常可由 .NET 與 OpenTelemetry instrumentation 接上。
+```bash
+# 1. 檢視 Linux 伺服器當前滯留在 TIME_WAIT 狀態的 Socket 總數
+ss -s || netstat -ant | grep TIME_WAIT | wc -l
 
-## 套用到電商情境
-
-付款 client、物流 client 可以有各自 baseaddress、逾時與 handler。不要把每位買家的敏感狀態藏在會重用的 handler 裡；記錄請求時遮蔽機密。Factory 不能保證付款 POST 可安全重試。
-
-[閱讀對應的電商章節](/projects/ecommerce/payment/)，把本篇概念接到整個用例。
+# 2. 監控 HttpClient 目前開啟的實體連線數與請求率
+dotnet-counters monitor System.Net.Http --counters requests-started-rate,current-requests
+```
