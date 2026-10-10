@@ -9,11 +9,5 @@
   "platforms/gke/data-services.md",
   "platforms/gke/gateway-networking.md",
   "platforms/gke/platform-modes.md",
-  "platforms/gke/workload-identity.md",
-  "platforms/kubernetes/autoscaling.md",
-  "platforms/kubernetes/configuration-security.md",
-  "platforms/kubernetes/probes-resources.md",
-  "platforms/kubernetes/services-gateway.md",
-  "platforms/kubernetes/storage.md",
-  "platforms/kubernetes/workloads.md"
+  "platforms/gke/workload-identity.md"
 ]
