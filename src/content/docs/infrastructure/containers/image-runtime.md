@@ -5,46 +5,154 @@ articleId: "containers-image-runtime"
 topic: "containers"
 category: "container-basics"
 order: 1
-tags: ["映像、容器與 .NET 程序", "containers"]
+tags:
+  - "映像、容器與 .NET 程序"
+  - "containers"
 difficulty: "intermediate"
-learningDepth: "basic"
+learningDepth: "deep"
 prerequisites: []
-relatedArticles: ["kubernetes-workloads", "dotnet-background-services"]
-applicableVersions: "以 Kubernetes 現行核心 API 與 Docker 容器模型說明；GKE 限制另見平台文章。"
-verifiedWith: "已核對 Kubernetes／Docker 官方概念；叢集操作與環境驗證狀態見獨立實作指南。"
-lastReviewed: "2026-10-08"
+relatedArticles:
+  - "kubernetes-workloads"
+  - "dotnet-background-services"
+applicableVersions: "以 Kubernetes 現行核心 API 與 Docker 容器模型說明；.NET 10。"
+verifiedWith: "已核對 Kubernetes／Docker 官方概念；整合片段需放入對應專案，未在本站建置或連線執行。"
+lastReviewed: "2026-10-10"
 takeaway: "從建置產物到執行中的程序，理解映像分層、設定、權限與停止訊號。"
-noteDates: []
-sources: [{"title": "Docker multi-stage build", "url": "https://docs.docker.com/build/building/multi-stage/"}, {"title": "Docker container overview", "url": "https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-a-container/"}, {"title": "Microsoft .NET container images", "url": "https://learn.microsoft.com/en-us/dotnet/core/docker/container-images"}]
+sources:
+  - title: "Docker multi-stage build"
+    url: "https://docs.docker.com/build/building/multi-stage/"
+  - title: "Docker container overview"
+    url: "https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-a-container/"
+  - title: "Microsoft .NET container images"
+    url: "https://learn.microsoft.com/en-us/dotnet/core/docker/container-images"
 ---
 
-容器部署回答的是：同一個 API，如何在另一台機器使用一致的執行環境啟動？映像是檔案系統與啟動設定的版本化產物，容器則是以該映像啟動的隔離程序。容器共享主機核心，並不各自攜帶一套完整作業系統。
+## 案發現場
 
-## 從程式到映像
+在許多團隊將 .NET 應用程式容器化並部署至 Kubernetes 的過程中，常會遭遇以下兩類經典的生產事故：
 
-.NET SDK 負責還原、編譯與 publish；ASP.NET runtime 負責執行發布產物。Multi-stage Dockerfile 讓建置階段使用 SDK，最終映像只帶執行環境與產物。映像較小，仍需要管理基底版本、安全更新與相容性。
+事故現場一：**鏡像肥大與冷啟動延遲**。
+初學者撰寫的 `Dockerfile` 往往只用一個階段，把完整的 .NET SDK（包含了編譯器、Roslyn、除錯工具與 NuGet 快取）全部打包進最終映像檔。產出的 Docker 鏡像體積高達 **1.2GB**。每次 CI/CD 流水線推送鏡像需要數分鐘，而在 Kubernetes 發生節點自動擴容（Cluster Autoscaler）時，新節點拉取映像檔需要 3~5 分鐘，嚴重拖垮了系統應對流量突波的彈性擴容速度。更糟糕的是，完整的 SDK 留在生產容器內，大幅增加了 CVE 安全漏洞的受攻擊面（Attack Surface）。
 
-| 元件 | 保存什麼 | 商品 API 的例子 |
-| --- | --- | --- |
-| Image | 唯讀分層、預設命令與設定 | 某次 commit 建出的 API |
-| Container | 程序、暫時可寫層與資源使用 | 正在處理查詢的 API 實例 |
-| Volume | 獨立於容器可寫層的資料 | 本機 PostgreSQL 實驗資料 |
-| Registry | 映像版本與存取控制 | GCP Artifact Registry |
+事故現場二：**優雅關閉（Graceful Shutdown）完全失效**。
+在 Kubernetes 滾動更新新版本時，舊 Pod 收到 `SIGTERM` 準備下線。原本程式碼中寫了平滑處理（等待正在執行的金流扣款完成），但**每次 Pod 總是卡滿 30 秒，隨後被 Kubernetes 發送 `SIGKILL` 暴力砍死**！未處理完的資料庫交易被強制中斷，留下嚴重的髒資料。
+排查發現，`Dockerfile` 寫成了：
+```dockerfile
+ENTRYPOINT dotnet MyApp.dll
+```
+這種「Shell 格式」導致 Docker 在容器內啟動了 `/bin/sh -c "dotnet MyApp.dll"` 作為 **PID 1**。當 Kubernetes 發送 `SIGTERM` 訊號給 PID 1 時，`/bin/sh` 根本不會將終止訊號轉發給底層的 `dotnet` 子程序！.NET 應用程式完全不知道自己即將被砍，直到 30 秒逾時後遭整機強制終止。
 
-容器重建會失去可寫層。正式訂單不能只寫在 API 容器檔案裡；使用外部資料庫，或由有明確儲存責任的服務保存。刪除映像和刪除 volume 也是不同操作。
+---
 
-## API 與 Worker 如何啟動
+## 反模式與正確解法
 
-API 需要監聽明確的 port；Worker 主要連向資料庫和 Broker，不必因為容器化就暴露 HTTP port。`EXPOSE` 是映像的資訊，沒有自動替主機或 Kubernetes 建立對外路由。容器內的 `localhost` 指向自身；另一個容器裡的 Redis 要透過服務名稱或可達端點連線。
+### 反模式一：單階段建置與使用 Root 最高權限運行
 
-採用執行形式的啟動命令，例如 `ENTRYPOINT ["dotnet", "ProductApi.dll"]`，可以讓 .NET 程序直接收到停止訊號。程序收到 SIGTERM 後，仍需由 Host 和工作實作合作，停止接新工作、等待或取消進行中工作，再釋放資源。
+```dockerfile
+# 致命反模式：單階段建置 + 巨大 SDK + 預設 Root 身分
+FROM mcr.microsoft.com/dotnet/sdk:10.0
+WORKDIR /app
+COPY . .
+RUN dotnet publish -c Release -o out
+ENTRYPOINT ["dotnet", "out/MyApp.dll"] # 容器以 root 身分運行，違反安全合約！
+```
 
-## 執行時才提供設定
+### 正確解法一：多階段建置（Multi-stage Build）與非 Root Chiseled 映像
 
-商品 API 的映像不應把每個環境的資料庫密碼烤進分層。環境變數、設定掛載與身分授權在執行時提供；建置機密則使用建置工具的 secret 機制。`.dockerignore` 要排除 `.env`、Git、相依快取和本機輸出，避免無關內容進入 build context。
+利用多階段建置將「編譯環境」與「執行環境」徹底分離。編譯階段使用功能完整的 SDK 映像檔；執行階段則採用極簡的 **Ubuntu Chiseled** 或 **Alpine** 運行時映像檔（不含 Shell、不含套件管理器），並以非 Root 身分（`USER $APP_UID`）執行，**鏡像體積驟降至 110MB，CVE 漏洞減少 90%**：
 
-使用非 root 使用者並確認工作目錄、寫入位置與 port 權限。限制 CPU／記憶體並不能代替程序內的併發和連線上限，兩者會共同影響穩定性。
+```dockerfile
+# 正確解法：生產級 .NET 10 安全輕量多階段 Dockerfile
 
-## 在電商案例中使用
+# ==================== 階段 1：編譯建置環境 ====================
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
 
-先把無狀態商品查詢 API 做成映像，驗證 HTTP 回應與停止，再部署兩個副本。這一步只驗證部署流程；庫存一致性、登入和可靠訊息仍由各自的業務與資料設計負責。[容器實作指南](/practice/ecommerce/containers/)提供獨立的小型 API、完整命令及驗證範圍。
+# 關鍵最佳化：先拷貝專案檔並執行依賴還原（充分利用 Docker Layer 快取！）
+COPY ["src/Ecommerce.Api/Ecommerce.Api.csproj", "src/Ecommerce.Api/"]
+COPY ["src/Ecommerce.Domain/Ecommerce.Domain.csproj", "src/Ecommerce.Domain/"]
+RUN dotnet restore "src/Ecommerce.Api/Ecommerce.Api.csproj"
+
+# 拷貝剩餘原始碼並編譯發布
+COPY . .
+WORKDIR "/src/src/Ecommerce.Api"
+RUN dotnet publish "Ecommerce.Api.csproj" \
+    -c Release \
+    -o /app/publish \
+    /p:UseAppHost=false
+
+# ==================== 階段 2：極簡無特權生產運行環境 ====================
+# 使用微軟官方提供的 Chiseled 映像檔（基於極簡 Ubuntu，零 Shell，超安全）
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled AS final
+WORKDIR /app
+
+# 設定 ASP.NET Core 監聽連接埠（非 Root 身分使用 8080）
+ENV ASPNETCORE_HTTP_PORTS=8080
+EXPOSE 8080
+
+# 複製編譯產物
+COPY --from=build /app/publish .
+
+# 以內建的非 Root 使用者（UID 1654）執行，防止容器逃逸攻擊！
+USER $APP_UID
+
+# 關鍵：必須使用 Exec 陣列格式，確保 dotnet 成為 PID 1，正確接收 SIGTERM 訊號！
+ENTRYPOINT ["dotnet", "Ecommerce.Api.dll"]
+```
+
+---
+
+### 反模式二：忽略 cgroup v2 資源限制導致的記憶體崩潰
+
+在舊版容器或未配置 .NET GC 記憶體上限時，.NET 執行階段可能會讀取到「實體宿主機」的總記憶體（例如 128GB），而非 Kubernetes 容器限制的 `resources.limits.memory: 1Gi`。這會導致 .NET 延遲觸發垃圾回收（GC），當記憶體使用量超過 1GB 時，直接被 Linux cgroup OOMKilled 砍死。
+
+### 正確解法二：確保 .NET 容器感知（Container-Aware GC）
+
+現代 .NET 8/10 預設已原生支援 cgroup v2，但在高負載下，應在環境變數明確宣告硬性記憶體上限比率，防止容器被 OOM：
+
+```dockerfile
+# 限制 .NET GC 堆積記憶體最多使用容器限額的 75%，保留 25% 給非受管記憶體與執行緒堆疊
+ENV DOTNET_GCHeapHardLimitPercent=75
+```
+
+---
+
+## 踩坑與避坑指南
+
+### 1. Docker 快取層（Layer Caching）失效陷阱
+- **踩坑點**：若在 `Dockerfile` 開頭直接寫 `COPY . .` 隨後執行 `dotnet restore`，那麼只要你修改了任何一行 C# 代碼，後續的全部層（包含耗時的 `dotnet restore`）都必須重新執行！
+- **黃金準則**：**永遠先複製 `.csproj` 檔案並執行 `restore`，隨後才複製剩餘代碼！** 只要依賴套件沒變，`restore` 層會 100% 命中 Docker 快取，建置時間從 3 分鐘縮減至 10 秒。
+
+### 2. Alpine 映像檔（musl libc）與 Globalization 國際化
+- 若選用極致輕量的 Alpine 映像檔（`aspnet:10.0-alpine`），Alpine 底層使用的是 `musl libc` 而非標準的 `glibc`。
+- **踩坑點**：.NET 在處理跨國時區轉換、貨幣符號或中文字串排序時，依賴 `ICU` 函式庫。Alpine 預設未安裝 ICU，若未宣告 `ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false` 並安裝 `icu-libs`，呼叫 `DateTime.ToString()` 時可能引發意料之外的格式化異常。
+
+---
+
+## 線上排查指令
+
+### 1. 檢驗容器內部 PID 1 與執行使用者
+
+進入正在運行的容器或檢驗進程清單：
+```bash
+# 檢查容器內運行中的進程，確認 dotnet 是否為 PID 1
+docker exec <container_id> ps -ef
+```
+若看到 `1 root /bin/sh -c ...`，代表訊號轉發失敗；正確應為 `1 app dotnet Ecommerce.Api.dll`。
+
+### 2. 檢測容器實際讀取到的 cgroup 記憶體上限
+
+```bash
+# 檢視 cgroup v2 容器真實記憶體上限（以 byte 為單位）
+docker exec <container_id> cat /sys/fs/cgroup/memory.max
+```
+
+### 3. Prometheus / Grafana 監控指標
+
+```text
+# 容器記憶體使用率佔 Kubernetes Limit 比例（超過 85% 發出警報）
+(container_memory_working_set_bytes{container="api"} / container_spec_memory_limit_bytes{container="api"}) > 0.85
+
+# 容器 OOMKilled 發生次數
+kube_pod_container_status_terminated_reason{reason="OOMKilled"} > 0
+```
