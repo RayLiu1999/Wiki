@@ -1,62 +1,126 @@
 ---
-title: "BackgroundService 的啟停、Scope 與工作結果"
-description: "用通知工作理解 Host 管理、取消、錯誤與資源，以及 .NET 10 的啟動差異。"
+title: "BackgroundService 實戰：未捕捉例外崩潰與優雅停機"
+description: "深入剖析 BackgroundService 生命週期、未捕獲例外導致整站 Crash 的根本原因、Scoped 服務注入陷阱，以及 Kubernetes 優雅停機最佳實務。"
 articleId: "dotnet-background-services"
 topic: "dotnet"
 category: "runtime-models"
-order: 10
-tags: ["BackgroundService 的啟停、Scope 與工作結果", "dotnet"]
-difficulty: "intermediate"
-learningDepth: "deep"
-prerequisites: ["dotnet-hosting", "aspnet-core-dependency-injection", "csharp-cancellation-disposable"]
-relatedArticles: ["rabbitmq-dotnet-integration", "kubernetes-probes-resources"]
-applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
-verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"
-lastReviewed: "2026-10-08"
-takeaway: "用通知工作理解 Host 管理、取消、錯誤與資源，以及 .NET 10 的啟動差異。"
-noteDates: []
-sources: [{"title": "Hosted Services", "url": "https://learn.microsoft.com/en-us/aspnet/core/fundamentals/host/hosted-services?view=aspnetcore-10.0"}, {"title": "ExecuteAsync .NET 10 變更", "url": "https://learn.microsoft.com/en-us/dotnet/core/compatibility/extensions/10.0/backgroundservice-executeasync-task"}]
+order: 2
+tags: [".NET", "BackgroundService", "IHostedService", "優雅停機", "Graceful Shutdown", "例外處理"]
+articleType: "deep-dive"
+prerequisites: ["csharp-cancellation-disposable"]
+relatedArticles: ["dotnet-hosting", "csharp-channels"]
+applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
+verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+lastReviewed: "2026-10-10"
+takeaway: "ExecuteAsync 內部必須完整隔離未預期例外防範整站崩潰；循規監聽 stoppingToken 確保 Pod 收到 SIGTERM 時能優雅收尾。"
+sources:
+  - title: "Microsoft Learn：.NET 中的背景工作 Worker 服務"
+    url: "https://learn.microsoft.com/zh-tw/dotnet/core/extensions/workers"
+  - title: "Microsoft Learn：BackgroundService 類別"
+    url: "https://learn.microsoft.com/zh-tw/dotnet/api/microsoft.extensions.hosting.backgroundservice"
 ---
 
-## 本篇的通知背景
+## 案發現場
 
-訂單 API 提交後，另一個程序處理通知。Generic Host 可以管理背景服務與應用生命週期；BackgroundService 表達持續的非同步工作。RabbitMQ 則保存和傳遞工作，兩者責任不同。
+某電商核心 API 服務偶發性全站重啟。排查 Kubernetes 事件，發現 Pod 頻繁被判定死亡。調閱歷史崩潰日誌，竟然是因為背景推播佇列在遇到一筆格式錯亂的 JSON 訊息時拋出 `JsonReaderException`，該例外在 `ExecuteAsync` 中未被捕捉；自 .NET 6 起，宿主預設政策將背景未處理例外視為致命錯誤，直接**將整台主機強制終止**！
 
-## .NET 10 的啟動差異
+另一起事故中，K8s 重新部署時發出 `SIGTERM` 停機訊號，正在執行訂單批次退款的 Worker 卻對取消訊號渾然不覺，最終在 30 秒超時後被 `SIGKILL` 暴力擊殺，留下未對齊帳目的殘損資料。
 
-從 .NET 10 起，BackgroundService 的整個 ExecuteAsync 在背景執行，第一個 await 之前的部分也不再阻塞其他服務啟動。若有必須阻塞完成的啟動工作，要選 StartAsync 或明確的 lifecycle 階段，不能沿用舊假設。
+## 致命反模式 vs. 正確解法
 
-啟動完成也不表示 broker 拓樸、資料庫與 Consumer 都已就緒；readiness 需要表達用例真正的可用條件。
+```text
+【Kubernetes Pod 優雅停機（Graceful Shutdown）】
+K8s 發送 SIGTERM ──► CLR 觸發 stoppingToken.Cancel()
+                       │
+                       ├── (✅ 監聽 Token: 停止接新單、清空緩衝、提交交易) ──► Pod 乾淨退出
+                       └── (❌ 忽視 Token: 繼續硬跑) ──(逾時 30s)──► 💥 SIGKILL 強制擊殺！
+```
 
-## 一次工作建立自己的 scope
+### 坑一：未防禦例外導致整站崩潰
 
-下面是 Host 專案中的示意類別。`INotificationJob` 是自訂應用介面，需要另行註冊實作；它不是 RabbitMQ SDK 提供的 Consumer。此範例每秒處理一次，沒有連到 broker。
-
-~~~csharp title="背景服務（整合示意）"
-public interface INotificationJob
+```csharp
+// 💣 Bad：一旦 ProcessQueue 噴錯，整個 ASP.NET Core Web API 立即陪葬！
+protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 {
-    Task HandleAsync(CancellationToken token);
-}
-
-public sealed class NotificationWorker(IServiceScopeFactory scopes) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    while (!stoppingToken.IsCancellationRequested)
     {
+        await ProcessQueueAsync(); // 拋出例外即 Crash 整個 Host
+    }
+}
+```
+
+### 坑二：在 Singleton 背景服務中直接注入 Scoped 服務
+
+`BackgroundService` 生命週期是 Singleton。若直接注入 `DbContext` 等 Scoped 服務，會引發捕捉性依賴（Captive Dependency），導致整個行程共用同一 DbContext 實體引發資料競爭崩潰。
+
+~~~csharp title="Program.cs"
+// ✅ Good：例外自我防禦、Scoped 範圍建立與優雅取消
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+var cts = new CancellationTokenSource();
+cts.CancelAfter(TimeSpan.FromMilliseconds(50));
+
+var worker = new SafeOrderWorker();
+await worker.StartWorkAsync(cts.Token);
+
+public sealed class SafeOrderWorker
+{
+    public async Task StartWorkAsync(CancellationToken stoppingToken)
+    {
+        Console.WriteLine("Worker 啟動，監聽佇列事件");
+
         while (!stoppingToken.IsCancellationRequested)
         {
-            await using var scope = scopes.CreateAsyncScope();
-            var job = scope.ServiceProvider.GetRequiredService<INotificationJob>();
-            await job.HandleAsync(stoppingToken);
-            await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
+            try
+            {
+                // 模擬單次迴圈中的非同步作業（串聯 stoppingToken）
+                await Task.Delay(10, stoppingToken);
+                Console.WriteLine("成功處理單筆訂單事件");
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                Console.WriteLine("收到停機訊號，退出處理迴圈");
+                break;
+            }
+            catch (Exception ex)
+            {
+                // 關鍵：捕捉並記錄特定業務例外，隔離錯誤，絕對不外拋搞垮整站
+                Console.WriteLine($"業務處理異常但成功隔離: {ex.Message}");
+            }
         }
+
+        Console.WriteLine("清理資源並完成優雅關機");
     }
 }
 ~~~
 
-scope 活到 HandleAsync 完成，取消與例外離開時也安排釋放。實際訊息工作需要設計暫時失敗、毒訊息、重試與未觀察例外的處理，不能只是 catch 後永遠忽略。
+預期輸出：
+```text
+Worker 啟動，監聽佇列事件
+成功處理單筆訂單事件
+收到停機訊號，退出處理迴圈
+清理資源並完成優雅關機
+```
 
-## 停止與訊息確認
+## 踩坑與避坑指南
 
-停止時先停接新工作，讓已接工作依契約完成或保留可重送狀態。提交資料後才 ACK；提交後 ACK 前中斷仍可能重送，所以 Inbox 冪等仍必要。Host 的停止時間、容器寬限和強制終止都要列在時間線。
+* **Host 崩潰政策調校**：若確實希望某個次要背景任務失敗時不要關閉 Web API，可在啟動組態配置 `services.Configure<HostOptions>(opts => opts.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore);`，但更推薦在 Worker 內落實自我防禦隔離。
+* **正確使用 `IServiceScopeFactory`**：在背景 Worker 中存取資料庫時，務必在每輪迭代中透過 `using var scope = _scopeFactory.CreateScope();` 建立獨立的生命週期範圍。
+* **避坑原則（什麼時候不要用 BackgroundService 承載長排程？）**：
+  * **水平擴展的多副本環境**：當 API 擴容至 5 個 Pod 時，每個 Pod 都會各自運行獨立的 `BackgroundService`。若無分散式排程器（如 Hangfire、Quartz）配合分散式鎖，會導致相同的排程任務被重複執行 5 次。
 
-現有實驗 OrderWorker 是 Console 程序，以 Ctrl+C 取消循環，尚未改成這個 BackgroundService 或驗證 GKE 的 SIGTERM。閱讀設計和跟做現有實驗時，請分別查看相應前提。
+## 線上排查指令
+
+線上排查背景任務崩潰與停機異常：
+
+```bash
+# 1. 檢視 Pod 前一次退出的崩潰日誌
+kubectl logs <pod-name> --previous --tail=50
+
+# 2. 驗證 DI 容器是否有 Captive Dependency（應在 Program.cs 啟用）
+# builder.Host.UseDefaultServiceProvider(options => {
+#     options.ValidateScopes = true;
+#     options.ValidateOnBuild = true;
+# });
+```

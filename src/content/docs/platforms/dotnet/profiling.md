@@ -1,49 +1,98 @@
 ---
-title: "Profiling 與瓶頸定位的工作流程"
-description: "從可重現的商品負載出發，依指標、trace 和記憶體證據驗證改善。"
+title: ".NET 生產環境效能診斷：CLI 診斷工具鏈實戰"
+description: "深入剖析 dotnet-counters、dotnet-trace、dotnet-gcdump 與 dotnet-dump 四大生產排查利器之分工矩陣、容器 IPC 權限與實戰避坑。"
 articleId: "dotnet-profiling"
 topic: "dotnet"
 category: "runtime-performance"
-order: 9
-tags: ["Profiling 與瓶頸定位的工作流程", "dotnet"]
-difficulty: "intermediate"
-learningDepth: "deep"
-prerequisites: ["dotnet-gc-memory", "dotnet-threadpool", "engineering-metrics-tracing"]
-relatedArticles: ["engineering-slo-alerts", "data-access-sql-foundations"]
-applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
-verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"
-lastReviewed: "2026-10-08"
-takeaway: "從可重現的商品負載出發，依指標、trace 和記憶體證據驗證改善。"
-noteDates: []
-sources: [{"title": "dotnet-counters", "url": "https://learn.microsoft.com/en-us/dotnet/core/diagnostics/dotnet-counters"}, {"title": "dotnet-trace", "url": "https://learn.microsoft.com/en-us/dotnet/core/diagnostics/dotnet-trace"}, {"title": "診斷工具", "url": "https://learn.microsoft.com/en-us/dotnet/core/diagnostics/tools-overview"}]
+order: 5
+tags: [".NET", "效能診斷", "dotnet-trace", "dotnet-dump", "dotnet-counters", "dotnet-gcdump", "生產排查"]
+articleType: "deep-dive"
+prerequisites: ["dotnet-gc-memory"]
+relatedArticles: ["dotnet-threadpool", "dotnet-reflection"]
+applicableVersions: ".NET 8 / .NET 10、Linux / macOS / Windows"
+verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+lastReviewed: "2026-10-10"
+takeaway: "即時監控看 dotnet-counters；CPU 瓶頸取樣用 dotnet-trace；記憶體分析優先選輕量 dotnet-gcdump，死鎖才採集完整 dotnet-dump。"
+sources:
+  - title: "Microsoft Learn：.NET 診斷工具概觀"
+    url: "https://learn.microsoft.com/zh-tw/dotnet/core/diagnostics/"
+  - title: "Microsoft Learn：dotnet-trace 效能分析公用程式"
+    url: "https://learn.microsoft.com/zh-tw/dotnet/core/diagnostics/dotnet-trace"
 ---
 
-## 本篇的問題背景
+## 案發現場
 
-買家說商品查詢變慢，團隊需要知道時間花在 CPU、資料庫、快取、鎖或排程。本篇提供診斷流程和工具角色，沒有附上現有實驗的效能資料；實測必須連同環境保存。
+線上微服務在黑色星期五晚間突發 CPU 100% 飆高，API 全部逾時。因為生產環境嚴格遵守資安合規，無法安裝重型 IDE 也禁止開啟遠端偵錯埠；維運人員情急之下對一個佔用 12GB 記憶體的行程執行了完整 Memory Dump，不料磁碟 I/O 瞬間被打爆，寫入耗時 2 分鐘，直接觸發 Kubernetes Liveness 探針超時將 Pod 暴力重啟，關鍵事故現場瞬間灰飛煙滅。
 
-## 先定義量測範圍
+根因在於：團隊對現代 .NET **非侵入式 CLI 診斷工具鏈**認識不足，未依故障情境選擇正確的採集代價（Overhead）工具。
 
-記錄應用版本、.NET、CPU 架構、容器資源、資料量、快取冷／熱狀態、並行請求及負載時間。平均值、尾端延遲、錯誤率和吞吐量各自表達不同結果。
+## 致命反模式 vs. 正確解法
 
-使用相同測試條件重現一次，再對照單程序、整個服務與外部服務。多個 Pod 的 p95 不能直接平均成全系統 p95。
+```text
+【四大 .NET CLI 診斷工具代價與分工矩陣】
+dotnet-counters (負擔 ~0%)   ──► 即時儀表板：GC 頻率、ThreadPool 深度、CPU 佔比
+dotnet-trace    (負擔 1%~3%) ──► CPU 火焰圖：找出哪行程式碼在吃 CPU
+dotnet-gcdump   (負擔極低)   ──► 輕量 Heap 快照：僅抓型別關係，防範 OOMKill
+dotnet-dump     (需暫停行程) ──► 完整 CoreDump：死鎖、未處理例外與原生記憶體
+```
 
-## 工具提供不同證據
+### 坑一：記憶體排查直接盲目採集完整 Dump
 
-| 工具或資料 | 用來回答 |
-| --- | --- |
-| dotnet-counters／應用 meters | 哪個時間窗的 CPU、配置、GC、queue 或請求異常？ |
-| dotnet-trace／profiler | 程式花時間在哪些呼叫及排程？ |
-| dump／GC 資料 | 哪些物件仍存活，從哪些 root 保留？ |
-| OpenTelemetry trace | 一筆查詢的 HTTP、資料庫和等待段如何串接？ |
-| 資料庫 query plan | 哪個查詢與索引造成成本？ |
+完整 Dump 會複製所有虛擬記憶體頁面至硬碟，不僅暫停行程數十秒，更可能直接擠爆磁碟容量引發 Pod 崩潰。
 
-工具、診斷權限和容器 attach 方式需要版本對應。採樣與匯出也有成本，不把缺少 trace 當成未執行的證據。
+### 坑二：排查 CPU 瓶頸使用全量事件追蹤
 
-## 用一個假設推進
+追蹤 CPU 應使用**取樣模式（Sample Profiler）**，而非捕捉每個分配事件，以控制損耗在 2% 以內。
 
-例如假設商品 DTO 建立過多配置，就先看 allocation 和 profiler；若大部分時間在 SQL 等待，改 buffer 未必改善。調整一個有證據的原因，再用相同結果契約比較，避免一次更動多個因素失去歸因。
+~~~csharp title="Program.cs"
+// ✅ Good：在程式碼中整合標準診斷計量（Metrics），供 CLI 工具監控
+using System.Diagnostics.Metrics;
 
-微型 benchmark 適合比較局部操作，端到端負載用來確認真正的 API 行為。量測程式也需要正確性，不能用略過授權或移除一致性機制換來看似漂亮的數字。
+var meter = new Meter("DevWiki.Commerce", "1.0.0");
+var orderCounter = meter.CreateCounter<long>("orders_completed", description: "累計完成訂單數");
 
-完成檢查：能提供假設、測試條件、證據、調整與前後比較，以及仍未解釋的限制。
+// 模擬業務事件發布
+for (int i = 0; i < 3; i++)
+{
+    orderCounter.Add(1, new KeyValuePair<string, object?>("status", "success"));
+}
+
+Console.WriteLine("業務指標已成功暴露至 Diagnostics IPC");
+Console.WriteLine("可隨時透過 dotnet-counters 進行無侵入式採集");
+~~~
+
+預期輸出：
+```text
+業務指標已成功暴露至 Diagnostics IPC
+可隨時透過 dotnet-counters 進行無侵入式採集
+```
+
+## 踩坑與避坑指南
+
+* **Linux 容器內診斷必備條件**：
+  * CLR 透過 `/tmp/dotnet-diagnostic-{PID}-socket` 建立跨行程 Unix Domain Socket 通訊。
+  * 執行診斷工具的帳號必須與 .NET 行程擁有相同的使用者 ID（UID），且容器需具備 `SYS_PTRACE` 權限才能附加。
+* **避坑原則（什麼時候千萬不要用 `dotnet-dump`？）**：
+  * **當容器剩餘記憶體或磁碟低於 50% 時**：若行程本身已逼近容器 Memory Limit，下達 `dotnet-dump` 產生的暫存複製極易直接觸發 Linux cgroup OOMKilled。此時應優先使用僅數十 MB 的 `dotnet-gcdump`。
+
+## 線上排查指令
+
+四大工具現場實戰指令：
+
+```bash
+# 1. dotnet-counters：即時監看核心指標
+dotnet-counters monitor System.Runtime --process-id <PID>
+
+# 2. dotnet-trace：採集 30 秒 CPU 取樣並轉為火焰圖 Speedscope 格式
+dotnet-trace collect -p <PID> --duration 00:00:30 --providers Microsoft-DotNETCore-SampleProfiler
+dotnet-trace convert trace.nettrace --format Speedscope
+
+# 3. dotnet-gcdump：快速擷取輕量級記憶體物件分佈
+dotnet-gcdump collect -p <PID> -o heap.gcdump
+
+# 4. dotnet-dump：抓取完整轉儲並分析死鎖
+dotnet-dump collect -p <PID> -o crash.dmp
+dotnet-dump analyze crash.dmp
+> deadlocks
+> clrstack -all
+```

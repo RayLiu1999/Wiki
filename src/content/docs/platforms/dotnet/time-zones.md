@@ -1,55 +1,94 @@
 ---
-title: "DateTimeOffset、UTC 與時區"
-description: "區分時間點、當地日曆時間與時區規則，避免 Unix 單位和日光節約時間的誤用。"
+title: ".NET 時間與時區實務：DateTime 陷阱與跨時區結算"
+description: "深入剖析 DateTimeKind 隱形換算偏差、跨時區帳務結算差額、夏令時間切換地雷，以及 TimeProvider 可測試時間架構。"
 articleId: "dotnet-time-zones"
 topic: "dotnet"
 category: "time-identifiers"
-order: 3
-tags: ["DateTimeOffset", "DateTime", "UTC", "Unix timestamp", "DST", "日光節約時間", "TimeZoneInfo", "時區"]
-difficulty: "intermediate"
+order: 1
+tags: [".NET", "DateTime", "DateTimeOffset", "時區", "TimeProvider", "跨時區結算", "夏令時間"]
+articleType: "deep-dive"
 prerequisites: ["csharp-syntax-traps"]
-relatedArticles: ["dotnet-identifiers", "data-access-type-mapping", "engineering-metrics-tracing"]
-applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-08"
-takeaway: "Offset 能標示時間點，不能代表完整時區；未來排程還需要所在地的時區規則。"
-noteDates: ["2026-05-27", "2026-06-08", "2026-07-01"]
-sources: [{"title": "Microsoft Learn：日期時間型別選擇", "url": "https://learn.microsoft.com/en-us/dotnet/standard/datetime/choosing-between-datetime"}, {"title": "Microsoft Learn：轉換時區", "url": "https://learn.microsoft.com/en-us/dotnet/standard/datetime/converting-between-time-zones"}, {"title": "Microsoft Learn：DateTimeOffset.ToUnixTimeSeconds", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.datetimeoffset.tounixtimeseconds?view=net-10.0"}]
-learningDepth: "deep"
+relatedArticles: ["dotnet-identifiers", "dotnet-hosting"]
+applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
+verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+lastReviewed: "2026-10-10"
+takeaway: "所有業務時間戳一律使用 DateTimeOffset 並以 UTC 儲存；純日期與純時間使用 DateOnly/TimeOnly；時間相依邏輯依賴 TimeProvider。"
+sources:
+  - title: "Microsoft Learn：在 DateTime、DateTimeOffset、TimeSpan 和 TimeZoneInfo 之間做選擇"
+    url: "https://learn.microsoft.com/zh-tw/dotnet/standard/datetime/choosing-between-datetime"
+  - title: "Microsoft Learn：TimeProvider 類別"
+    url: "https://learn.microsoft.com/zh-tw/dotnet/api/system.timeprovider"
 ---
 
-下單時間是一個時間點，促銷開始可能是某地區的排程，保留期限則涉及經過時間。先區分這些意義，再選 DateTimeOffset、UTC、時區和時計抽象。
+## 案發現場
 
-## 先決定資料的時間意義
+某跨境電商在月初結算全球銷售報表時，財務端核對出高達上百萬元的跨日帳目偏差；另一起重大事故中，歐美市場切換夏令時間（Daylight Saving Time, DST）當天，每日早晨 09:00 定時發送折價券的排程 Worker，因硬性累加 24 小時在同一天內被重複觸發兩次，導致數萬張高額折價券超發。
 
-已發生事件通常需要唯一時間點，可用 DateTimeOffset 並在儲存及交換時採 UTC。生日等日曆日期可用 DateOnly；「每週一當地上午九點」則需要本地時間及 time zone id，不能永久固定成某個 UTC offset。
+排查原因：後端系統隨處充斥 `DateTime.Now`，在存入資料庫時丟失了時區資訊（轉換為 `DateTimeKind.Unspecified`）；且缺乏對夏令時間切換日「當天僅有 23 小時或 25 小時」的邊界防護。
 
-DateTimeOffset 包含日期時間與 offset，能換算同一時間點；offset +08:00 不會告訴你它屬於哪個時區或未來會不會切換 DST。
+## 致命反模式 vs. 正確解法
 
-## 將時間點轉成 UTC 與 Unix
+```text
+【跨時區時間標準流動】
+用戶端 (台灣 UTC+8) ──► 傳輸 ISO 8601 (2026-10-10T20:00:00+08:00)
+                              │
+                              ▼
+資料庫與核心中台 ──────► 一律以 UTC 儲存 (2026-10-10T12:00:00Z)
+                              │
+                              ▼
+報表與帳單展示 ────────► 依租戶指定 IANA 時區精確轉譯 (如 Asia/Taipei)
+```
 
-以下為 .NET API 片段，未單獨納入可執行範例驗證。
+### 坑一：濫用 DateTime.Now 儲存時間戳
 
-~~~csharp title="時間轉換片段"
-var local = new DateTimeOffset(2026, 7, 1, 9, 0, 0, TimeSpan.FromHours(8));
-DateTimeOffset utc = local.ToUniversalTime();
-long seconds = utc.ToUnixTimeSeconds();
-DateTimeOffset restored = DateTimeOffset.FromUnixTimeSeconds(seconds);
-// local 與 restored 表示相同時間點；UTC 時刻為 2026-07-01 01:00:00 +00:00。
+`DateTime.Now` 嚴重依賴主機本機時區。當服務搬遷至預設 UTC 的 Linux 容器時，存入資料庫的時間會莫名少 8 小時。
+
+### 坑二：使用 TimeSpan.FromHours(24) 計算跨日排程
+
+夏令時間開始當天只有 23 小時，結束當天有 25 小時。直接累加 24 小時會導致時間漂移或重複執行。
+
+~~~csharp title="Program.cs"
+// ✅ Good：運用 DateTimeOffset、IANA 時區轉換與 TimeProvider
+var provider = TimeProvider.System;
+
+// 1. 取得全局絕對時間點（強制 UTC）
+DateTimeOffset utcNow = new(2026, 10, 10, 3, 26, 0, TimeSpan.Zero);
+Console.WriteLine($"目前 UTC 時間戳: {utcNow:yyyy-MM-ddTHH:mm:ssZ}");
+
+// 2. 依業務指定時區進行展示轉換（支援跨平台 IANA / Windows 時區識別碼）
+string targetTimeZoneId = OperatingSystem.IsWindows() ? "Taipei Standard Time" : "Asia/Taipei";
+TimeZoneInfo localZone = TimeZoneInfo.FindSystemTimeZoneById(targetTimeZoneId);
+DateTimeOffset userLocalTime = TimeZoneInfo.ConvertTime(utcNow, localZone);
+
+Console.WriteLine($"目標時區時間: {userLocalTime:yyyy-MM-dd HH:mm:ss zzz}");
+
+// 3. 純日期使用 DateOnly，免除時區與時間戳干擾
+DateOnly businessDate = DateOnly.FromDateTime(userLocalTime.DateTime);
+Console.WriteLine($"業務結算日: {businessDate:yyyy-MM-dd}");
 ~~~
 
-Unix seconds 與 milliseconds 差 1000 倍；欄位註解及 API 契約要寫清楚單位。不要用目前當地時區去猜一個沒有 offset 的舊字串。
+預期輸出：
+```text
+目前 UTC 時間戳: 2026-10-10T03:26:00Z
+目標時區時間: 2026-10-10 11:26:00 +08:00
+業務結算日: 2026-10-10
+```
 
-## 日光節約時間的缺口與重疊
+## 踩坑與避坑指南
 
-切換 DST 時，有些本地時間不存在，有些會對應到兩個時間點。可用 TimeZoneInfo 的 IsInvalidTime、IsAmbiguousTime 檢查，再依商業規則選擇拒絕、調整或指定 offset。
+* **抽象可測試時間架構（TimeProvider）**：.NET 8+ / .NET 10 引進 `System.TimeProvider`。生產環境注入 `TimeProvider.System`，單元測試時注入 `FakeTimeProvider`，即可精確快轉時間驗證逾時與夏令邊界，徹底告別全域靜態 `DateTime.UtcNow` 難以測試的惡夢。
+* **避坑原則（什麼時候千萬不要用 `DateTimeOffset`？）**：
+  * **純日期（如生日、國定假日）或營業時間（如每日 09:00 開門）**：此類業務語意不屬於「時間軸上的絕對單一瞬間」。若硬帶時區，在不同國家使用者查看時會因時差跨日，應強制採用 .NET 6+ 引進的 `DateOnly` 與 `TimeOnly`。
 
-跨 Windows / Linux 部署時，核對 time zone id 格式、ICU / tzdata 與規則版本；不要自行用固定加減小時取代 TimeZoneInfo。時區規則可能更新，未來排程與歷史顯示要分別設計。
+## 線上排查指令
 
-測試時間相關規則時，注入時鐘或 TimeProvider，涵蓋日界線、DST 與秒 / 毫秒單位，避免依賴測試機器的目前時間與所在地。
+線上檢查主機時區與資料庫時間偏差：
 
-## 套用到電商情境
+```bash
+# 1. 檢視 Linux 容器內部時間與時區設定
+timedatectl || cat /etc/timezone
 
-保存訂單發生時間可用明確 UTC 時間點；展示時依買家時區轉換。促銷排程需要地區時區與 DST 規則，庫存保留到期也要有可測試的時計與重新啟動後策略。單一 UTC offset 不等於完整時區。
-
-[閱讀對應的電商章節](/projects/ecommerce/ordering-inventory/)，把本篇概念接到整個用例。
+# 2. 檢查 PostgreSQL 或 MySQL 欄位型態是否保留 UTC 資訊
+# PostgreSQL: 必須為 timestamptz (timestamp with time zone)
+# MySQL: 推薦 bigint (毫秒戳) 或 UTC datetime
+```
