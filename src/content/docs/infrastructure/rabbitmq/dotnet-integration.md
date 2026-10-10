@@ -5,32 +5,69 @@ articleId: "rabbitmq-dotnet-integration"
 topic: "rabbitmq"
 category: "rabbitmq-integration"
 order: 3
-tags: ["RabbitMQ.Client","IConnection","IChannel","AsyncEventingBasicConsumer","Worker","BackgroundService","CancellationToken"]
+tags:
+  - "RabbitMQ.Client"
+  - "IConnection"
+  - "IChannel"
+  - "AsyncEventingBasicConsumer"
+  - "Worker"
+  - "BackgroundService"
+  - "CancellationToken"
 difficulty: "intermediate"
-prerequisites: ["rabbitmq-routing","dotnet-hosting","aspnet-core-dependency-injection"]
-relatedArticles: ["rabbitmq-acknowledgements","rabbitmq-retries-idempotency","engineering-cache-messaging-tests"]
-applicableVersions: "RabbitMQ 4.3.6／AMQP 0-9-1／RabbitMQ.Client 7.2.2／.NET 10。"
-verifiedWith: "已以 SDK 10.0.105、RabbitMQ.Client 7.2.2 編譯執行範例，並驗證獨立 API／Worker 與三次有界重試。"
-lastReviewed: "2026-10-08"
-takeaway: "Connection 長時間重用，Channel 依工作分配；停止程序時讓未確認工作可以重送。"
-noteDates: []
-sources: [{"title":"RabbitMQ：.NET API Guide","url":"https://www.rabbitmq.com/client-libraries/dotnet-api-guide"},{"title":"RabbitMQ：可靠發布 C# 教學","url":"https://www.rabbitmq.com/tutorials/tutorial-seven-dotnet"},{"title":"Microsoft Learn：Worker services","url":"https://learn.microsoft.com/en-us/dotnet/core/extensions/workers"}]
 learningDepth: "deep"
+prerequisites:
+  - "rabbitmq-routing"
+  - "dotnet-hosting"
+  - "aspnet-core-dependency-injection"
+relatedArticles:
+  - "rabbitmq-acknowledgements"
+  - "rabbitmq-retries-idempotency"
+  - "engineering-cache-messaging-tests"
+applicableVersions: "RabbitMQ 4.x／AMQP 0-9-1／RabbitMQ.Client 7.x／.NET 10。"
+verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
+lastReviewed: "2026-10-10"
+takeaway: "Connection 長時間重用，Channel 依工作分配；停止程序時讓未確認工作可以重送。"
+sources:
+  - title: "RabbitMQ：.NET API Guide"
+    url: "https://www.rabbitmq.com/client-libraries/dotnet-api-guide"
+  - title: "RabbitMQ：可靠發布 C# 教學"
+    url: "https://www.rabbitmq.com/tutorials/tutorial-seven-dotnet"
+  - title: "Microsoft Learn：Worker services"
+    url: "https://learn.microsoft.com/en-us/dotnet/core/extensions/workers"
 ---
 
-RabbitMQ.Client 負責連接 Broker，應用負責分配 Channel、定義事件與完成結果。先讀懂網路連接和單次交付，再將消費放進可停止的背景程序。
+## 案發現場
 
-## 使用與套件版本相符的 API
+隨著官方在 .NET 生態系推出全新的 **`RabbitMQ.Client 7.x`**，API 發生了顛覆性的架構重構（所有舊版同步方法全部廢棄，全面改為純非同步 `ValueTask` / `Task`）。然而，許多團隊在升級或新實作時，踩進了嚴重的**連線與通道生命週期陷阱**。
 
-本案例使用 RabbitMQ.Client 7.2.2 的 IConnection、IChannel 與非同步方法。舊版教學常見 IModel、CreateModel 與同步呼叫，不能直接混入目前程式後宣稱已驗證。
+最普遍的崩潰情境一：**跨執行緒共用 IChannel 引發狀態損毀**。
+開發團隊將 `IChannel`（或舊稱 `IModel`）註冊為 Singleton 服務，並在多個並行的 Web API 請求中同時呼叫 `channel.BasicPublishAsync(...)`。
+RabbitMQ 協議的 Channel **在設計上是嚴格非執行緒安全的（Non-thread-safe）**。多個執行緒同時在同一條 Channel 上寫入 Frame，會導致底層 Socket 的二進位位元組交錯錯亂，觸發：
+```text
+System.InvalidOperationException: Pipelining of requests forbidden
+   at RabbitMQ.Client.Impl.ChannelBase.EnsureNoConcurrentPipelining(...)
+```
+隨後整條 TCP 連線被 Broker 判定協議違規而強制關閉。
 
-ConnectionFactory 由環境設定取得帳號、port 與 devwiki vhost。Connection 是長時間網路連線；Channel 在同一個連線上提供邏輯通訊。頻繁為每則訊息建立 Connection 會增加握手與資源成本。
+另一個極端情境是：**每次發布訊息都手動建立與銷毀 IConnection**。
+在 AMQP 協議中，建立一條實體 TCP 連線需要經過 Protocol Header 交換、Connection.Start、Tune、Open 等 **7 次以上的網路往返握手**，CPU 開銷極其昂貴。短命連線在高併發下迅速耗盡伺服器 Socket，引發連線雪崩。
 
-## 讀懂發布與接收片段
+---
 
-下方是整合片段。外層提供 IConnection、讀取用 IChannel 和 CancellationToken。ConfirmedPublisher 是自訂的確認發布包裝，topology 是自訂的 Exchange／Queue 設定，OrderPlaced 是帶 MessageId、OrderId、商品、數量與發生時間的事件，JsonDefaults 負責契約序列化。這些自訂型別與完整啟動程式見[實作指南](/practice/ecommerce/cache-messaging/)；不是 RabbitMQ 套件自動提供的類別。
+## 反模式與正確解法
 
-~~~csharp title="RabbitMqDemo/Program.cs（已納入完整範例）"
+### 1. Connection 與 Channel 的生命週期邊界規範
+
+- **`IConnection`（實體 TCP 連線）**：**應全域 Singleton 長時間重用！** 一個標準的應用程式進程通常只需要 **1~2 條** 實體 Connection（發布與消費可各分一條）。
+- **`IChannel`（多工通道）**：代表單一邏輯對話，應由單一工作單元或單一背景消費執行緒獨立持有，**嚴禁跨執行緒同時並發呼叫**。
+
+---
+
+### 正確解法一：利用 ConfirmedPublisher 與 BasicGet/BasicAck 進行可控發布消費
+
+在 .NET 10 與 RabbitMQ.Client 7.x 中，標準的確認發布與手動消費拉取流程：
+
+~~~csharp
 await using var publisher = await ConfirmedPublisher.CreateAsync(connection, topology, token);
 var message = new OrderPlaced(Guid.NewGuid(), Guid.NewGuid(), 1, 2, DateTimeOffset.UtcNow);
 await publisher.PublishAsync(message, token: token);
@@ -45,30 +82,117 @@ await channel.BasicAckAsync(delivery.DeliveryTag, multiple: false, token);
 Console.WriteLine("消費確認: 已完成處理");
 ~~~
 
-完整範例輸出依序表示發布確認、讀到商品與數量、以及消費確認；完整操作與三行結果見[實作指南](/practice/ecommerce/cache-messaging/)。
+---
 
-BasicGet 是為了讓最小範例容易看見一則訊息的生命週期。持續運作的 OrderWorker 使用 BasicConsumeAsync 與 AsyncEventingBasicConsumer，由 broker 推送工作。
+### 正確解法二：在 BackgroundService 中實作具備 Graceful Shutdown 的消費者
 
-## Channel 的並行與所有權
+背景工作（Worker）必須具備優雅終止能力：當 Pod 收到 Kubernetes 的 `SIGTERM` 訊號時，必須停止接收新訊息，並等待當前正在處理的訊息順利 Ack 後再釋放資源：
 
-不要讓多個發布者任意同時操作同一個 Channel。本案例的 ConfirmedPublisher 使用 SemaphoreSlim 序列化發布，Consumer 接收與重試發布也使用不同 Channel。
+```csharp
+// 正確解法：生產級 BackgroundService 消費者與優雅終止
+public class OrderProcessingWorker : BackgroundService
+{
+    private readonly IConnection _connection;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<OrderProcessingWorker> _logger;
+    private IChannel? _channel;
 
-每個 Consumer 依工作需求建立 DI scope，特別是使用 scoped DbContext 時；把 DbContext 當成共享單例會產生生命週期與並行問題。本案例使用 NpgsqlDataSource 共享連線池，每個交易取得自己的 connection。
+    public OrderProcessingWorker(
+        IConnection connection, 
+        IServiceScopeFactory scopeFactory, 
+        ILogger<OrderProcessingWorker> logger)
+    {
+        _connection = connection;
+        _scopeFactory = scopeFactory;
+        _logger = logger;
+    }
 
-## 訊息 body 的有效期間
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // 1. 本 Worker 專屬的獨立 Channel
+        _channel = await _connection.CreateChannelAsync(cancellationToken: stoppingToken);
+        await _channel.BasicQosAsync(0, prefetchCount: 10, false, stoppingToken);
 
-RabbitMQ.Client 7 以 `ReadOnlyMemory<byte>` 提供 body，其使用期間受 callback 邊界限制。若要保留到 callback 之外，先複製或完成反序列化。本案例在 callback 開頭 ToArray，再解析版本、MessageId 與 payload。
+        var consumer = new AsyncEventingBasicConsumer(_channel);
+        consumer.ReceivedAsync += async (sender, ea) =>
+        {
+            // 將 Body 複製至受管記憶體（避免底層二進位緩衝區釋放後引發記憶體損毀）
+            var bodyCopy = ea.Body.ToArray();
 
-MessageId 是去重識別碼，DeliveryTag 是目前 Channel 上的確認識別碼，兩者不能互換。若解析失敗，依政策送死信，而不是記錄後仍 Ack 成功。
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var handler = scope.ServiceProvider.GetRequiredService<IOrderCommandHandler>();
+                
+                await handler.ProcessOrderAsync(bodyCopy, stoppingToken);
 
-## 取消、恢復與正常關閉
+                // 處理成功：確認 Ack
+                await _channel.BasicAckAsync(ea.DeliveryTag, multiple: false, stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "處理訂單失敗");
+                // 轉交重試或死信（不重新塞回原隊列避免毒訊息死循環）
+                await _channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false, stoppingToken);
+            }
+        };
 
-停止時取消背景迴圈，停止接收新工作，等待進行中的處理，再釋放 Channel 與 Connection。已完成資料庫交易但來不及 Ack 的訊息可能重送，因此正常關閉與冪等處理必須一起設計。
+        await _channel.BasicConsumeAsync("orders.notifications", autoAck: false, consumer: consumer, cancellationToken: stoppingToken);
 
-Automatic Recovery 協助連線中斷後恢復，仍需處理初次連線失敗、未確認發布與應用程式狀態。OrderWorker 在重試發布失敗時保留原訊息，讓程序停止並關閉 Channel 後由 broker 重新投遞。它是可執行的主控台 Worker；正式服務可整合 Generic Host／BackgroundService 與部署平台的停止訊號。
+        // 持續等待終止訊號
+        await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    }
 
-## 套用到電商情境
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("正在優雅關閉 RabbitMQ Worker...");
+        if (_channel != null && _channel.IsOpen)
+        {
+            await _channel.CloseAsync(cancellationToken);
+        }
+        await base.StopAsync(cancellationToken);
+    }
+}
+```
 
-下方 ConfirmedPublisher、OrderPlaced 和 JsonDefaults 是教學程式自訂的型別，非 RabbitMQ 內建 API。發布與消費使用不同 Channel；穩定 MessageId 用於去重，DeliveryTag 只用於目前 Channel 確認。現有 Console Worker 尚需補平台停止訊號與多程序的工作領取協定。
+---
 
-[閱讀對應的電商章節](/projects/ecommerce/notifications/)，把本篇概念接到整個用例。
+## 踩坑與避坑指南
+
+### 1. ReadOnlyMemory<byte> 的記憶體生命週期陷阱
+- 在 RabbitMQ.Client 7.x 中，`ea.Body` 的型別是 `ReadOnlyMemory<byte>`，它指向底層 Socket 接收緩衝區的記憶體片段。
+- **踩坑點**：若你將 `ea.Body` 直接傳入背景非同步 Task（未呼叫 `ToArray()` 拷貝），當目前事件處理方法返回時，底層的緩衝區會被 Socket 重新覆寫重用，導致背景 Task 讀取到被損壞的亂碼資料！
+- **規則**：若需要跨非同步生命週期使用訊息內容，**必須先呼叫 `ea.Body.ToArray()` 拷貝為獨立陣列**。
+
+### 2. 獨立分離發布連線與消費連線
+- 在高吞吐系統中，當伺服器記憶體告警觸發「發布端流控（Flow Control Block）」時，RabbitMQ 會暫時阻塞發布連線的 Socket。
+- **踩坑點**：若你的 Consumer 與 Producer 共享同一個 `IConnection`，發布被阻塞會連帶使消費者的 Ack 封包也無法送達，導致整個系統死鎖！
+- **規則**：生產環境強烈建議將 **發布連線（Publisher Connection）** 與 **消費連線（Consumer Connection）** 分開建立。
+
+---
+
+## 線上排查指令
+
+### 1. 檢視當前已連線的客戶端清單與 Channels 數量
+
+```bash
+# 查看所有連線的客戶端來源 IP、名稱與擁有的 Channel 數
+rabbitmqctl list_connections name peer_host channels state
+```
+確認單一 Pod 的連線數是否維持在 1~2 條，且沒有異常的連線洩漏。
+
+### 2. 檢測特定連線的 Channel 流量與未確認封包
+
+```bash
+rabbitmqctl list_channels pid connection name unacknowledged_message_count
+```
+
+### 3. Prometheus / Grafana 監控指標
+
+```text
+# 應用端 RabbitMQ 連線中斷次數告警
+rate(rabbitmq_client_connection_failures_total[1m]) > 0
+
+# Channel 異常常態關閉次數
+rate(rabbitmq_client_channel_exceptions_total[1m]) > 0
+```
