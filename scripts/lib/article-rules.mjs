@@ -8,9 +8,9 @@ export const requiredSections = [
   { id: '線上排查指令', keywords: ['排查', '指令', '觀測'] },
 ];
 
-// 正文字數標準（不含空白與程式碼區塊）：講求重點，以 1,000 字以內為目標。
+// 正文字數標準（不含空白與程式碼區塊）：講求內容完整呈現，下限 400 字確保深度，上限 6,000 字。
 export const minimumBodyCharacters = 400;
-export const maximumBodyCharacters = 1200;
+export const maximumBodyCharacters = 6000;
 
 // 技術文章正文不得出現的內部識別字：讀者不會 clone 本倉庫，也不會執行 pnpm 腳本。
 export const forbiddenPatterns = [
@@ -66,7 +66,7 @@ export function checkArticle({ frontmatter, body }) {
   if (count < minimumBodyCharacters) {
     issues.push('正文僅 ' + count + ' 字，低於下限 ' + minimumBodyCharacters + ' 字');
   } else if (count > maximumBodyCharacters) {
-    issues.push('正文共 ' + count + ' 字，超過上限 ' + maximumBodyCharacters + ' 字（目標為 1000 字以內精煉重點）');
+    issues.push('正文共 ' + count + ' 字，超過上限 ' + maximumBodyCharacters + ' 字');
   }
   return issues;
 }

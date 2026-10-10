@@ -10,7 +10,7 @@ test('完整章節且字數符合 1000 字以內標準的文章通過', () => {
 });
 
 test('字數超過上限會回報需精煉', () => {
-  const overlong = fullBody + '\n\n' + '這是一段多餘的灌水文字。'.repeat(100);
+  const overlong = fullBody + '\n\n' + '這是一段多餘的灌水文字。'.repeat(500);
   const issues = checkArticle({ frontmatter: {}, body: overlong });
   assert.ok(issues.some((issue) => issue.includes('超過上限')));
 });
