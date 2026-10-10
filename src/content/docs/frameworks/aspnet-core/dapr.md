@@ -22,80 +22,254 @@ sources:
 
 ## 案發現場
 
-某企業在由私有雲遷移至 GCP 時，數十個 .NET 微服務程式碼中深層混雜了特定的 RabbitMQ SDK、Redis SDK 與自製重試邏輯。更換雲原生訊息隊列時，團隊被迫修改上百處程式碼，耗時兩個月重測相依性；另一端，服務間透過 HTTP 直連調用，在微服務數量增長後，缺乏統一的 mTLS 傳輸加密與分散式追蹤串聯，跨服務排查如同盲人摸象。
+某跨國電商技術團隊在進行多雲架構轉型時（將部分服務由地端遷移至 AWS 與 GCP），遭遇了災難性的相依性泥淖：在過去五年累積的 60 多個 ASP.NET Core 微服務中，程式碼深層散落並綁死了特定的中介軟體客戶端函式庫（如 `RabbitMQ.Client`、`StackExchange.Redis`、`Confluent.Kafka` 以及自製的斷路重試中介軟體）。當架構小組嘗試在雲端將訊息柱列替換為 AWS SQS 或 GCP Pub/Sub 時，發現每個服務都需要修改大量的連線字串解析、異常重試與序列化代碼，歷經兩個月仍無法完成升級，並爆發了多起生產環境版本不相容事故。
 
-根因在於：業務邏輯與具體基礎設施 SDK 形成**強耦合（Tight Coupling）**，未在應用層與中介層間建立標準化的抽象邊界。
+在嘗試引進微服務邊車（Sidecar）執行環境 Dapr（Distributed Application Runtime）後，系統初期又遭遇了新的隱形地雷：在 Kubernetes 節點重啟與滾動更新期間，大量微服務 Pod 在剛啟動的瞬間連續噴出 `System.Net.Http.HttpRequestException: Connection refused (localhost:3500)` 並宣告崩潰重啟，導致服務落入 `CrashLoopBackOff`；而在 Pod 停機時，又因 Sidecar 提早退出，導致尚未落盤的業務事件全數丟失。
+
+經過架構組的深度復盤，這兩起事故反映了現代微服務治理的核心轉折點：
+1. **業務代碼與基礎設施強耦合**：直接在應用程式中引入重型中介軟體 SDK，失去了可移植性與一致的觀測性治理能力。
+2. **對分散式 Sidecar 容器生命週期缺乏時序控制**：忽略了應用程式容器與 `daprd` 邊車容器之間的啟動就緒（Readiness）與優雅停機（Drain）競態條件。
+
+```mermaid
+flowchart TD
+    subgraph DaprPodArchitecture["Kubernetes Pod 邊車架構 (Dapr Sidecar)"]
+        direction TB
+        subgraph AppContainer["ASP.NET Core 應用容器"]
+            BusinessCode["業務領域邏輯 (OrderService)"]
+            DaprSDK["Dapr.AspNetCore SDK"]
+            BusinessCode --> DaprSDK
+        end
+        
+        subgraph DaprdSidecar["Dapr Sidecar 容器 (daprd)"]
+            DaprHttp["本地 HTTP 端點 (localhost:3500)"]
+            DaprGrpc["本地 gRPC 端點 (localhost:50001)"]
+            BuildingBlocks["分散式積木: PubSub / State / Lock / Observability"]
+            DaprHttp & DaprGrpc --> BuildingBlocks
+        end
+        
+        DaprSDK --"零外部 SDK 依賴 (本機跳轉)"--> DaprHttp
+        DaprSDK --"極速二進位通訊"--> DaprGrpc
+    end
+
+    subgraph InfrastructureClouds["多雲/地端 宣告式基礎設施 (零代碼修改切換)"]
+        direction LR
+        BuildingBlocks -.->|"宣告式 YAML"| Redis["Redis State Store"]
+        BuildingBlocks -.->|"宣告式 YAML"| Kafka["Kafka / RabbitMQ PubSub"]
+        BuildingBlocks -.->|"自動注入"| W3CTrace["OpenTelemetry / Jaeger 分散式追蹤"]
+    end
+```
+
+---
 
 ## 致命反模式 vs. 正確解法
 
-```text
-【Dapr Sidecar 微服務架構】
-ASP.NET Core 應用 ──(本機 localhost:3500)──► Dapr Sidecar (daprd)
-                                                   │
-                ┌──────────────────────────────────┴──────────────────────────────────┐
-                ▼                                                                     ▼
-     [狀態元件: Redis / PostgreSQL]                                      [發布訂閱: RabbitMQ / Kafka]
-```
+### 反模式一：在業務微服務中直接依賴特定中介軟體 SDK 與連線池
 
-### 坑一：在各微服務隨處散落具體中介軟體 SDK
+在每個微服務中手動配置 Redis Sentinel、RabbitMQ 連線集區或 Kafka Producer，不僅使得切換基礎設施的代價高不可攀，且每個團隊各自實作的重試策略、指數退避與斷路器各不相同，極易在底層中介軟體抖動時引發重試風暴（Retry Storm）。
 
-微服務直接引用 `RabbitMQ.Client` 或 `StackExchange.Redis`，導致無法零成本切換中介軟體，升級與多雲部署阻力極大。
+### 反模式二：未等待 Dapr Sidecar Outbound 就緒即發起外部呼叫
 
-### 坑二：忽略 Sidecar 啟動順序
+Kubernetes 啟動 Pod 時，應用容器與 Dapr Sidecar 容器是並行啟動的。若 ASP.NET Core 應用在 `Program.cs` 的頂層初始化敘述（如 `builder.Build()` 或 `IHostedService.StartAsync`）中直接呼叫 `DaprClient` 讀取狀態，而此時 `daprd` 尚未完成內部元件載入，將直接引發連線被拒崩潰。
 
-在 Pod 啟動初期，應用程式若在 Dapr Sidecar 尚未完成初始化前發送呼叫，會遭遇 `Connection refused` 崩潰。
+### 正確解法：運用 DaprClient 抽象基礎設施、實踐 CloudEvents 與 Outbound 健康等待
 
-~~~csharp title="Program.cs"
-// ✅ Good：運用 CloudEvents 規範封裝訊息並透過標準抽象通訊
+1. **基礎設施解耦**：所有發布訂閱與狀態儲存一律透過 Dapr 宣告式組件，業務代碼僅依賴微軟官方提供的 `Dapr.AspNetCore`。
+2. **CloudEvents 標準規範**：事件全面採用 CNCF CloudEvents v1.0 格式進行包裹，保障跨語言、跨雲端平臺的事件中繼資料一致性。
+3. **啟動健康檢查**：在服務初始化前，先驗證 `localhost:3500/v1.0/healthz/outbound` 是否就緒。
+
+```csharp
+using System;
+using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
-// 1. 建立符合 CloudEvents v1.0 規格之領域事件
-var cloudEvent = new CloudEventPayload<OrderCreatedData>(
-    Id: Guid.NewGuid().ToString("N"),
-    Source: "commerce/orders-service",
-    Type: "commerce.order.created",
-    Data: new OrderCreatedData(OrderId: 10086, TotalAmount: 599.0m)
-);
+namespace DotNetPerformance.DaprIntegration;
 
-string serializedEvent = JsonSerializer.Serialize(cloudEvent);
-Console.WriteLine($"CloudEvent 規格封裝成功: {serializedEvent.Contains("commerce.order.created")}");
-
-// 2. 模擬 Dapr 訂閱端點接收到事件並解包業務實體
-var receivedEvent = JsonSerializer.Deserialize<CloudEventPayload<OrderCreatedData>>(serializedEvent);
-Console.WriteLine($"成功取得業務訂單編號: {receivedEvent?.Data.OrderId}");
-
-public record OrderCreatedData(int OrderId, decimal TotalAmount);
-
-public record CloudEventPayload<T>(
+/// <summary>
+/// 符合 CNCF CloudEvents v1.0 規範的領域事件包裝
+/// </summary>
+public sealed record CloudEvent<TData>(
     string Id,
     string Source,
     string Type,
-    T Data
-);
-~~~
+    DateTimeOffset Time,
+    string DataContentType,
+    TData Data);
 
-預期輸出：
-```text
-CloudEvent 規格封裝成功: True
-成功取得業務訂單編號: 10086
+/// <summary>
+/// 訂單建立事件業務資料
+/// </summary>
+public sealed record OrderPlacedEvent(string OrderId, string CustomerId, decimal TotalAmount);
+
+/// <summary>
+/// Dapr 啟動就緒防禦管理器
+/// </summary>
+public static class DaprHealthCoordinator
+{
+    /// <summary>
+    /// 等待 Dapr Sidecar Outbound 通訊埠就緒（杜絕啟動期 Connection Refused 崩潰）
+    /// </summary>
+    public static async Task WaitForSidecarReadyAsync(HttpClient httpClient, int maxRetries = 10, int delayMs = 300)
+    {
+        string healthEndpoint = "http://localhost:3500/v1.0/healthz/outbound";
+        Console.WriteLine($"[DaprInit] 開始探測 Dapr Sidecar Outbound 健康狀態: {healthEndpoint}");
+
+        for (int i = 1; i <= maxRetries; i++)
+        {
+            try
+            {
+                // 模擬探針檢測
+                using var response = await httpClient.GetAsync(healthEndpoint);
+                if (response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine("[DaprInit] Dapr Sidecar 已就緒，放行業務通訊。");
+                    return;
+                }
+            }
+            catch (HttpRequestException)
+            {
+                // 在真實容器環境中，Sidecar 尚未啟動會噴出 SocketException，此處安全退避重試
+                Console.WriteLine($"[DaprInit] 探測嘗試 {i}/{maxRetries}：Sidecar 尚未就緒，退避等待...");
+            }
+
+            await Task.Delay(delayMs);
+        }
+
+        Console.WriteLine("[DaprInit] 達到最大重試次數，以模擬環境模式繼續。");
+    }
+}
+
+public static class Program
+{
+    public static async Task Main()
+    {
+        Console.WriteLine("=== ASP.NET Core 與 Dapr 分散式邊車架構整合實測 ===");
+
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };
+        // 1. 執行啟動就緒健康探測防護
+        await DaprHealthCoordinator.WaitForSidecarReadyAsync(httpClient, maxRetries: 2, delayMs: 100);
+
+        // 2. 封裝標準 CloudEvents 訊息
+        var orderEvent = new OrderPlacedEvent("ORD-2026-8888", "CUST-007", 1250.0m);
+        var cloudEvent = new CloudEvent<OrderPlacedEvent>(
+            Id: Guid.CreateVersion7().ToString(),
+            Source: "services/orders-api",
+            Type: "ecommerce.order.placed.v1",
+            Time: DateTimeOffset.UtcNow,
+            DataContentType: "application/json",
+            Data: orderEvent);
+
+        string jsonPayload = JsonSerializer.Serialize(cloudEvent, new JsonSerializerOptions { WriteIndented = true });
+        Console.WriteLine($"[CloudEvents 封裝成功]\n{jsonPayload}");
+
+        // 3. 模擬消費者端點反序列化並執行冪等性校驗
+        var receivedEvent = JsonSerializer.Deserialize<CloudEvent<OrderPlacedEvent>>(jsonPayload);
+        Console.WriteLine($"[消費端解包成功] 事件 ID: {receivedEvent?.Id}, 業務訂單: {receivedEvent?.Data.OrderId}");
+    }
+}
 ```
+
+預期控制台輸出：
+
+```text
+=== ASP.NET Core 與 Dapr 分散式邊車架構整合實測 ===
+[DaprInit] 開始探測 Dapr Sidecar Outbound 健康狀態: http://localhost:3500/v1.0/healthz/outbound
+[DaprInit] 探測嘗試 1/2：Sidecar 尚未就緒，退避等待...
+[DaprInit] 探測嘗試 2/2：Sidecar 尚未就緒，退避等待...
+[DaprInit] 達到最大重試次數，以模擬環境模式繼續。
+[CloudEvents 封裝成功]
+{
+  "Id": "01925b6a-8b1e-72c0-8a19-9f4a18012345",
+  "Source": "services/orders-api",
+  "Type": "ecommerce.order.placed.v1",
+  "Time": "2026-10-10T11:04:30.123+00:00",
+  "DataContentType": "application/json",
+  "Data": {
+    "OrderId": "ORD-2026-8888",
+    "CustomerId": "CUST-007",
+    "TotalAmount": 1250.0
+  }
+}
+[消費端解包成功] 事件 ID: 01925b6a-8b1e-72c0-8a19-9f4a18012345, 業務訂單: ORD-2026-8888
+```
+
+---
 
 ## 踩坑與避坑指南
 
-* **CloudEvents 標準封裝**：Dapr 的 Pub/Sub 機制預設遵循 CNCF CloudEvents 規範。訊息會被外包一層中繼資訊（包含 `id`、`source`、`type`、`data`）。在 ASP.NET Core 接收端，建議使用 Dapr 提供之 `[Topic("pubsub-name", "topic-name")]` 屬性，框架會自動將 `data` 反序列化為你的 DTO。
-* **等待 Sidecar 就緒（Outbound Health Check）**：
-  若服務在啟動初始化時即需透過 Dapr 讀取資料庫狀態，應先輪詢本機健康端點 `http://localhost:3500/v1.0/healthz/outbound`，確認 Sidecar 已連通後再繼續執行。
-* **避坑原則（什麼時候千萬不要引入 Dapr？）**：
-  * **極致亞毫秒級（Sub-millisecond）低延遲服務**：Dapr 透過本機 localhost HTTP/gRPC 多了一層行程間轉發，會增加約 1ms~2ms 的跳轉延遲。對於追求微秒級極限的高頻交易或單體架構，引進 Dapr 是過度設計。
+### 1. Dapr Pub/Sub 整合與端點宣告模式
+
+在 ASP.NET Core 中整合 Dapr Pub/Sub 時，官方推薦採用宣告式端點路由：
+
+```csharp
+// Program.cs
+var app = builder.Build();
+
+// 1. 啟用 CloudEvents 中介軟體（自動解析 Content-Type: application/cloudevents+json）
+app.UseCloudEvents();
+
+// 2. 註冊 Dapr 訂閱中繼資料端點（提供給 daprd 探索）
+app.MapSubscribeHandler();
+
+// 3. 透過 [Topic] 綁定特定發布訂閱元件與主題
+app.MapPost("/orders/subscriber", [Topic("order-pubsub", "orders.topic")] (OrderPlacedEvent order) =>
+{
+    // Dapr 中介軟體已自動從 CloudEvents.Data 中解包出強型別 DTO
+    Console.WriteLine($"處理訂單: {order.OrderId}");
+    return Results.Ok();
+});
+```
+
+### 2. At-Least-Once（至少一次）投遞與冪等性防護
+
+Dapr 的發布訂閱保證是**至少一次（At-Least-Once）投遞**。當網路抖動、ACK 逾時或 Pod 重新調度時，同一則訊息可能會被重複投遞給消費者：
+- **避坑原則**：消費端必須實作**冪等性檢查（Idempotency Guard）**。利用 CloudEvent 的唯一 `Id` 或業務主鍵（如 `OrderId`），在資料庫中使用唯一索引或在 Redis 中進行分散式鎖（SETNX）查驗，若已處理過則直接返回 HTTP 200，杜絕重複扣款。
+
+### 3. Kubernetes 優雅停機（Graceful Shutdown）順序陷阱
+
+當 Pod 被終止時，Kubernetes 會同時向所有容器發送 `SIGTERM`。若 `daprd` Sidecar 比 ASP.NET Core 應用程式先退出，應用程式正在處理中的請求在試圖呼叫 Dapr 寫入狀態或發布完成事件時將全數失敗。
+- **解法**：在 Kubernetes Pod YAML 中配置預先停止鉤子（`preStop`）或宣告 Dapr App-Health 檢測，確保 `daprd` 在 ASP.NET Core 應用排空（Drain）所有請求前維持運作。
+
+---
 
 ## 線上排查指令
 
-檢查 Dapr Sidecar 狀態與中介元件：
+### 1. 檢視 Kubernetes 叢集中的 Dapr 狀態與組件
+
+確認 Sidecar 注入與中介軟體元件是否成功載入：
 
 ```bash
-# 1. 檢查 Kubernetes 叢集中所有 Dapr 注入的 Pod 狀態
+# 1. 檢查叢集中所有 Dapr 邊車的運行狀態與版本
 dapr status -k
 
-# 2. 檢視特定微服務的 Dapr Sidecar 容器日誌
-kubectl logs <pod-name> -c daprd --tail=50
+# 2. 列出當前 Namespace 下所有已註冊的 Dapr 元件（PubSub, StateStore 等）
+dapr components -k
+
+# 3. 檢查特定微服務的 Sidecar 詳細組態與記憶體佔用
+kubectl describe pod <pod-name> | grep -A 10 "daprd"
+```
+
+### 2. 即時分析 Dapr Sidecar 容器日誌
+
+排查元件連線逾時、Redis 認證失敗或 Pub/Sub 訂閱異常：
+
+```bash
+# 追蹤 daprd 容器的標準輸出日誌
+kubectl logs <pod-name> -c daprd -f --tail=100
+
+# 搜尋特定錯誤日誌關鍵字（如元件加載失敗或健康檢查失敗）
+kubectl logs <pod-name> -c daprd | grep -E "error|failed to load component"
+```
+
+### 3. 本地手動探測 Dapr 端點連通性
+
+在 Pod 內部除錯時直接驗證 Dapr HTTP 介面：
+
+```bash
+# 檢查 Dapr Outbound 就緒狀態（回傳 204 No Content 代表正常就緒）
+curl -i http://localhost:3500/v1.0/healthz/outbound
+
+# 檢查 Dapr 探索到的應用程式訂閱清單
+curl -s http://localhost:3500/dapr/subscribe | jq .
 ```
