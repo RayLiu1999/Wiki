@@ -22,88 +22,190 @@ sources:
 
 ## 案發現場
 
-某電商平台的商品中心為了彈性支援不同品類的自訂規格（如顏色、尺寸、產地），工程師在實體中定義了一個 `ProductDetail` 物件，並在 EF Core 使用自訂 `ValueConverter` 透過 `JsonSerializer` 序列化成字串存進資料庫的 `varchar(max)` 欄位。上線後行銷團隊發起「篩選紅色保溫杯」的查詢，資料庫伺服器 I/O 瞬間 100% 爆滿，單次查詢耗時超過 12 秒！
+某快速擴張的電商平台商品中心，為了解決各商品分類自訂規格（如手機的「處理器/記憶體」、衣服的「顏色/尺碼」）不斷變化的痛點，工程師決定引入「半結構化」儲存架構：在 `Product` 實體上宣告一個自訂的 C# 規格物件 `ProductSpecification`，並在 Entity Framework Core 中註冊自訂的 `ValueConverter`，利用 `System.Text.Json` 將其序列化為字串存入資料庫的 `nvarchar(max)` 或 `text` 欄位中。
 
-排查 SQL 執行計畫驚覺：因為使用了自訂字串 ValueConverter，EF Core 根本無法理解 JSON 內部結構，LINQ 的 `Where(p => p.Detail.Color == "Red")` 無法轉譯為資料庫的原生 JSON 查詢函式，而是觸發了整張商品表的**全表循序掃描（Full Table Scan）**！若在早期版本甚至會將百萬筆商品全數撈回記憶體做 Client Evaluation，釀成災難性 OOM。
+這套架構上線初期運作順暢，直到行銷團隊推出了一次「紅色系商品專案促銷」。前端發起了一筆看似簡單的條件查詢：`Where(p => p.Specification.Color == "Red")`。查詢發出後，資料庫伺服器的磁碟 I/O 利用率瞬間飆升至 100%，CPU 持續滿載，單次查詢耗時長達 14 秒！多筆請求直接引發連鎖超時崩潰。
+
+DBA 截取 SQL 執行計畫後大驚失色：由於開發者使用了自訂的黑盒字串 `ValueConverter`，EF Core 的 SQL 轉譯器完全無法理解該欄位內部的 JSON 階層結構！LINQ 條件無法被轉譯為資料庫原生的 JSON 提取函式，而是被迫生成了毀滅性的全表模糊搜尋：`WHERE [Specification] LIKE '%"Color":"Red"%'`，強迫資料庫對數百萬行商品進行痛苦的**全表循序掃描（Full Table Scan）**！
+
+更令團隊崩潰的另一起事故發生在購物車模組：工程師使用 `ValueConverter` 將標籤清單 `List<string>` 轉換為逗號分隔字串。然而在使用者修改購物車清單（呼叫 `cart.Tags.Add("VIP")`）並呼叫 `SaveChanges()` 後，系統完全沒有報錯，但新標籤卻**神秘地消失了**！資料庫中依舊是舊的字串！排查發現：由於未配置 `ValueComparer`，EF Core 的變更追蹤器比對了物件記憶體位址，誤判為「實體未曾修改」，將使用者的異動**直接靜默丟棄**！
+
+```mermaid
+flowchart TD
+    subgraph ValueConverterBlackBox["自訂 ValueConverter：查詢轉譯黑盒與全表掃描"]
+        direction TB
+        LINQ1["LINQ 查詢: Where(p => p.Spec.Color == 'Red')"] --> Parser["EF Core LINQ 轉譯器"]
+        Parser --> BlackBox["遭遇自訂 ValueConverter (視為不透明文字字串)"]
+        BlackBox --> BadSQL["生成低效模糊比對: WHERE Spec LIKE '%Color:Red%'<br/>(無法使用 B-Tree / GIN 索引)"]
+        BadSQL --> Scan["💥 觸發數百萬行全表循序掃描 (Disk I/O 100% 爆滿)"]
+    end
+
+    subgraph NativeToJsonRevolution["EF Core 8/10 原生 ToJson() 欄位下推"]
+        direction TB
+        LINQ2["LINQ 查詢: Where(p => p.Spec.Color == 'Red')"] --> ToJsonParser["原生 JSON 模型剖析器"]
+        ToJsonParser --> PushdownSQL["SQL 條件精準下推:<br/>PostgreSQL: WHERE Spec->>'Color' = 'Red'<br/>SQL Server: WHERE JSON_VALUE(Spec, '$.Color') = 'Red'"]
+        PushdownSQL --> IndexHit["⚡ 命中 GIN / 函數索引，常數級毫秒檢索！"]
+    end
+```
+
+---
 
 ## 致命反模式 vs. 正確解法
 
-```text
-【自訂 ValueConverter vs. 原生 ToJson 查詢轉譯差異】
-[❌ 自訂 ValueConverter] 
-LINQ: Where(p => p.Detail.Color == "Red")
-SQL 轉譯失敗 ──► 強制全表掃描 WHERE Detail LIKE '%"Color":"Red"%' 或 Client 評估 (無索引可用)
+### 反模式一：使用不透明的自訂字串 `ValueConverter` 儲存結構化物件
 
-[✅ EF Core 原生 ToJson()]
-LINQ: Where(p => p.Detail.Color == "Red")
-SQL 成功下推 ──► PostgreSQL: WHERE "Detail"->>'Color' = 'Red' (支援 GIN 索引快速檢索)
-```
+`ValueConverter` 的底層定位是**標量數值（Scalar Value）的儲存轉譯**（例如將 C# `DateTime` 轉換為 Unix 毫秒 `long`，或將自訂強型別識別碼 `OrderId` 轉換為 `Guid`）。若將其濫用為多欄位物件或 JSON 字典的序列化工具：
+- EF Core 的查詢提供者無法解析中繼資料模型。
+- 對子屬性的任何過濾、排序或投影，皆無法生成結構化 SQL 語法，只能退化為效能低劣的 `LIKE` 模糊比對或直接擲出無法轉譯例外。
 
-### 坑一：使用黑盒 ValueConverter 儲存結構化資料
+### 反模式二：轉換可變集合（Mutable Collections）未配置 `ValueComparer`
 
-自訂 ValueConverter 對 EF Core 查詢提供者而言是「不透明的黑盒」，任何對內部子屬性的條件過濾都無法生成對應的資料庫查詢語句。
+當使用值轉換器將可變型別（如 `List<T>`、`Dictionary<TKey, TValue>` 或可變自訂類別）存為資料庫字串時：
+- EF Core 的 `ChangeTracker` 預設採用**參考相等性比對（Reference Equality）**。
+- 當你在程式碼中修改集合內部元素（如 `tags.Add("Promo")`）時，集合物件本身的記憶體位址並沒有改變。
+- 在呼叫 `SaveChangesAsync()` 時，變更追蹤器比對記憶體指標一致，判定實體處於 `Unchanged` 狀態，**你的修改將被靜默忽略，資料直接遺失**！
 
-### 坑二：轉換可變集合未配置 ValueComparer
+### 正確解法：全面擁抱 EF Core 原生 `ToJson()` 欄位映射，並為可變轉換配置 `ValueComparer`
 
-若將 `List<string>` 以 Converter 存為逗號分隔字串，呼叫 `list.Add("newItem")` 後執行 `SaveChanges()`，EF Core 的變更追蹤器預設比對物件記憶體指標（Reference Equality），判定物件未改變，**變更直接被靜默丟棄，資料完全沒有寫入資料庫！**
+自 EF Core 8 起，微軟正式引入了革命性的 **原生 JSON 欄位支援（`ToJson()`）**。它將自訂物件視為 Owned Entity，並在資料庫端直接映射為原生 JSON 儲存型別（如 PostgreSQL `jsonb` 或 SQL Server `JSON`）。這使得 LINQ 條件能夠被完美轉譯為資料庫的 JSON 提取運算子，享受索引加速。若必須使用自訂可變型別轉換，則必須配對配置 `ValueComparer`。
 
-~~~csharp title="Program.cs"
-// ✅ Good：使用 EF Core 8/10 原生 ToJson 欄位映射與列舉字串轉換規格
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata.Builders;
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
-Console.WriteLine("展示 EF Core 原生 JSON 欄位與列舉映射模型");
+namespace DotNetPerformance.DataAccess;
 
-var modelBuilder = new ModelConfigurationDemo();
-modelBuilder.ConfigureModel();
-
-Console.WriteLine("型別映射配置合規：支援 SQL JSON 查詢下推與嚴格字串枚舉");
-
-public sealed class ModelConfigurationDemo
+/// <summary>
+/// 商品規格複合型別（原生 ToJson 映射載體）
+/// </summary>
+public sealed class ProductSpecification
 {
-    public void ConfigureModel()
-    {
-        // 1. 原生 JSON 欄位映射：支援 SQL JSON_EXTRACT / ->> 運算子下推
-        // builder.OwnsOne(p => p.Detail, b => b.ToJson());
-        Console.WriteLine("已宣告 OwnsOne(p => p.Detail, b => b.ToJson())");
+    public string Color { get; set; } = string.Empty;
+    public string Size { get; set; } = string.Empty;
+    public int WeightGrams { get; set; }
+}
 
-        // 2. Enum 存為字串並設定精確長度，兼具可讀性與索引緊湊度
-        // builder.Property(p => p.Status).HasConversion<string>().HasMaxLength(20);
-        Console.WriteLine("已宣告 Status 枚舉存為 varchar(20)");
+/// <summary>
+/// 標籤集合深層比較器（防範 ValueConverter 變更被靜默丟棄）
+/// </summary>
+public static class TagCollectionComparerFactory
+{
+    /// <summary>
+    /// 建立針對 List<string> 的生產級 ValueComparer
+    /// </summary>
+    public static ValueComparer<List<string>> CreateListStringComparer()
+    {
+        return new ValueComparer<List<string>>(
+            // 1. 相等性比對邏輯：逐元素內容比對，而非比對記憶體指標
+            equalsExpression: (c1, c2) => (c1 == null && c2 == null) || (c1 != null && c2 != null && c1.SequenceEqual(c2)),
+            // 2. 雜湊碼產生邏輯：結合所有元素的 HashCode
+            hashCodeExpression: c => c.Aggregate(0, (hash, item) => HashCode.Combine(hash, item.GetHashCode())),
+            // 3. 快照深拷貝邏輯：載入時建立全新的副本，確保原始值不被污染
+            snapshotExpression: c => c.ToList());
     }
 }
-~~~
 
-預期輸出：
-```text
-展示 EF Core 原生 JSON 欄位與列舉映射模型
-已宣告 OwnsOne(p => p.Detail, b => b.ToJson())
-已宣告 Status 枚舉存為 varchar(20)
-型別映射配置合規：支援 SQL JSON 查詢下推與嚴格字串枚舉
+public static class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine("=== EF Core 型別映射、ToJson 與 ValueComparer 防禦實測 ===");
+
+        // 1. 驗證 ValueComparer 深度比對邏輯
+        var comparer = TagCollectionComparerFactory.CreateListStringComparer();
+        var originalList = new List<string> { "Electronics", "FlashSale" };
+        var snapshotList = comparer.Snapshot(originalList);
+
+        Console.WriteLine($"[快照建立] 快照物件是否為獨立副本 (ReferenceEquals == false): {!ReferenceEquals(originalList, snapshotList)}");
+
+        // 模擬使用者修改原集合內容
+        originalList.Add("FreeShipping");
+
+        // 驗證 ChangeTracker 是否能精確捕捉到內容異動
+        bool isChanged = !comparer.Equals(originalList, snapshotList);
+        Console.WriteLine($"[變更偵測] 偵測到內部元素異動: {isChanged} (成功防禦變更靜默遺失！)");
+
+        // 2. 原生 ToJson 欄位結構宣告語意展示
+        Console.WriteLine("\n[原生 ToJson 配置語意]");
+        Console.WriteLine("  modelBuilder.Entity<ProductItem>().OwnsOne(p => p.Spec, b => b.ToJson());");
+        Console.WriteLine("  -> 支援 SQL 條件下推: WHERE Spec->>'Color' = 'Red' (PostgreSQL)");
+        Console.WriteLine("  -> 支援 SQL 條件下推: WHERE JSON_VALUE(Spec, '$.Color') = 'Red' (SQL Server)");
+    }
+}
 ```
+
+預期控制台輸出：
+
+```text
+=== EF Core 型別映射、ToJson 與 ValueComparer 防禦實測 ===
+[快照建立] 快照物件是否為獨立副本 (ReferenceEquals == false): True
+[變更偵測] 偵測到內部元素異動: True (成功防禦變更靜默遺失！)
+
+[原生 ToJson 配置語意]
+  modelBuilder.Entity<ProductItem>().OwnsOne(p => p.Spec, b => b.ToJson());
+  -> 支援 SQL 條件下推: WHERE Spec->>'Color' = 'Red' (PostgreSQL)
+  -> 支援 SQL 條件下推: WHERE JSON_VALUE(Spec, '$.Color') = 'Red' (SQL Server)
+```
+
+---
 
 ## 踩坑與避坑指南
 
-* **可變物件的救星：`ValueComparer<T>`**：
-  若非得使用自訂 Converter 儲存物件（如自訂字串陣列），必須在 ModelBuilder 中附加 `HasConversion(converter, new ValueComparer<List<string>>((c1, c2) => c1.SequenceEqual(c2), ...))`，告訴 Change Tracker 如何以深層內容比對變更。
-* **原生 ToJson() 的優勢**：
-  EF Core 8+ / 10 支援將子實體或集合宣告為 `ToJson()`。在 PostgreSQL 會生成原生 `jsonb` 欄位，在 SQL Server 生成原生 `JSON` 型別，LINQ 查詢可直接將屬性存取下推為資料庫的 JSON 運算子，並能建立 GIN / 函數索引。
-* **避坑原則（什麼時候千萬不要使用 JSON 欄位？）**：
-  * **需要維持強外鍵約束與交易一致性的核心關聯**：例如「訂單」與「買家」、「訂單」與「支付流水」。若將支付狀態硬塞在訂單 JSON 裡，將失去關聯資料庫的 Referential Integrity 級聯防護，並使跨表統計分析效能劇烈下降。
+### 1. Enum（列舉）欄位儲存的最佳實務：整數 vs. 字串
 
-## 線上排查指令與監控指標
+在實體中定義 `OrderStatus` 列舉時，儲存策略存在兩難：
+- **預設存為整數（`int`）**：儲存緊湊（4 bytes），但若未來工程師在列舉中間插入新成員（如在 `Pending(0)` 與 `Paid(1)` 之間插入 `Processing`），資料庫中已儲存的整數映射將**全部錯位**，造成嚴重的資料語意損毀！
+- **存為字串（`HasConversion<string>()`）**：
+  具備最高的向前相容性與可讀性，但必須宣告長度限制：
+  ```csharp
+  // 最佳配置：存為字串但嚴格限制長度為 32 字元，防止生成未約束的 nvarchar(max)
+  builder.Property(o => o.Status)
+      .HasConversion<string>()
+      .HasMaxLength(32)
+      .IsUnicode(false); // 在 SQL Server 生成 ASCII varchar(32)，節省 50% 儲存空間
+  ```
 
-線上檢查未轉譯查詢與全表掃描：
+### 2. DateTimeOffset 與 UTC 儲存的轉換陷阱
+
+在跨資料庫部署時，若將 `DateTimeOffset` 存入只支援普通 `datetime` 的資料庫（如 MySQL 或 SQLite），必須配置轉換器確保寫入與讀出時一律強制對齊為 UTC：
+
+```csharp
+builder.Property(e => e.CreatedAt)
+    .HasConversion(
+        v => v.ToUniversalTime(),
+        v => v.ToUniversalTime());
+```
+若缺少該轉換，在跨時區伺服器查詢時，會因遺失 `Offset` 位移量而產生 8 小時的計算時間差。
+
+### 3. 何時不該使用 JSON 欄位（`ToJson`）？
+
+- **需要強外鍵約束（Foreign Key Constraints）的核心實體**：若將子訂單或支付交易塞入訂單 JSON 內部，資料庫無法為其建立外鍵保護，且在進行多維度統計聚合（`GROUP BY`）時效能遠遜於標準正規化關聯表。
+- **高頻獨立修改子屬性**：若資料頻繁只修改 JSON 內部的某個微小屬性，資料庫仍必須重寫整個 JSON 文件的二進位頁面，增加 WAL 寫入放大。
+
+---
+
+## 線上排查指令
+
+### 1. 檢驗 PostgreSQL JSON 查詢是否正確命中 GIN 索引
+
+確認 LINQ 是否成功下推為原生 JSON 運算子：
+
+```sql
+-- 檢驗查詢執行計畫是否走 Bitmap Index Scan 命中 GIN 索引，而非 Seq Scan 全表掃描
+EXPLAIN (ANALYZE, BUFFERS) 
+SELECT * FROM "Products" 
+WHERE "Spec"->>'Color' = 'Red';
+```
+
+若輸出顯示 `Seq Scan on Products`，代表缺乏 GIN 索引或運算子未正確下推。
+
+### 2. 檢索應用程式日誌中無法轉譯 SQL 的警告
+
+確認是否在 LINQ 中呼叫了未受支援的 C# 運算：
 
 ```bash
-# 1. 檢視 PostgreSQL JSON 查詢是否命中 GIN 索引
-EXPLAIN (ANALYZE, BUFFERS) 
-SELECT * FROM "Products" WHERE "Detail"->>'Color' = 'Red';
-
-# 2. 檢測全表掃描比率 (Seq Scans) 在 Grafana 的 PromQL
-rate(pg_stat_user_tables_seq_scan[5m]) / 
-(rate(pg_stat_user_tables_seq_scan[5m]) + rate(pg_stat_user_tables_idx_scan[5m]))
-
-# 3. 檢查 EF Core 是否記錄了無法轉譯 SQL 的警告
-grep -i "could not be translated" /var/log/app/*.log | tail -n 20
+# 抓取 EF Core 由於無法轉譯而引發的警告日誌
+grep -i -E "could not be translated|ClientEvaluation" /var/log/app/*.log | tail -n 20
 ```
