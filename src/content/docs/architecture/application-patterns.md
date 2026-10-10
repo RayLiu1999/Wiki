@@ -5,50 +5,207 @@ articleId: "architecture-application-patterns"
 topic: "architecture"
 category: "application-patterns"
 order: 2
-tags: ["Repository", "Unit of Work", "Mediator", "CQRS", "Command", "Query", "Handler", "DTO", "Validator"]
+tags:
+  - "Repository"
+  - "Unit of Work"
+  - "Mediator"
+  - "CQRS"
+  - "Command"
+  - "Query"
+  - "Handler"
+  - "DTO"
+  - "Validator"
 difficulty: "intermediate"
-prerequisites: ["architecture-domain-modeling"]
-relatedArticles: ["data-access-transactions", "data-access-ef-core", "engineering-business-tests", "aspnet-core-model-binding", "architecture-outbox-inbox", "architecture-communication-boundaries"]
+learningDepth: "deep"
+prerequisites:
+  - "architecture-domain-modeling"
+relatedArticles:
+  - "data-access-transactions"
+  - "data-access-ef-core"
+  - "engineering-business-tests"
+  - "aspnet-core-model-binding"
+  - "architecture-outbox-inbox"
+  - "architecture-communication-boundaries"
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
 verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-08"
+lastReviewed: "2026-10-10"
 takeaway: "模式用來釐清責任；CQRS 不要求分開資料庫，Mediator 也不會自動提供交易。"
-noteDates: ["2026-05-25", "2026-05-28", "2026-06-09", "2026-10-05"]
-sources: [{"title": "Microsoft Learn：CQRS", "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs"}, {"title": "Microsoft Learn：實作 Repository 與 Unit of Work", "url": "https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/infrastructure-persistence-layer-implementation"}]
-learningDepth: "deep"
+sources:
+  - title: "Microsoft Learn：CQRS"
+    url: "https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs"
+  - title: "Microsoft Learn：實作 Repository 與 Unit of Work"
+    url: "https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/infrastructure-persistence-layer-implementation"
 ---
 
-Repository、Unit of Work 與 CQRS 各表達資料或用例邊界。選擇這些模式前，先說明建立訂單和讀取商品各需要什麼能力，而不是每張表都套同一套類別。
+## 案發現場
 
-## 一個用例的閱讀順序
+在 .NET 專案中，幾乎所有工程師都曾見過以下這種「經典的過度封裝反模式」：
 
-以「確認訂單」為例：API 接收 DTO，將資料轉成 Command；Validator 檢查輸入契約；Handler 載入 Aggregate，呼叫 Confirm 行為，最後提交 Unit of Work。Domain 在 Confirm 中維持規則，而不是相依每個呼叫端先做驗證。
+開發者定義了泛型倉儲介面：
+```csharp
+public interface IGenericRepository<T> where T : class
+{
+    IQueryable<T> GetAll();
+    Task<T?> GetByIdAsync(object id);
+    Task AddAsync(T entity);
+    Task UpdateAsync(T entity);
+    Task DeleteAsync(object id);
+}
+```
+宣稱的理由通常是：「為了將業務邏輯與 EF Core 解耦，方便未來把資料庫從 SQL Server 換成 MongoDB 或 PostgreSQL，並且方便寫 Mock 單元測試」。
 
-| 名稱 | 責任 |
-| --- | --- |
-| Command | 表達修改意圖，可帶回處理結果 |
-| Query | 讀取資料，避免偷偷改商業狀態 |
-| Handler | 協調一個用例 |
-| DTO | 傳輸契約，不必等於資料表或 Entity |
-| Validator | 格式、必要欄位及輸入條件 |
-| Repository | 以模型語意存取 Aggregate |
-| Unit of Work | 管理一組資料變更的提交邊界 |
-| Mediator | 將請求分派給處理者及其 pipeline |
+然而在真實維護中，慘況迅速顯現：
+1. **抽象洩漏**：`GetAll()` 回傳了 `IQueryable<T>`。所有複雜的 `Where`、`Include`、`OrderBy` 依然由 Service 層拼湊。這意味著 Service 層依然深深依賴 LINQ-to-Entities 的 SQL 轉譯行為，換資料庫的承諾從第一天起就是謊言。
+2. **效能災難**：因為包了一層 `IGenericRepository`，開發者無法在倉儲層精確控制 `AsSplitQuery`、`AsNoTracking` 或自訂 SQL 批次。
+3. **偽 CQRS 泥淖**：團隊決定引入 CQRS（命令查詢職責分離），卻誤信網路教學，立刻搞出兩個實體資料庫（一個寫庫，一個讀庫），結果為了解決兩庫之間的非同步同步延遲，整整耗費三個月排查「剛下單卻查不到」的幽靈 Bug。
 
-## CQRS 可從同一個資料庫開始
+---
 
-讀取與寫入分開模型與責任，就可以是一種 CQRS。查詢可直接用 EF projection 或 Dapper 取得 DTO，寫入維持 Aggregate 規則；不需要一開始就加 Event Sourcing、訊息佇列或兩套資料庫。
+## 反模式與正確解法
 
-若後來引入獨立 read model，需接受資料延遲並設計同步、重建與故障恢復。Event Sourcing 是另一個決策，不是 CQRS 的必要條件。
+### 1. EF Core 本身就是 Repository 與 Unit of Work
 
-## 不要重複包裝卻沒有增加語意
+必須正視一個技術事實：
+- **`DbSet<T>` 本身就是 Repository**：它提供對特定實體集合的查詢與變更追蹤。
+- **`DbContext` 本身就是 Unit of Work**：它維護記憶體中的異動清單，並在呼叫 `SaveChangesAsync()` 時以單一資料庫交易原子提交。
 
-DbContext 已具工作單位與資料集合能力；額外 Repository 應提供 Aggregate 邊界或可測試的業務 port，而不是只是把所有 DbSet 方法重新命名。任意回傳 IQueryable，也可能把 provider、scope 與查詢成本洩漏到上層。
+在 `DbContext` 外面再機械性地包一層 1:1 的 `GenericRepository<T>` 與 `IUnitOfWork`，大多只是無謂的重複轉發。
 
-Mediator pipeline 可加入 logging、validation 或 transaction 行為，但必須明確實作與測試；不會因為使用套件就自動具有原子性。外部 HTTP、寄信與資料庫提交不會自然包含在同一個本地交易中。
+---
 
-## 套用到電商情境
+### 反模式一：Generic Repository 暴露 IQueryable
 
-建立訂單協調規則與提交；商品查詢可以直接投影 DTO。CQRS 可以先在同一資料庫分開讀寫模型，未必要建立兩個服務。若 EF Core 已提供適合的工作單元，不必再包一層只轉呼叫而沒有語意的介面。
+若倉儲介面暴露 `IQueryable<T>`，資料庫查詢邏輯將無節制地滲透並散落至全系統任何角落，無法在單一地方進行索引審查或查詢優化。
 
-[閱讀對應的電商章節](/projects/ecommerce/ordering-inventory/)，把本篇概念接到整個用例。
+### 正確解法一：以 Aggregate Root 為邊界的語意化倉儲（Semantic Repository）
+
+倉儲介面應**完全依附於 Aggregate Root**，方法名稱應直接體現業務語意，且永遠只回傳已完成評估的領域實體或唯讀資料（Task<T>，絕不回傳 IQueryable）：
+
+```csharp
+// 正確解法：語意化倉儲介面（純領域語意，零抽象洩漏）
+public interface IOrderRepository
+{
+    Task<Order?> GetByIdForUpdateAsync(Guid id, CancellationToken ct);
+    Task<IReadOnlyList<Order>> GetPendingPaymentOrdersOlderThanAsync(DateTimeOffset thresholdUtc, CancellationToken ct);
+    Task AddAsync(Order order, CancellationToken ct);
+}
+
+// 實作層：在內部精準封裝 EF Core 的查詢優化與追蹤行為
+public class OrderRepository : IOrderRepository
+{
+    private readonly AppDbContext _db;
+
+    public OrderRepository(AppDbContext db) => _db = db;
+
+    public async Task<Order?> GetByIdForUpdateAsync(Guid id, CancellationToken ct)
+    {
+        // 內部決定載入策略：包含明細並保持追蹤
+        return await _db.Orders
+            .Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == id, ct);
+    }
+
+    public async Task<IReadOnlyList<Order>> GetPendingPaymentOrdersOlderThanAsync(
+        DateTimeOffset thresholdUtc, 
+        CancellationToken ct)
+    {
+        return await _db.Orders
+            .AsNoTracking()
+            .Where(o => o.Status == OrderStatus.PendingPayment && o.CreatedAt < thresholdUtc)
+            .ToListAsync(ct);
+    }
+
+    public async Task AddAsync(Order order, CancellationToken ct) =>
+        await _db.Orders.AddAsync(order, ct);
+}
+```
+
+---
+
+### 反模式二：無痛點地盲目引入跨庫 CQRS
+
+為了 CQRS，將讀取端搬到 Elasticsearch 或另一個 Redis 庫，卻為了維持資料一致性搞出複雜的補償邏輯。
+
+### 正確解法二：同庫輕量級 CQRS（Command / Query 路徑分離）
+
+CQRS 的核心精髓是**職責分離（Separation of Concerns）**，**不需要拆分實體資料庫！**
+- **Command（寫入路徑）**：注重商業不變量與狀態一致性，透過 Aggregate 載入、執行領域方法、由 EF Core 交易提交。
+- **Query（讀取路徑）**：注重吞吐量與低延遲，直接繞過 Domain Model 與 ChangeTracker，利用 Dapper 或 EF Core `AsNoTracking()` 扁平投影至 DTO：
+
+```csharp
+// CQRS 讀取路徑：直接利用 Dapper 扁平投影，極致速度且零追蹤開銷
+public class GetOrderSummaryQueryHandler : IRequestHandler<GetOrderSummaryQuery, OrderSummaryDto?>
+{
+    private readonly DbDataSource _dataSource;
+
+    public GetOrderSummaryQueryHandler(DbDataSource dataSource)
+    {
+        _dataSource = dataSource;
+    }
+
+    public async Task<OrderSummaryDto?> Handle(GetOrderSummaryQuery request, CancellationToken ct)
+    {
+        const string sql = """
+            SELECT id, customer_id, total_amount, status, created_at
+            FROM orders
+            WHERE id = @OrderId;
+            """;
+
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        return await conn.QuerySingleOrDefaultAsync<OrderSummaryDto>(
+            new CommandDefinition(sql, new { request.OrderId }, cancellationToken: ct));
+    }
+}
+```
+
+---
+
+## 踩坑與避坑指南
+
+### 1. MediatR Pipeline Behavior 中「無腦包裹交易」的陷阱
+- **現象**：很多架構範例中寫了一個 `TransactionBehavior<TRequest, TResponse>`，對所有經過 MediatR 的請求自動開啟 `BeginTransactionAsync()`。
+- **踩坑點**：所有的 `Query`（讀取操作）也會被無辜地包裹進資料庫交易中，白白佔用連線池與鎖資源！
+- **規則**：交易行為管線必須只針對實作了標記介面（如 `ITransactionalCommand`）的請求生效，Query 請求必須完全跳過。
+
+### 2. 查詢端過度載入 Aggregate 實體樹
+- 只要是為了在網頁或 App 列表顯示資訊，**絕不要**載入完整的領域聚合根！
+- 載入整顆包含明細、日誌的 Aggregate，再手動轉為 DTO，不僅浪費記憶體，還會產生昂貴的資料庫 JOIN 與多餘的實體追蹤。
+
+---
+
+## 線上排查指令
+
+### 1. 檢驗讀寫查詢的路徑延遲與資料庫耗時
+
+```sql
+-- PostgreSQL 查詢 Command（寫入）與 Query（讀取）的前 5 名耗時陳述式
+SELECT 
+    substring(query, 1, 50) AS short_query,
+    calls, 
+    round(total_exec_time::numeric, 2) AS total_time_ms,
+    round(mean_exec_time::numeric, 2) AS avg_time_ms
+FROM pg_stat_statements
+WHERE query ILIKE '%orders%'
+ORDER BY total_exec_time DESC
+LIMIT 5;
+```
+
+### 2. .NET 診斷觀測 ChangeTracker 實體追蹤負擔
+
+在開發與效能檢測環境，監控讀取請求是否誤開啟了追蹤：
+```bash
+# 監控 EF Core 實體追蹤計數器
+dotnet-counters monitor -p $(pgrep -f "Ecommerce.Api.dll") \
+  --counters Microsoft.EntityFrameworkCore
+```
+重點關注 `active-contexts` 與 `execution-strategy-operation-failures`。
+
+### 3. Prometheus / Grafana 監控指標
+
+```text
+# 寫入 Command 執行耗時 p95 分位數
+histogram_quantile(0.95, sum(rate(application_command_duration_seconds_bucket[1m])) by (le, command))
+
+# 讀取 Query 執行耗時 p95 分位數（通常應低於 10ms）
+histogram_quantile(0.95, sum(rate(application_query_duration_seconds_bucket[1m])) by (le, query))
+```

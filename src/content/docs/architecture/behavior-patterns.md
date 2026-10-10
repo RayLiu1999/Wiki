@@ -5,46 +5,234 @@ articleId: "architecture-behavior-patterns"
 topic: "architecture"
 category: "object-patterns"
 order: 6
-tags: ["Strategy、Decorator 與行為組合", "architecture"]
+tags:
+  - "Strategy、Decorator 與行為組合"
+  - "architecture"
 difficulty: "intermediate"
 learningDepth: "deep"
-prerequisites: ["csharp-syntax-traps", "aspnet-core-dependency-injection"]
-relatedArticles: ["redis-cache-aside", "architecture-cross-cutting"]
+prerequisites:
+  - "csharp-syntax-traps"
+  - "aspnet-core-dependency-injection"
+relatedArticles:
+  - "redis-cache-aside"
+  - "architecture-cross-cutting"
 applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
 verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"
-lastReviewed: "2026-10-08"
+lastReviewed: "2026-10-10"
 takeaway: "分清替換一個規則和包住既有服務，用運費及商品快取說明組合。"
-noteDates: []
-sources: [{"title": "DI 指南", "url": "https://learn.microsoft.com/en-us/dotnet/core/extensions/dependency-injection-guidelines"}, {"title": "Cache-Aside", "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside"}, {"title": "設計相依方向", "url": "https://learn.microsoft.com/en-us/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures"}]
+sources:
+  - title: "DI 指南"
+    url: "https://learn.microsoft.com/en-us/dotnet/core/extensions/dependency-injection-guidelines"
+  - title: "Cache-Aside"
+    url: "https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside"
+  - title: "設計相依方向"
+    url: "https://learn.microsoft.com/en-us/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures"
 ---
 
-## 本篇的需求背景
+## 案發現場
 
-後續電商可能有不同運費規則；商品讀取也可以增加快取和記錄。運費是擴充情境，現有實驗沒有運費計算。Strategy 表達可選演算法，Decorator 在原有契約外增加行為。
+在電商平台的演化過程中，「條件分支膨脹」是系統腐化的最快途徑。
 
-## Strategy 找出變動點
+最常見的案發現場是**失控的運費計算邏輯**：
+在購物車結帳類別中，充斥著高達 300 行的 `switch-case` 巢狀判斷：
+```csharp
+// 典型反模式：巨大且脆弱的分支判斷
+switch (shippingType)
+{
+    case ShippingType.HomeDelivery:
+        // 常規宅配計算...
+        break;
+    case ShippingType.ConvenienceStore:
+        // 超商取貨計算...
+        break;
+    case ShippingType.ColdChain:
+        // 冷凍冷鏈溫控加價...
+        break;
+    case ShippingType.OffshoreIslands:
+        // 外島加成...
+        break;
+}
+```
+每當營運團隊新增一種「跨境直郵」或調整特定促銷運費時，工程師就必須直接修改這段核心結帳代碼。某次一位資淺工程師修改了外島計算邏輯，卻因不小心漏了 `break` 或共享了區域變數，導致全台超商取貨的運費全部被歸零，造成數百萬元的運費補貼災難。
 
-若所有規則接收相同輸入、提供相同語意的結果，可以由用例依條件選策略。例如 `IShippingCost` 是自訂運費契約，實作接受重量、地區與金額時，要清楚定義單位、限制與錯誤結果。
+另一個經典現場是**快取邏輯對資料存取層的暴力侵入**：
+工程師為了加速商品詳情查詢，直接在 `ProductRepository` 內部注入了 `IDistributedCache`。每一條資料庫查詢周圍，都夾雜著手動序列化 JSON、設定快取過期時間的代碼。這導致 `ProductRepository` 既要管 SQL，又要管 Redis 連線，單元測試極難撰寫，甚至在 Redis 當機時整個資料庫存取跟著崩潰。
 
-若不同付款流程需要完全不同輸入和狀態，硬塞進一個通用策略反而遮住差異。抽象應讓用例更清楚，而非只把 switch 拆到很多檔案。
+---
 
-## Decorator 保留契約
+## 反模式與正確解法
 
-~~~text
-買家查商品
-  → 記錄查詢時間的裝飾器
-  → 快取裝飾器
-  → 資料庫商品讀取器
-~~~
+### 1. 行為模式責任對照
 
-`IProductReader` 可以是應用的查詢契約；`CachedProductReader` 是自行實作的裝飾器，並非 StackExchange.Redis 內建。它查快取、回源和設定 TTL，仍需要處理取消、損壞資料和降級。
+- **策略模式（Strategy Pattern）**：用來**替換演算法核心（Interchangeable Algorithm）**。定義同一族行為的共通合約，讓演算法能獨立於使用它的客戶端進行切換。
+- **裝飾者模式（Decorator Pattern）**：用來**透明包裝既有服務（Wrapper / Extensible Behavior）**。在不改變既有介面合約的前提下，為被裝飾者疊加新行為（如快取、日誌、計時或重試）。
 
-裝飾器順序改變觀測範圍。例如外層記錄包含快取命中，內層資料庫記錄只包含回源。錯誤、交易、重試與快取的順序也會影響效果，不能只靠註冊順序猜測。
+---
 
-## 組裝與生命週期
+### 反模式一：修改既有代碼以支援新業務分支（違反開閉原則）
 
-DI 在 composition root 選擇並組裝行為。Decorator 持有內層服務時，生命週期和資源所有權需要相容；Singleton 包住 Scoped 的 DbContext 不會因為用了模式就變安全。
+每新增一種運費規則，就得重新修改並測試整個核心結帳類別，且各分支邏輯共享變數，極易產生意外副效應。
 
-同一個業務操作的重試還需要冪等契約。將付款 retry 包成 Decorator，不會自動避免重複扣款；需要用例和供應商支援穩定識別及結果查詢。
+### 正確解法一：策略模式結合 .NET 10 Keyed Services 動態分派
 
-完成檢查：能指出替換的是什麼、增加的是什麼、呼叫順序，以及哪些規則仍必須由用例處理。
+定義乾淨的 `IShippingFeeStrategy` 介面，每種運費規則封裝在獨立類別中，並利用 .NET 原生的鍵值依賴注入（Keyed Services）動態解析：
+
+```csharp
+// 1. 定義策略共通介面
+public interface IShippingFeeStrategy
+{
+    ValueTask<Money> CalculateFeeAsync(Order order, CancellationToken ct);
+}
+
+// 2. 獨立封裝各策略（遵守單一職責與開閉原則）
+public class HomeDeliveryStrategy : IShippingFeeStrategy
+{
+    public ValueTask<Money> CalculateFeeAsync(Order order, CancellationToken ct)
+    {
+        var fee = order.TotalAmount.Amount >= 1000 ? 0 : 100;
+        return ValueTask.FromResult(new Money(fee));
+    }
+}
+
+public class ColdChainDeliveryStrategy : IShippingFeeStrategy
+{
+    public ValueTask<Money> CalculateFeeAsync(Order order, CancellationToken ct)
+    {
+        // 冷鏈固定加收溫控處理費 200 元
+        return ValueTask.FromResult(new Money(200));
+    }
+}
+
+// 3. Program.cs 註冊 Keyed 服務
+builder.Services.AddKeyedScoped<IShippingFeeStrategy, HomeDeliveryStrategy>("Home");
+builder.Services.AddKeyedScoped<IShippingFeeStrategy, ColdChainDeliveryStrategy>("ColdChain");
+
+// 4. 結帳服務透過 Keyed 策略動態取得對應計算器
+public class CheckoutService
+{
+    private readonly IServiceProvider _serviceProvider;
+
+    public CheckoutService(IServiceProvider serviceProvider) => _serviceProvider = serviceProvider;
+
+    public async Task<Money> CalculateShippingAsync(string shippingMethod, Order order, CancellationToken ct)
+    {
+        var strategy = _serviceProvider.GetKeyedService<IShippingFeeStrategy>(shippingMethod)
+            ?? throw new NotSupportedException($"不支援的物流方式: {shippingMethod}");
+
+        return await strategy.CalculateFeeAsync(order, ct);
+    }
+}
+```
+
+---
+
+### 反模式二：將非功能性快取混入持久化倉儲
+
+讓 `ProductRepository` 同時負責資料庫操作與 Redis 快取，破壞關注點分離。
+
+### 正確解法二：裝飾者模式透明疊加快取層
+
+讓 `ProductRepository` 專注於純資料庫查詢，另建 `CachedProductRepository` 實作相同介面，並將底層倉儲作為依賴包裹在內：
+
+```csharp
+// 1. 共通業務介面
+public interface IProductRepository
+{
+    Task<ProductDto?> GetByIdAsync(long id, CancellationToken ct);
+}
+
+// 2. 純資料庫實作（零快取雜訊）
+public class SqlProductRepository : IProductRepository
+{
+    private readonly AppDbContext _db;
+    public SqlProductRepository(AppDbContext db) => _db = db;
+
+    public async Task<ProductDto?> GetByIdAsync(long id, CancellationToken ct) =>
+        await _db.Products
+            .AsNoTracking()
+            .Where(p => p.Id == id)
+            .Select(p => new ProductDto(p.Id, p.Name, p.Price))
+            .FirstOrDefaultAsync(ct);
+}
+
+// 3. 裝飾者實作：透明疊加 Redis 快取與 Fallback 機制
+public class CachedProductRepository : IProductRepository
+{
+    private readonly IProductRepository _inner;
+    private readonly IHybridCache _cache; // 或 IDistributedCache
+
+    public CachedProductRepository(IProductRepository inner, IHybridCache cache)
+    {
+        _inner = inner;
+        _cache = cache;
+    }
+
+    public async Task<ProductDto?> GetByIdAsync(long id, CancellationToken ct)
+    {
+        var cacheKey = $"product:{id}";
+
+        // 先查快取；若 Miss 則透明呼叫底層 SqlProductRepository 並回填
+        return await _cache.GetOrCreateAsync(
+            cacheKey,
+            async token => await _inner.GetByIdAsync(id, token),
+            cancellationToken: ct);
+    }
+}
+```
+
+在 DI 容器中註冊裝飾關係：
+```csharp
+// Program.cs: 原生工廠方式註冊裝飾者模式
+builder.Services.AddScoped<SqlProductRepository>();
+builder.Services.AddScoped<IProductRepository>(sp =>
+{
+    var sqlRepo = sp.GetRequiredService<SqlProductRepository>();
+    var cache = sp.GetRequiredService<IHybridCache>();
+    return new CachedProductRepository(sqlRepo, cache);
+});
+```
+
+---
+
+## 踩坑與避坑指南
+
+### 1. 避免過度抽象（何時不該用 Strategy？）
+- **原則**：如果分支只有 2~3 個，且在可預見的未來幾年內完全不會增加（例如：性別、是否啟用），**優先使用 C# 的 Pattern Matching（`switch expression`）**！
+- 只有當分支規則會頻繁新增、或是不同分支需要注入截然不同的外部服務時，引入 Strategy 模式才有實質效益。
+
+### 2. 裝飾者鏈（Decorator Chaining）的包裹順序
+- 當系統同時需要 `Logging`、`Caching` 與 `SqlPersistence` 時，包裹順序至關重要：
+  - **外層**：`LoggingProductRepository`（記錄端到端總耗時，包含快取命中與未命中的所有請求）。
+  - **中層**：`CachedProductRepository`（攔截快取）。
+  - **內層**：`SqlProductRepository`（真正打到資料庫）。
+
+---
+
+## 線上排查指令
+
+### 1. 觀測策略分派命中日誌
+
+```bash
+# 觀察運費計算策略調度日誌
+kubectl logs -l app=ecommerce-api --tail=500 | grep "IShippingFeeStrategy"
+```
+
+### 2. 檢測裝飾者快取穿透率與命中率
+
+透過 Prometheus 監控 `CachedProductRepository` 的快取命中比例：
+```text
+# 計算快取命中率（目標 > 90%）
+sum(rate(cache_hits_total{service="Product"}[5m])) 
+/ 
+(sum(rate(cache_hits_total{service="Product"}[5m])) + sum(rate(cache_misses_total{service="Product"}[5m])))
+```
+
+### 3. Prometheus / Grafana 監控指標
+
+```text
+# 各物流策略被呼叫頻率
+sum(rate(shipping_strategy_invocations_total[5m])) by (method)
+
+# 底層資料庫實際查詢頻率（若裝飾快取生效，此數值應遠低於 API 請求數）
+rate(db_product_queries_total[1m])
+```
