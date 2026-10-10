@@ -77,18 +77,45 @@ public async Task<IActionResult> GetReportBad()
 
 ASP.NET Core 會自動在請求連線中斷時觸發 `HttpContext.RequestAborted`。控制器只需宣告 `CancellationToken ct` 參數，框架便會自動注入該權杖：
 
-```csharp
-// ✅ Good：將取消權杖一路串聯至底層資料庫驅動
-[HttpGet("orders/report")]
-public async Task<IActionResult> GetReportGood(CancellationToken ct)
-{
-    // 當買家關閉網頁時，Npgsql / EF Core 會在收到信號後立即向資料庫發送 Cancel 封包並終止掃描
-    var data = await _dbContext.Orders
-        .Where(o => o.CreatedAt >= DateTime.UtcNow.AddYears(-1))
-        .ToListAsync(ct);
+~~~csharp title="Program.cs"
+// ✅ Good：非同步資源釋放與取消權杖串聯實作
+using var cts = new CancellationTokenSource();
+cts.CancelAfter(TimeSpan.FromMilliseconds(50));
 
-    return Ok(data);
+try
+{
+    await using var session = new DatabaseSession();
+    await session.ExecuteQueryAsync(cts.Token);
 }
+catch (OperationCanceledException)
+{
+    Console.WriteLine("作業已依取消請求及時中止");
+}
+
+public sealed class DatabaseSession : IAsyncDisposable
+{
+    public async Task ExecuteQueryAsync(CancellationToken cancellationToken)
+    {
+        Console.WriteLine("查詢開始執行");
+        // 將 Token 一路向下傳遞給支援取消的非同步 API
+        await Task.Delay(200, cancellationToken);
+        Console.WriteLine("查詢完成");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        // 非同步釋放連線或清空緩衝區，不阻塞 ThreadPool
+        await Task.Delay(10);
+        Console.WriteLine("連線已非同步安全釋放");
+    }
+}
+~~~
+
+預期輸出：
+```text
+查詢開始執行
+連線已非同步安全釋放
+作業已依取消請求及時中止
 ```
 
 ### 反模式二：未 Dispose `CreateLinkedTokenSource` 釀成記憶體洩漏

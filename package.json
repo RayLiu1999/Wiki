@@ -24,7 +24,7 @@
     "icons": "node scripts/create-icons.mjs",
     "build": "node scripts/astro.mjs build && node scripts/build-pwa.mjs && node scripts/check-site.mjs",
     "preview": "node scripts/astro.mjs preview --host 127.0.0.1",
-    "check": "pnpm typecheck && pnpm lint && pnpm test:snippets && pnpm test:articles && pnpm test && pnpm build"
+    "check": "pnpm typecheck && pnpm lint && pnpm test:snippets && pnpm test:articles && pnpm test && pnpm test:examples && pnpm build"
   },
   "packageManager": "pnpm@10.16.0",
   "engines": {

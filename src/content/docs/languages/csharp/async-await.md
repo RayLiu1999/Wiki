@@ -73,13 +73,26 @@ public OrderDto GetOrderDetails(long orderId)
     // 強行阻塞當前執行緒，高併發時引發執行緒池飢餓
     return _orderRepository.GetOrderAsync(orderId).GetAwaiter().GetResult();
 }
+```
 
-// ✅ Good：一路非同步到底，await 遇未完成操作立即釋放執行緒
-public async Task<OrderDto> GetOrderDetailsAsync(long orderId, CancellationToken ct = default)
+~~~csharp title="Program.cs"
+// ✅ Good：一路非同步到底（Async all the way），交還執行緒控制權
+Console.WriteLine("非同步作業開始");
+string data = await FetchDataAsync();
+Console.WriteLine($"非同步作業完成: {data}");
+
+static async Task<string> FetchDataAsync()
 {
-    // await 會在底層 I/O 尚未就緒時立即交還 Thread 给 ThreadPool 去服務其他 HTTP 請求
-    return await _orderRepository.GetOrderAsync(orderId, ct);
+    // await 遇到未完成的作業時，立即釋放當前執行緒給 ThreadPool 去服務其他 HTTP 請求
+    await Task.Delay(10);
+    return "結果資料";
 }
+~~~
+
+預期輸出：
+```text
+非同步作業開始
+非同步作業完成: 結果資料
 ```
 
 ### 反模式二：使用 `async void` 進行非同步執行（未捕捉例外將崩潰進程）

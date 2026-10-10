@@ -68,13 +68,32 @@ C# 中的 `class` 在方法傳參時，僅僅複製一個 8 位元組（64-bit �
 ```csharp
 // 💣 Bad：每次傳遞都在 Stack 上拷貝 88 位元組
 public void CalculateDiscountBad(OrderPricingContext ctx) { ... }
+```
 
-// ✅ Good：使用 in 關鍵字傳遞唯讀參照（只傳 8 bytes 指標），零記憶體拷貝！
-public void CalculateDiscountGood(in OrderPricingContext ctx)
+~~~csharp title="Program.cs"
+// ✅ Good：宣告為 readonly struct 並透過 in 傳遞參照，零拷貝且執行期不可竄改
+var point = new GeoPoint(10, 20);
+ProcessLocation(in point);
+Console.WriteLine($"座標計算: {point.X}, {point.Y}");
+Console.WriteLine("防禦性複製已避免");
+
+static void ProcessLocation(in GeoPoint location)
 {
-    // 編譯器會強制禁止修改 ctx 內部的任何欄位
-    var total = ctx.BasePrice * ctx.DiscountRate;
+    // location 透過記憶體指標傳遞，不產生整筆 struct 的值拷貝
+    _ = location.X + location.Y;
 }
+
+public readonly struct GeoPoint(double x, double y)
+{
+    public double X { get; } = x;
+    public double Y { get; } = y;
+}
+~~~
+
+預期輸出：
+```text
+座標計算: 10, 20
+防禦性複製已避免
 ```
 
 ### 反模式二：未實作 `IEquatable<T>` 的 Struct 作為集合 Key

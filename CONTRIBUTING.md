@@ -38,7 +38,7 @@ pnpm dev
 | :--- | :--- | :--- |
 | `pnpm typecheck` | 型別檢查 | Astro 與 TypeScript 嚴格型別檢驗 |
 | `pnpm lint` | 靜態程式碼檢查 | ESLint 10 靜態分析 |
-| `pnpm test:articles` | 文章規則檢驗 | 檢查文章必要章節、字數下限（3,000 字）與禁止之內部雜訊 |
+| `pnpm test:articles` | 文章規則檢驗 | 檢查文章必要四段式章節、字數規範（400 ~ 6,000 字）與禁止內部雜訊 |
 | `pnpm test:snippets` | 片段一致性比對 | 比對文章中的 C# 程式碼區塊與 `examples/` 可編譯源碼是否逐字一致 |
 | `pnpm test:examples` | C# 範例執行驗證 | 編譯並執行 `examples/csharp/` 範例，驗證標準輸出 |
 | `pnpm test` | 前端單元測試 | 收藏功能（localStorage）容錯與持久化單元測試 |

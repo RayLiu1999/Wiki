@@ -63,14 +63,33 @@ flowchart TD
 ```csharp
 // 💣 Bad：使用 double 計算促銷折價，產生精度遺失
 double badTotal = 0.1 + 0.2; // 0.30000000000000004
+```
 
-// ✅ Good：強制使用 decimal，精準表達十進位金額
-decimal unitPrice = 199.99m;
-decimal discountRate = 0.85m;
-decimal rawTotal = unitPrice * discountRate; // 169.9915m
+~~~csharp title="Program.cs"
+// ✅ Good：金額、庫存、稅率一律強制使用 128 位元十進位 decimal
+decimal unitPrice = 99.99m;
+int quantity = 3;
+decimal total = unitPrice * quantity;
+Console.WriteLine($"金額計算精確: {total}");
 
-// 顯式指定捨入模式：AwayFromZero 代表傳統四捨五入 (>= 5 進位)
-decimal finalPayable = Math.Round(rawTotal, 2, MidpointRounding.AwayFromZero); // 169.99m
+// 模式比對（Pattern Matching）安全評估狀態
+OrderStatus status = OrderStatus.Paid;
+string result = status switch
+{
+    OrderStatus.Paid => "可出貨",
+    OrderStatus.Pending => "等待付款",
+    OrderStatus.Cancelled or OrderStatus.Refunded => "已終止",
+    _ => "未知狀態"
+};
+Console.WriteLine($"訂單狀態: {result}");
+
+enum OrderStatus { Pending, Paid, Cancelled, Refunded }
+~~~
+
+預期輸出：
+```text
+金額計算精確: 299.97
+訂單狀態: 可出貨
 ```
 
 ### 反模式二：誤以為 `record` 的 `with` 表達式是深拷貝（Deep Copy）

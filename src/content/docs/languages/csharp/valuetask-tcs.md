@@ -65,31 +65,54 @@ sequenceDiagram
 
 `ValueTask<T>` 是一個結構體（Struct）。當操作同步完成時，它直接將數值內嵌在結構體內部回傳，**完全不產生任何堆積物件配置（0 Allocation）**；只有在真正需要進行非同步遠端 I/O 時，才在內部包裹一個 Task：
 
-```csharp
-public sealed class ProductCacheService
-{
-    private readonly ConcurrentDictionary<int, ProductDto> _l1Cache = new();
+~~~csharp title="Program.cs"
+// ✅ Good：結合 ValueTask 零配置與安全 TaskCompletionSource
+var service = new OrderStockService();
 
-    // ✅ Good：高頻熱點快取使用 ValueTask<T>
-    public ValueTask<ProductDto> GetProductAsync(int id, CancellationToken ct = default)
+// 1. 快速路徑：快取命中，零 Heap 配置
+int stock1 = await service.GetStockAsync("P01");
+Console.WriteLine($"快取庫存: {stock1}");
+
+// 2. 慢速路徑：透過安全的 TCS 非同步通知結果
+var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+_ = Task.Run(async () =>
+{
+    await Task.Delay(20);
+    // 在獨立 ThreadPool 執行緒執行續行，不卡住目前排程
+    tcs.TrySetResult(99);
+});
+
+int stock2 = await tcs.Task;
+Console.WriteLine($"遠端回傳庫存: {stock2}");
+
+public sealed class OrderStockService
+{
+    private readonly Dictionary<string, int> _cache = new() { ["P01"] = 50 };
+
+    public ValueTask<int> GetStockAsync(string sku)
     {
-        // 快速路徑（Fast Path）：快取命中，直接以 struct 回傳數值，零 Heap 配置！
-        if (_l1Cache.TryGetValue(id, out var cached))
+        // 快速路徑：直接以 struct 包裝數值回傳，無 Heap 配置
+        if (_cache.TryGetValue(sku, out int count))
         {
-            return new ValueTask<ProductDto>(cached);
+            return new ValueTask<int>(count);
         }
 
-        // 慢速路徑（Slow Path）：未命中，回退至非同步資料庫查詢
-        return new ValueTask<ProductDto>(FetchFromDatabaseAsync(id, ct));
+        // 慢速路徑：回退至非同步 Task
+        return new ValueTask<int>(FetchRemoteAsync(sku));
     }
 
-    private async Task<ProductDto> FetchFromDatabaseAsync(int id, CancellationToken ct)
+    private static async Task<int> FetchRemoteAsync(string sku)
     {
-        var product = await _database.QueryProductAsync(id, ct);
-        _l1Cache.TryAdd(id, product);
-        return product;
+        await Task.Delay(10);
+        return 10;
     }
 }
+~~~
+
+預期輸出：
+```text
+快取庫存: 50
+遠端回傳庫存: 99
 ```
 
 ### 反模式二：`TaskCompletionSource` 未加上 `RunContinuationsAsynchronously`

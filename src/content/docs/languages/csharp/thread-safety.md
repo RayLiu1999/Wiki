@@ -74,11 +74,50 @@ flowchart TD
 // 💣 Bad：非原子操作，線上必然發生資料競爭
 private int _activeOrders;
 public void OnOrderCreatedBad() => _activeOrders++; // 致命錯誤！
+```
 
-// ✅ Good：Interlocked 硬體原子遞增，零鎖競爭
-private int _activeOrders;
-public void OnOrderCreatedGood() => Interlocked.Increment(ref _activeOrders);
-public void OnOrderClosedGood() => Interlocked.Decrement(ref _activeOrders);
+~~~csharp title="Program.cs"
+// ✅ Good：運用 Interlocked 無鎖原子操作與 SemaphoreSlim 最小化持鎖
+var metrics = new OrderMetrics();
+
+// 1. Interlocked 無鎖遞增（由 CPU 硬體保證原子性，0 鎖競爭）
+Parallel.For(0, 100, _ => metrics.IncrementOrder());
+Console.WriteLine($"累計訂單數: {metrics.TotalOrders}");
+
+// 2. 非同步臨界區持鎖範圍最小化
+await metrics.SafeDeductStockAsync();
+Console.WriteLine("庫存安全扣減完成");
+
+public sealed class OrderMetrics
+{
+    private int _totalOrders;
+    private int _stock = 10;
+    private readonly SemaphoreSlim _lock = new(1, 1);
+
+    public int TotalOrders => Volatile.Read(ref _totalOrders);
+
+    public void IncrementOrder() => Interlocked.Increment(ref _totalOrders);
+
+    public async Task SafeDeductStockAsync()
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            // 臨界區內僅做極速記憶體狀態變更，絕對不呼叫非同步 I/O
+            if (_stock > 0) _stock--;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+}
+~~~
+
+預期輸出：
+```text
+累計訂單數: 100
+庫存安全扣減完成
 ```
 
 #### 進階無鎖技巧：CAS（Compare-And-Swap）樂觀迴圈

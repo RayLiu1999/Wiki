@@ -87,27 +87,31 @@ public decimal CalculateTotalBad(IEnumerable<CartItem> items)
 
 如果集合需要被多次讀取，或者大小固定，應先透過 `.ToArray()` 或 `.ToList()` 將資料載入記憶體；若僅是判斷集合是否有元素，優先使用 `Any()` 而非 `Count() > 0`：
 
-```csharp
-// ✅ Good：具體化快取查詢，消除多次枚舉代價
-public decimal CalculateTotalGood(IEnumerable<CartItem> items)
-{
-    // 一次性具體化為唯讀陣列，後續所有操作均在記憶體陣列上進行
-    CartItem[] itemArray = items as CartItem[] ?? items.ToArray();
+~~~csharp title="Program.cs"
+// ✅ Good：具體化快取查詢、預給容量與 ReadOnlySpan 零配置解析
+var source = new[] { 10, 20, 30, 40 };
 
-    if (itemArray.Length == 0) return 0; // Length 為 O(1) 屬性存取
+// 1. 具體化（Materialize）：避免多次列舉重跑
+var materialized = source.Where(x => x > 15).ToArray();
+Console.WriteLine($"符合筆數: {materialized.Length}");
+Console.WriteLine($"首筆數據: {materialized[0]}");
 
-    if (itemArray.Any(x => x.IsVipOnly)) 
-    {
-        ApplyVipDiscount();
-    }
+// 2. 集合預估容量：避免 4 -> 8 -> 16 反覆擴容拷貝
+var resultList = new List<int>(capacity: materialized.Length);
+resultList.AddRange(materialized);
 
-    decimal total = 0;
-    for (int i = 0; i < itemArray.Length; i++) 
-    {
-        total += itemArray[i].Price;
-    }
-    return total;
-}
+// 3. ReadOnlySpan 零拷貝解析字串（不產生額外堆積物件）
+string rawHeader = "ORDER-20261010-999";
+ReadOnlySpan<char> span = rawHeader.AsSpan();
+ReadOnlySpan<char> orderDate = span.Slice(6, 8); // 僅切片指標，0 堆積配置
+Console.WriteLine($"解析日期: {orderDate.ToString()}");
+~~~
+
+預期輸出：
+```text
+符合筆數: 3
+首筆數據: 20
+解析日期: 20261010
 ```
 
 ### 反模式二：集合未預設容量（Capacity），引發連鎖擴容與陣列拷貝
