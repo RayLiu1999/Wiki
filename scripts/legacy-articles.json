@@ -5,9 +5,5 @@
   "engineering/iac.md",
   "engineering/metrics-tracing.md",
   "engineering/recovery-cost.md",
-  "engineering/slo-alerts.md",
-  "platforms/gke/data-services.md",
-  "platforms/gke/gateway-networking.md",
-  "platforms/gke/platform-modes.md",
-  "platforms/gke/workload-identity.md"
+  "engineering/slo-alerts.md"
 ]
