@@ -5,69 +5,187 @@ articleId: "redis-data-types-ttl"
 topic: "redis"
 category: "redis-basics"
 order: 2
-tags: ["String","Hash","List","Set","Sorted Set","TTL","EXPIRE","SET","Key"]
+tags:
+  - "String"
+  - "Hash"
+  - "List"
+  - "Set"
+  - "Sorted Set"
+  - "TTL"
+  - "EXPIRE"
+  - "SET"
+  - "Key"
 difficulty: "beginner"
-prerequisites: ["redis-getting-started"]
-relatedArticles: ["redis-dotnet-integration","redis-concurrency","redis-reliability"]
-applicableVersions: "Redis 8.2.10／StackExchange.Redis 3.3.1／.NET 10；版本相關限制見內文。"
-verifiedWith: "已用 .NET 範例與整合測試驗證 String、Hash 與 TTL；其餘型別及 Cluster 限制依官方文件核對。"
-lastReviewed: "2026-10-08"
+learningDepth: "deep"
+prerequisites:
+  - "redis-getting-started"
+relatedArticles:
+  - "redis-dotnet-integration"
+  - "redis-concurrency"
+  - "redis-reliability"
+applicableVersions: "Redis 8.x／StackExchange.Redis 3.x／.NET 10。"
+verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
+lastReviewed: "2026-10-10"
 takeaway: "Key、資料結構與 TTL 是同一份資料契約；單一命令的原子性不會自動延伸到一串命令。"
-noteDates: []
-sources: [{"title":"Redis：資料型別","url":"https://redis.io/docs/latest/develop/data-types/"},{"title":"Redis：SET","url":"https://redis.io/docs/latest/commands/set/"},{"title":"Redis：TTL","url":"https://redis.io/docs/latest/commands/ttl/"},{"title":"Redis：INCR","url":"https://redis.io/docs/latest/commands/incr/"}]
-learningDepth: "basic"
+sources:
+  - title: "Redis：資料型別"
+    url: "https://redis.io/docs/latest/develop/data-types/"
+  - title: "Redis：SET"
+    url: "https://redis.io/docs/latest/commands/set/"
+  - title: "Redis：TTL"
+    url: "https://redis.io/docs/latest/commands/ttl/"
+  - title: "Redis：INCR"
+    url: "https://redis.io/docs/latest/commands/incr/"
 ---
 
-商品副本、購物車明細與排行需要不同操作，Redis 資料結構由讀寫需求決定。Key、格式和 TTL 一起形成契約，單一命令原子性不會自動涵蓋多步流程。
+## 案發現場
 
-## 依操作選資料結構
+在許多 Redis 故障覆盤報告中，最常見的元凶往往不是 Redis 引擎本身，而是開發團隊對**資料型別與鍵（Key）生命週期**的隨意使用。
 
-| 型別 | 典型用途 | 需要理解的操作 |
-| --- | --- | --- |
-| String | 序列化商品 DTO、單一值、計數器 | GET、SET、INCR |
-| Hash | 一個物件的多個欄位 | HSET、HGET、HGETALL |
-| List | 依序加入與移除項目 | LPUSH、RPOP；耐久工作流程另需確認傳遞機制 |
-| Set | 不重複的會員或標籤集合 | SADD、SISMEMBER |
-| Sorted Set | 依分數排序的排行榜 | ZADD、ZRANGE |
+典型災難現場一：**BigKey 塞爆頻寬與阻塞單執行緒**。
+在電商商品頁面中，工程師將包含商品基礎資訊、50 種規格 SKU、幾百張圖片連結以及最新評論的龐大資料結構（體積高達 600KB），一股腦序列化為單一 JSON 字串，以 `String` 型別存入 Redis。
+當有併發請求需要「扣減其中某個規格的庫存 1 件」時，代碼寫成了經典的「讀出 600KB ➔ 記憶體反序列化 ➔ 修改數字 ➔ 序列化為 600KB ➔ 寫回 Redis」。
+在促銷高峰期：
+1. **網路頻寬耗盡（NIC Saturation）**：每秒 1,000 次存取直接消耗 600MB/s 頻寬，瞬間打滿雲端伺服器的網卡上限。
+2. **更新丟失（Lost Update）**：兩個執行緒同時讀取 600KB，分別扣減不同的規格，後寫回的物件直接覆蓋了先寫回的更新，引發嚴重的庫存錯亂。
 
-JSON 字串放在 String 中，是應用程式自己的序列化約定；它與 Redis 的 JSON 資料型別是不同用法。Streams 的消費者群組與確認機制放在通訊選擇文章比較，避免將所有結構都當成相同的佇列。
+典型災難現場二：**永久 Key 導致記憶體無情膨脹（OOM）**。
+開發者在記錄使用者瀏覽記錄或防刷驗證碼時，使用 `SET verify_code:13800000000 123456`，**卻忘了加上過期時間（TTL）**。幾個月下來，累積了上千萬個無用的過期驗證碼。Redis 記憶體被撐滿達到 `maxmemory`，觸發了記憶體淘汰機制，導致原本重要的全域使用者 Session 快取被強制清除，全站使用者集體被迫登出！
 
-## 把 Key 當作公開契約
+---
 
-商品快取可使用 devwiki:products:v1:1：前綴表示應用，products 表示用途，v1 表示快取格式版本，最後是商品 ID。調整格式時切換版本前綴，可讓新程式避開舊格式副本，再依 TTL 清理。
+## 反模式與正確解法
 
-多租戶或與使用者權限有關的結果，Key 必須包含必要的隔離維度；只用商品 ID 可能讓不同用戶共用錯誤結果。Key 也應避免直接包含密碼、token 或不必要的個資。
+### 1. Redis 五大核心型別選型指南
 
-## 同一次 SET 設定過期
+| 資料型別 | 最佳使用情境 | 典型操作命令 | 避免場景 |
+| :--- | :--- | :--- | :--- |
+| **`String`** | 小型物件快取、原子計數器、分散式鎖 | `GET`, `SET`, `INCRBY` | 儲存大於 50KB 的巨型巢狀 JSON |
+| **`Hash`** | 包含多個屬性的結構化實體（如商品、用戶設定） | `HGET`, `HSET`, `HINCRBY` | 整個物件所有欄位總是一起讀寫且極小（此時用 String 更單純） |
+| **`List`** | 有界日誌、輕量佇列、時間軸最新消息 | `LPUSH`, `RPOP`, `LTRIM` | 隨機按索引讀取大集合（$O(N)$ 效能差） |
+| **`Set`** | 唯一值去重、共同好友、抽獎去重池 | `SADD`, `SISMEMBER`, `SINTER` | 需要保證元素排序順序 |
+| **`Sorted Set (ZSet)`**| 熱搜排行榜、分頁評分、延時任務佇列 | `ZADD`, `ZRANGEBYSCORE` | 元素頻繁大量修改且不需任何排序 |
 
-以下是 Redis CLI 指令語意示例，使用教學自訂的 devwiki:learning: 前綴。SET 寫值、GET 讀值、TTL 看剩餘時間、DEL 刪除；它們不是終端機 shell 命令。要實際輸入，先按[實作指南](/practice/ecommerce/cache-messaging/)開啟對應 CLI：
+---
 
-~~~text
-SET devwiki:learning:price 100 EX 30
-GET devwiki:learning:price
-TTL devwiki:learning:price
-DEL devwiki:learning:price
-TTL devwiki:learning:price
-~~~
+### 反模式一：單純依賴 String 儲存複雜實體並手動比對
 
-SET 回傳 OK，GET 回傳 100。第一個 TTL 是剩餘秒數，會隨時間減少；刪除後 TTL 為 -2。若 Key 存在但沒有過期時間，TTL 為 -1。
+將整個大實體存成 String，每次局部修改都需要拉回全量資料，浪費 I/O 且無法達成原子更新。
 
-一般 SET 覆寫既有值會移除原來的 TTL；需要保留時使用命令支援的 KEEPTTL，或重新指定 EX／PX。Hash 的一般欄位更新不等於重新設定整個 Key 的過期時間；個別欄位過期功能也有版本條件。
+### 正確解法一：利用 Hash 與原子 HINCRBY 進行局部更新
 
-## 原子命令與多步驟流程
+將商品結構分解為 Redis `Hash`，不僅利用底層 `listpack`（或 `ziplist`）達成極高記憶體壓縮比，還能在 Redis 端直接對單一欄位進行原子計算：
 
-INCR 本身可以原子地增加整數，但「讀取數量、判斷、寫回」是多個命令，會受到其他用戶端穿插操作。SET 與 EXPIRE 分開執行，也可能在兩者之間中斷，留下沒有 TTL 的 Key。
+```csharp
+// 正確解法：利用 Hash 與 HINCRBY 進行欄位級原子扣減
+public async Task<bool> DeductStockFieldAsync(
+    long productId, 
+    string skuCode, 
+    int quantity, 
+    CancellationToken ct)
+{
+    var hashKey = $"ecommerce:product:stock:{productId}";
+    var db = _redis.GetDatabase();
 
-需要把短小的多步驟操作放在同一個原子執行範圍時，可以評估 Lua 或 transaction 的能力與限制。Pipeline 主要減少網路往返，本身不會把所有命令變成一個資料庫交易。Cluster 下的多 Key 操作另有 hash slot 限制。
+    // 在 Redis 內部直接對特定 SKU 欄位執行原子遞減（避免網路傳輸整包物件！）
+    var remainingStock = await db.HashDecrementAsync(hashKey, skuCode, quantity);
 
-## 到期與淘汰分開看
+    if (remainingStock < 0)
+    {
+        // 若扣成負數，立即原子補回並回報失敗
+        await db.HashIncrementAsync(hashKey, skuCode, quantity);
+        return false;
+    }
 
-到期是依 TTL 判定 Key 已失效；淘汰（eviction）是記憶體壓力下依政策移除資料。Key 設定 30 秒 TTL，仍可能因淘汰在 30 秒內消失，因此讀取流程始終需要處理未命中。
+    return true;
+}
+```
 
-這裡的命令使用 Redis 8.2 基本語意；沒有執行全套資料型別或 Cluster 測試。可執行 .NET 範例與故障演練見[實作指南](/practice/ecommerce/)。
+---
 
-## 套用到電商情境
+### 反模式二：覆寫 Key 時意外丟失原有的 TTL
 
-商品 DTO 可以放 String 並設固定 TTL；購物車若放 Hash，要另定期限與並行更新規則。TTL 不是庫存保留，記憶體淘汰也可能讓 key 提前消失。命名中的格式版本與隔離維度要讓不同程序一致理解。
+工程師在一個已經設定過過期時間（TTL = 300 秒）的 Key 上，執行常規的 `SET key value`。
+**在 Redis 協議中，常規的 `SET` 會預設將該 Key 的過期時間徹底清除，使其變為永久保存（TTL = -1）！**
 
-[閱讀對應的電商章節](/projects/ecommerce/caching/)，把本篇概念接到整個用例。
+### 正確解法二：使用 KEEPTTL 參數或在同一指令顯式指定過期時間
+
+現代 Redis 支援在更新值時保留原先的過期時間倒數（`KEEPTTL`）：
+
+```csharp
+// 正確解法：更新值的同時保留原有剩餘的過期時間（KEEPTTL）
+public async Task UpdateValueKeepTtlAsync(string key, string newValue)
+{
+    var db = _redis.GetDatabase();
+
+    // 透過 keepTtl: true，確保不會把原本的過期倒數抹煞成永久 Key！
+    await db.StringSetAsync(key, newValue, keepTtl: true);
+}
+```
+
+---
+
+### 正確解法三：規範化的 Key 命名空間與強制預設 TTL
+
+團隊必須訂立統一的 Key 命名規範：`{系統}:{領域模組}:{實體ID}:{屬性}`。
+任何寫入 Redis 的代碼，**必須強制傳入 `TimeSpan expiration`**：
+
+```csharp
+// 命名範例：層次清晰且利於監控統計
+string productKey = $"ecommerce:catalog:product:{id}";
+string rateLimitKey = $"ecommerce:security:ratelimit:{ip}";
+
+// 寫入時強制指定 TTL，杜絕孤兒永久 Key
+await db.StringSetAsync(productKey, json, TimeSpan.FromMinutes(15));
+```
+
+---
+
+## 踩坑與避坑指南
+
+### 1. 嚴禁在線上執行 KEYS * 指令
+- **踩坑點**：`KEYS *` 指令的時間複雜度為 $O(N)$，它會暴力遍歷記憶體中的所有百萬個 Key。由於 Redis 是單執行緒模型（Single-threaded Engine），在遍歷的 3~5 秒內，Redis 完全無法響應任何其他客戶端請求，導致全站雪崩！
+- **線上鐵律**：生產環境必須使用 **`SCAN` 游標遍歷**，分批漸進式掃描。
+
+### 2. 刪除巨型 BigKey 時使用 UNLINK 取代 DEL
+- 若一個包含 100 萬個元素的 Hash 或 ZSet 需要被刪除，直接執行 `DEL key` 會在主執行緒同步釋放這數十萬個記憶體節點，阻塞 Redis 達數百毫秒。
+- **規則**：使用 **`UNLINK key`**。Redis 會將該 Key 立即從鍵空間摘除，並在背景獨立執行緒非同步釋放記憶體。
+
+---
+
+## 線上排查指令
+
+### 1. 檢測生產環境中的 BigKeys 分佈
+
+在終端機執行 Redis 內建工具（不會阻塞線上服務）：
+```bash
+redis-cli -h redis-host -p 6379 -a "password" --bigkeys
+```
+此指令會透過 `SCAN` 漸進掃描並回報每種資料型別（String, Hash, List, Set, ZSet）中佔用記憶體最大、元素最多的 Top 1 巨型鍵。
+
+### 2. 使用 SCAN 安全遍歷特定前綴的 Key
+
+```bash
+# 安全漸進式掃描前綴，每次讀取 100 筆，不卡死 Redis
+redis-cli --scan --pattern "ecommerce:catalog:*" | head -n 20
+```
+
+### 3. 檢查特定 Key 的剩餘存活秒數（TTL）
+
+```bash
+redis-cli TTL "ecommerce:catalog:product:101"
+```
+回傳值意涵：
+- 正整數：剩餘存活秒數。
+- `-1`：該 Key 為永久保存（無過期時間，若為快取即屬異味！）。
+- `-2`：該 Key 不存在或已過期刪除。
+
+### 4. Prometheus / Grafana 監控指標
+
+```text
+# 永久 Key（無 TTL）佔比告警
+(redis_db_keys_total - redis_db_expires_keys_total) / redis_db_keys_total > 0.3
+
+# 記憶體使用率佔 maxmemory 比例超過 80%
+(redis_memory_used_bytes / redis_memory_max_bytes) > 0.8
+```
