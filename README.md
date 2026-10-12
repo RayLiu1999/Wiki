@@ -1,6 +1,6 @@
 # DevWiki 軟體知識庫
 
-以繁體中文整理軟體知識的靜態 PWA，以電商後端串接 C#／.NET 到 GKE，目前提供 12 個技術主題、91 篇核心技術專題、3 份知識地圖、17 個電商主線章節與 1 篇資料庫專題、2 篇導讀與 8 篇實作指南。介面沿用已確認的「書頁閱讀」設計，預設淺色與紫色點綴，提供深色切換。
+以繁體中文整理軟體知識的靜態 PWA，以電商後端串接 C#／.NET 到 GKE，目前提供 12 個技術主題、91 篇技術專題，以及 29 篇導讀、電商章節與實作指南（各類含入口頁，共 120 篇內容）。介面採用「書頁閱讀」設計，預設淺色與紫色點綴，提供深色切換。
 
 ## 開始使用
 
@@ -14,11 +14,11 @@ pnpm dev
 開發伺服器的網址會顯示在終端機。完整 PWA 與 Pagefind 搜尋需以正式建置預覽：
 
 ~~~sh
-pnpm check
-pnpm preview --port 4321
+pnpm build
+pnpm preview --port 4322
 ~~~
 
-開啟 http://127.0.0.1:4321/。網站不需要帳號、資料庫或環境機密。開發模式使用文章內容索引提供搜尋；正式建置使用 Pagefind。開發伺服器不註冊 Service Worker，避免舊快取干擾熱更新；開發與正式預覽請使用不同連接埠。
+開啟 http://127.0.0.1:4322/；開發伺服器預設使用 http://127.0.0.1:4321/。網站不需要帳號、資料庫或環境機密。開發模式使用文章內容索引提供搜尋；正式建置使用 Pagefind。開發伺服器不註冊 Service Worker，避免舊快取干擾熱更新；開發與正式預覽請使用不同連接埠。
 
 Astro 7 的正式預覽會在背景執行。停止本專案的預覽可使用 node scripts/astro.mjs preview stop。
 
@@ -58,12 +58,11 @@ docker compose down
 ## 已提供功能
 
 - C# 8 篇、ASP.NET Core 13 篇、架構設計 8 篇、資料存取 20 篇、.NET 10 篇、工程實務 7 篇、Redis 6 篇、RabbitMQ 6 篇、容器 2 篇、網路 1 篇、Kubernetes 6 篇、GKE 4 篇（共 91 篇核心技術專題）。
-- 開始閱讀 `/start/`、知識地圖 `/knowledge-maps/`、電商專題 `/projects/ecommerce/` 與實作指南 `/practice/ecommerce/` 各有入口。技術正文說明原理與情境；專案操作集中在具備完整前提的指南。
-- 七條技術學習路徑：C# 入門、.NET 後端工作實務、快取與可靠訊息、.NET 深入、容器與 Kubernetes 基礎、GKE 與交付維運、C# 與資料庫容量。原有三條路徑與文章網址保留。
+- 開始閱讀 `/start/`、電商專題 `/projects/ecommerce/`、實作指南 `/practice/ecommerce/` 與技術查閱 `/topics/` 各有入口。技術正文說明原理與情境；專案操作集中在具備完整前提的指南。
+- 2 篇導讀、19 篇電商內容（入口、17 個主線章節與 1 篇資料庫專題），以及 8 篇實作指南（含入口）。依序跟讀電商章節，或由技術主題查閱個別問題。
 - 獨立商品 API 容器範例位於 `examples/deployment/`，提供兩副本 Kubernetes 宣告與 GKE Gateway HTTP 學習入口；雲端部署指南需使用自己的環境，尚未執行 GKE 驗證。
 - C# 與 MySQL／PostgreSQL 的連線、併發 CRUD、大表查詢與維護新增 11 篇文章；`examples/database-connections/` 通過編譯與離線設定解析，尚未執行實際 CRUD 或上億列壓測。
 - 可執行 Redis、RabbitMQ 與 PostgreSQL 實驗，以商品快取、訂單 Outbox、Inbox 與模擬通知串起文章；具備實際服務的故障恢復驗證。
-- 工作筆記概念對照頁，保留使用者提供摘要的相關日期、概念與文章對應；未直接匯入原始 46 篇筆記。
 - Markdown 內容、固定文章網址、版本資料、先備知識、相關文章與官方來源。
 - 頁內目錄、C# 語法標色與程式碼複製。
 - 繁體中文及英文技術名詞的 Pagefind 全文搜尋、搜尋快捷鍵與無結果提示。
@@ -73,15 +72,15 @@ docker compose down
 
 ## 編寫文章
 
-文章位於 src/content/docs/ 下各主題目錄。複製一篇既有文章，依 src/content.config.ts 的 schema 填入資料。articleId 在發布後保持穩定；檔名決定網址，不依分類變動。設定 draft: true 的內容不進入正式輸出與導覽。
+文章位於 [src/content/docs/](src/content/docs/) 下各主題目錄。複製一篇既有文章，依 [src/content.config.ts](src/content.config.ts) 的 schema 填入資料。`articleId` 在發布後保持穩定；目錄與檔名決定網址，分類欄位不改變路由。設定 `draft: true` 的內容不進入正式輸出與導覽。
 
-文章包含摘要、核心概念、常見誤解、適用版本、最近審閱日期與官方來源。可執行 C# 範例提供完整程式與預期輸出；需要框架、資料庫或外部服務的片段明確標記整合前提與未執行範圍。verifiedWith 不可把文件核對寫成實際編譯或連線驗證。
+技術文章使用 `articleType` 標示深度解析、問題排查或參考速查，並提供適用版本、最近審閱日期與官方來源。正文依四段式實務架構撰寫；不適用的章節以 `omitSections` 說明理由，細節見 [CONTENT_GUIDE.md](CONTENT_GUIDE.md)。可執行 C# 範例提供完整程式與預期輸出；需要框架、資料庫或外部服務的片段明確標記整合前提與未執行範圍。`verifiedWith` 不可把文件核對寫成實際編譯或連線驗證。
 
-prerequisites、relatedArticles 與 src/lib/learning-paths.ts 使用穩定 articleId。筆記對照位於 src/data/work-notes.json，文章的 noteDates 記錄相關日期。建置檢查主題目錄、分類、重複 ID、文章引用、學習路徑與日期對照。
+`prerequisites`、`relatedArticles` 使用穩定 `articleId`。內容 schema 與建置檢查主題目錄、分類、重複 ID、文章引用，以及指南對技術文章與先備指南的引用。
 
-新增主題時，擴充 src/lib/taxonomy.ts，加入實際內容、Starlight sidebar 與基本頁預快取清單；主題入口由共用路由產生。PWA 的文章與指南路由由實際建置頁面收集。
+新增主題時，擴充 [src/lib/taxonomy.ts](src/lib/taxonomy.ts)，加入實際內容、[astro.config.mjs](astro.config.mjs) 的 Starlight sidebar 與 [scripts/build-pwa.mjs](scripts/build-pwa.mjs) 的基本頁預快取清單；主題入口由共用路由產生。PWA 的文章與指南路由由實際建置頁面收集。
 
-導讀、電商章節與實作指南位於 `src/content/handbook/{start,ecommerce,practice}/`，使用獨立 schema 與穩定路由。每篇標示環境及驗證範圍；`linkedArticles` 使用技術 articleId，`prerequisites` 使用 handbook 的 group/slug。`overview.md` 為各內容類型的入口。知識地圖在 `src/lib/knowledge-maps.ts` 維護十個 .NET、九個雲端與八個資料庫容量領域。
+導讀、電商章節與實作指南位於 [src/content/handbook/](src/content/handbook/) 的 `start`、`ecommerce`、`practice` 目錄，使用獨立 schema 與穩定路由。每篇標示 `environment` 與 `verification`；`linkedArticles` 使用技術 `articleId`，`prerequisites` 使用 handbook 的 `group/slug`。各目錄的 `overview.md` 為入口，路由映射由 [src/lib/catalog.ts](src/lib/catalog.ts) 維護。
 
 新增技術文章須提供可獨立理解的背景與取捨，整合片段說明自訂型別、外層依賴和執行範圍。範例啟動、port、終端機位置與觀察結果寫在實作指南，避免讀者必須先開儲存庫 README 才能理解正文。
 
@@ -89,24 +88,26 @@ prerequisites、relatedArticles 與 src/lib/learning-paths.ts 使用穩定 artic
 
 | 指令 | 用途 |
 | --- | --- |
-| pnpm typecheck | Astro 與 TypeScript 嚴格型別檢查 |
-| pnpm lint | JavaScript、TypeScript 與建置腳本的靜態檢查 |
-| pnpm test | 收藏資料的損壞、持久化與儲存失敗行為 |
-| pnpm test:snippets | 比對六段 Redis、RabbitMQ、Cache-Aside 與 Outbox／Inbox 文章程式碼與來源 |
-| pnpm test:articles | 檢驗文章結構（必要章節）、最低字數（3,000 字）與禁止之內部雜訊 |
-| pnpm test:container | 對已啟動的容器驗證文章路由、搜尋／PWA 資源、快取標頭與 404 |
-| pnpm build | 靜態頁面、Pagefind、Workbox，以及連結與產物完整性檢查 |
-| pnpm check | 依序執行型別、lint、文章片段核對、單元測試與正式建置 |
-| pnpm test:examples | 比對文章與範例程式，編譯並執行 29 個 C# 範例、核對輸出 |
-| dotnet run --project examples/database-connections/ConnectionPatterns.csproj -- --validate | 編譯及解析 MySqlConnector／Npgsql 設定；不建立資料庫連線 |
-| pnpm test:infrastructure | 建立隔離 Redis／RabbitMQ／PostgreSQL 容器，核對快取、交易、重試、重送、HTTP 與重啟恢復 |
-| pnpm icons | 從本站 SVG 識別產生 PWA 與 Apple 圖示 |
+| `pnpm typecheck` | Astro 與 TypeScript 嚴格型別檢查 |
+| `pnpm lint` | JavaScript、TypeScript 與建置腳本的靜態檢查 |
+| `pnpm test` | 文章規則驗證器，以及收藏資料的損壞、持久化與儲存失敗行為 |
+| `pnpm test:snippets` | 比對已登錄的六段 Redis、RabbitMQ、Cache-Aside 與 Outbox／Inbox 文章程式碼與來源；此步驟不編譯或執行 |
+| `pnpm test:articles` | 檢驗必要章節、正文 400～6,000 字（不含程式碼區塊與空白）及禁止的內部雜訊；目前 91 篇皆適用，舊文章豁免清單為空 |
+| `pnpm test:container` | 對已啟動的網站容器驗證文章路由、搜尋／PWA 資源、快取標頭與 404 |
+| `pnpm build` | 靜態頁面、Pagefind、Workbox，以及連結與產物完整性檢查 |
+| `pnpm check` | 依序執行型別、lint、片段核對、文章規則、單元測試、C# 範例與正式建置 |
+| `pnpm test:examples` | 比對文章與範例程式，編譯並執行 8 個 C# 範例、核對預期輸出 |
+| `dotnet run --project examples/database-connections/ConnectionPatterns.csproj -- --validate` | 編譯及解析 MySqlConnector／Npgsql 設定；不建立資料庫連線 |
+| `pnpm test:infrastructure` | 建立隔離 Redis／RabbitMQ／PostgreSQL 容器，編譯範例並核對快取、交易、重試、重送、HTTP 與重啟恢復 |
+| `pnpm icons` | 從本站 SVG 識別產生 PWA 與 Apple 圖示 |
 
-Astro 型別檢查也檢查 .astro 元件；ESLint 負責獨立腳本與模組。CI 保留靜態建置產物，沒有自動正式部署。
+`pnpm check` 需要符合 [global.json](global.json) 的 .NET SDK。網站容器驗證、基礎設施整合測試與獨立資料庫範例驗證另行執行。
+
+Astro 型別檢查也檢查 `.astro` 元件；ESLint 負責獨立腳本與模組。[GitHub Actions](.github/workflows/check.yml) 配置網站驗收、C# 範例、網站容器與基礎設施整合四個 job，並保留靜態建置產物，沒有自動正式部署。
 
 ## Redis 與 RabbitMQ 實驗
 
-學習路徑位於 /learning-paths/dotnet-cache-messaging/。六篇 Redis 文章介紹資料型別、TTL、.NET 整合、Cache-Aside、併發與故障；六篇 RabbitMQ 文章介紹路由、.NET 用戶端、確認、重試冪等與佇列。架構與測試文章另外串接通訊選擇、Outbox／Inbox 與故障演練。
+技術入口位於 `/infrastructure/redis/` 與 `/infrastructure/rabbitmq/`，實作指南位於 `/practice/ecommerce/cache-messaging/`。六篇 Redis 文章介紹資料型別、TTL、.NET 整合、Cache-Aside、併發與故障；六篇 RabbitMQ 文章介紹路由、.NET 用戶端、確認、重試冪等與佇列。架構與測試文章另外串接通訊選擇、Outbox／Inbox 與故障演練。
 
 閱讀文章不需要啟動外部服務。要實作範例，另需 .NET SDK 與 Docker：
 
@@ -136,7 +137,7 @@ Workbox 的獨立建置步驟會在 Pagefind 建好後執行。基本頁面、�
 
 網站尚未設定正式網域或託管平台。可將完整 dist/ 發布到任何支援 HTTPS 與目錄 index.html 的靜態託管平台。必須整包發布，包含 pagefind/、sw.js、_astro/ 和 icons/。
 
-正式網域確認後，在 astro.config.mjs 設定 site 以產生 sitemap；目前建置會略過 sitemap 並顯示提示。
+目前 [astro.config.mjs](astro.config.mjs) 的 `site` 使用佔位網址 `https://devwiki.invalid`，建置會產生使用此網址的 sitemap 與技術文章頁的 canonical URL。正式網域確認後，替換 `site` 並重新建置，再發布完整產物。
 
 不要把所有找不到的網址重新導向首頁。保留 404.html 的正常 404 行為；Service Worker 負責網路失敗時的離線提示。
 
@@ -145,3 +146,5 @@ Workbox 的獨立建置步驟會在 Pagefind 建好後執行。基本頁面、�
 開發與驗證指南詳見 [CONTRIBUTING.md](CONTRIBUTING.md)；文章架構與寫作規範詳見 [CONTENT_GUIDE.md](CONTENT_GUIDE.md)。
 
 歷史規劃與驗收紀錄存檔於 `docs/archive/`，包含 [專案規劃書](docs/archive/PROJECT_PLAN.md)、[首版實作與驗收紀錄](docs/archive/IMPLEMENTATION.md)、[工作筆記整合紀錄](docs/archive/WORK_NOTES_INTEGRATION.md)、[Redis／RabbitMQ 整合紀錄](docs/archive/REDIS_RABBITMQ_INTEGRATION.md)、[內容與驗收紀錄](docs/archive/CONTENT_REWRITE.md) 與 [資料庫容量架構](docs/archive/DATABASE_SCALE_KNOWLEDGE_ARCHITECTURE.md)。
+
+歸檔文件保留當時的功能、篇數與驗證範圍；現行功能與維護流程以本 README、CONTRIBUTING.md 和 CONTENT_GUIDE.md 為準。

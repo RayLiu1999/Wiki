@@ -29,7 +29,7 @@
 
 ## 3. 文章結構標準模板（四部曲實戰架構）
 
-為確保內容「好理解、好落地、完整呈現技術深度與生產細節」，非速查類文章採用四段式實務架構（由 CI 工具自動檢核）：
+為確保內容「好理解、好落地、完整呈現技術深度與生產細節」，技術文章採用四段式實務架構（由 CI 工具自動檢核）。參考速查若有不適用的章節，同樣須以 `omitSections` 說明理由：
 
 ```markdown
 ## 案發現場
@@ -63,7 +63,9 @@
    - 指標使用 `System.Diagnostics.Metrics.Meter`。
    - 資料存取與分散式用戶端使用官方推薦之標準 SDK（如 `StackExchange.Redis`、`Npgsql`、`RabbitMQ.Client`）。
 2. **可編譯與片段同步**：
-   - 關鍵實作片段應對應 `examples/` 中的可編譯專案，透過 `// wiki:start:<marker>` 與 `// wiki:end:<marker>` 標記同步，由 CI 保證範例 100% 可編譯與執行。
+   - 關鍵實作片段應對應 `examples/` 中的可編譯專案。基礎設施片段透過 `// wiki:start:<marker>` 與 `// wiki:end:<marker>` 標記，並在 `examples/infrastructure/snippets.json` 登錄來源與文章區塊；CI 目前核對六段片段的一致性，另以基礎設施整合測試編譯及驗證服務行為。
+   - C# 的八個完整範例由 `examples/csharp/expected.json` 登錄；驗證工具比對文章的第一個 C# 區塊與 `.cs` 檔，再編譯、執行及核對預期輸出。該區塊使用 `~~~csharp` 圍欄。
+   - 其他整合片段在 `verifiedWith` 記錄實際核對、編譯或執行方式，以及尚未驗證的範圍。自動驗證只涵蓋已登錄的範例與測試情境。
    - 範例片段上方應清楚註解相依套件與命名空間。
 
 ---
