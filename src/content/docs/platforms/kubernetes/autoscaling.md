@@ -33,9 +33,9 @@ sources: [{"title": "HPA", "url": "https://kubernetes.io/docs/concepts/workloads
 flowchart TD
     MQ["RabbitMQ 訂單積壓 (800,000 msgs)"] -->|佇列深度指標| KEDA["KEDA / Custom Metrics Adapter"]
     KEDA -->|通知擴展意圖| HPA["Horizontal Pod Autoscaler (HPA)"]
-    HPA -->|宣告期望副本數 (需評估 DB 池預算)| Deploy["Worker Deployment"]
+    HPA -->|"宣告期望副本數 (需評估 DB 池預算)"| Deploy["Worker Deployment"]
     Deploy -->|建立新副本| Pods["Worker Pod 1 ~ N"]
-    Pods -->|連線池消耗 (MaxPoolSize)| PgBouncer["PgBouncer 連線池代理 (防護層)"]
+    Pods -->|"連線池消耗 (MaxPoolSize)"| PgBouncer["PgBouncer 連線池代理 (防護層)"]
     PgBouncer -->|受控連線總數| DB[("核心資料庫 (連線上限預算限制)")]
 ```
 

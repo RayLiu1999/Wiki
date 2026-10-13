@@ -34,12 +34,12 @@ flowchart TD
     
     Measure --> SLI{"計算 SLI (服務水準指標)<br/>成功率: 200ms 內完成 HTTP 2xx 比例"}
     
-    SLI -->|符合預期 (99.9%)| Budget["錯誤預算安全 (Error Budget Safe)<br/>團隊可安心進行日常功能發布"]
+    SLI -->|"符合預期 (99.9%)"| Budget["錯誤預算安全 (Error Budget Safe)<br/>團隊可安心進行日常功能發布"]
     
     SLI -->|異常消耗| BurnRate{"評估預算消耗率 (Burn Rate)"}
     
-    BurnRate -->|1 小時消耗 2% 預算 (急性出血)| Page["發送 PagerDuty 緊急電話 (Page)<br/>附帶 Runbook 連結，立即召集值班處理"]
-    BurnRate -->|6 小時消耗 5% 預算 (慢性侵蝕)| Ticket["自動建立 Jira 工作票 (Ticket)<br/>由負責微服務團隊於工作日排程修復"]
+    BurnRate -->|"1 小時消耗 2% 預算 (急性出血)"| Page["發送 PagerDuty 緊急電話 (Page)<br/>附帶 Runbook 連結，立即召集值班處理"]
+    BurnRate -->|"6 小時消耗 5% 預算 (慢性侵蝕)"| Ticket["自動建立 Jira 工作票 (Ticket)<br/>由負責微服務團隊於工作日排程修復"]
 ```
 
 ## 反模式與正確解法

@@ -34,14 +34,15 @@ sources:
 flowchart TD
     subgraph K8sHost["Kubernetes 32-Core 實體宿主機 (cgroup v2 限額 1Gi)"]
         subgraph DotNetProcess[".NET 程序 (Server GC 模式)"]
+            Runtime["CLR / Server GC"]
             H0["Heap 0 (Core 0)"]
             H1["Heap 1 (Core 1)"]
             Hdots["..."]
             H31["Heap 31 (Core 31)"]
-            DotNetProcess --> H0
-            DotNetProcess --> H1
-            DotNetProcess --> Hdots
-            DotNetProcess --> H31
+            Runtime --> H0
+            Runtime --> H1
+            Runtime --> Hdots
+            Runtime --> H31
         end
         OOMKilledWatcher["Linux Kernel cgroup OOM Killer"]
         DotNetProcess --"總實體記憶體逼近 1Gi"--> OOMKilledWatcher

@@ -38,7 +38,7 @@ flowchart LR
     end
     
     subgraph VPC["GCP 虛擬私有雲 (Private Service Access)"]
-        Proxy -->|mTLS 加密通道 (Workload Identity)| CloudSQL[("Cloud SQL for PostgreSQL (Private IP)")]
+        Proxy -->|"mTLS 加密通道 (Workload Identity)"| CloudSQL[("Cloud SQL for PostgreSQL (Private IP)")]
         API -->|私網直接連線| Redis[("Memorystore for Redis (同 VPC 私網)")]
         API -->|TCP KeepAlive 保活| RMQ[("RabbitMQ 訊息叢集")]
     end

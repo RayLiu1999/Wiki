@@ -40,14 +40,14 @@ flowchart TD
     subgraph RecordCopyIssue["record with 表達式的淺拷貝陷阱"]
         Original["OriginalOrder (Record)"]
         Original -->|值拷貝| Val1["TotalAmount: 1,000"]
-        Original -->|指標參考拷貝| SharedList["List<OrderItem> (同一記憶體位址)"]
+        Original -->|指標參考拷貝| SharedList["List#lt;OrderItem#gt; (同一記憶體位址)"]
         
         Copy["CopiedOrder = Original with {...}"]
         Copy -->|值拷貝| Val2["TotalAmount: 900"]
         Copy -.->|🚨 指向相同實體| SharedList
     end
     
-    SharedList -->|副本修改 Add(贈品)| Disaster["💥 原始訂單也被動被篡改！"]
+    SharedList -->|"副本修改 Add(贈品)"| Disaster["💥 原始訂單也被動被篡改！"]
 ```
 
 ## 反模式與正確解法

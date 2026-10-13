@@ -34,11 +34,11 @@ flowchart TD
     subgraph TestEnvironment["Testcontainers 整合測試邊界"]
         API["ASP.NET Core API / Worker (被測目標)"]
         
-        API -->|1. 寫入訂單與 Outbox (同一交易)| PG[("真實 PostgreSQL 容器")]
+        API -->|"1. 寫入訂單與 Outbox (同一交易)"| PG[("真實 PostgreSQL 容器")]
         API -->|2. 讀取快取 / 模擬故障降級| Redis[("真實 Redis 容器 (可動態 Stop)")]
         API -->|3. 發布與確認事件| RMQ[("真實 RabbitMQ 容器 (Publisher Confirm)")]
         
-        RMQ -->|4. 派發至 Consumer (Inbox 冪等去重)| Consumer["背景消費 Worker"]
+        RMQ -->|"4. 派發至 Consumer (Inbox 冪等去重)"| Consumer["背景消費 Worker"]
         Consumer -->|5. 毒訊息達重試上限| DLQ["Dead Letter Queue (死信佇列)"]
     end
 ```

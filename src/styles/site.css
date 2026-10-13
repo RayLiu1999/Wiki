@@ -406,3 +406,11 @@ summary { cursor: pointer; }
 .sl-markdown-content .concept-flow ol { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem 1.5rem; padding: 0; margin: .65rem 0; list-style: none; }
 .sl-markdown-content .concept-flow li { position: relative; margin: 0; padding: .45rem .6rem; border-radius: 7px; background: var(--wiki-soft); font-size: .82rem; }
 .concept-flow li:not(:last-child)::after { content: '→'; position: absolute; right: -1.15rem; color: var(--wiki-muted); }
+
+.sl-markdown-content .mermaid-diagram { margin: 1.6rem 0; padding: 1rem; border: 1px solid var(--wiki-line); border-radius: 12px; background: var(--wiki-surface); min-width: 0; }
+.mermaid-canvas { overflow-x: auto; overscroll-behavior-x: contain; }
+.mermaid-canvas > svg { display: block; width: 100%; min-width: var(--diagram-min-width, 320px); max-width: none; height: auto; margin: 0 auto; }
+.sl-markdown-content .diagram-status { margin: 0; padding: 1rem; color: var(--wiki-muted); font: 14px/1.8 var(--wiki-sans); }
+.diagram-source { margin-top: .75rem; font: 12px/1.8 var(--wiki-sans); color: var(--wiki-muted); }
+.diagram-source summary { cursor: pointer; }
+.diagram-source > .expressive-code, .diagram-source > pre { margin-top: .75rem; }

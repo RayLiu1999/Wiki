@@ -1,5 +1,8 @@
 import { readBookmarks, writeBookmarks } from '../lib/bookmarks.mjs';
 import { initializePwa, cachedArticleUrls } from '../pwa/client';
+import { initializeDiagrams } from './diagrams';
+
+initializeDiagrams();
 
 interface CatalogArticle {
   id: string;

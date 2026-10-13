@@ -31,16 +31,16 @@ sources: [{"title": "GKE Gateway API", "url": "https://docs.cloud.google.com/kub
 
 ```mermaid
 flowchart TD
-    User["外部買家 (瀏覽器)"] -->|Anycast 公網 IP (HTTPS :443)| Edge["Google 全球邊緣節點 (PoP)"]
+    User["外部買家 (瀏覽器)"] -->|"Anycast 公網 IP (HTTPS :443)"| Edge["Google 全球邊緣節點 (PoP)"]
     Edge -->|TLS 卸載 / Cloud Armor 防護| GCLB["Google Cloud 外部負載平衡器 (L7 GCLB)"]
     
     subgraph VPC["GCP 虛擬私有雲 (VPC-native)"]
-        GCLB -->|Container-native 負載平衡 (零額外躍點)| NEG["獨立網路端點群組 (NEG)"]
+        GCLB -->|"Container-native 負載平衡 (零額外躍點)"| NEG["獨立網路端點群組 (NEG)"]
         NEG --> Pod1["Order API Pod 1 (10.20.1.15:8080)"]
         NEG --> Pod2["Order API Pod 2 (10.20.1.16:8080)"]
     end
     
-    GCLB -.->|專屬探針路徑 (/healthz/ready)| HC["雲端健康檢查器 (HealthCheckPolicy)"]
+    GCLB -.->|"專屬探針路徑 (/healthz/ready)"| HC["雲端健康檢查器 (HealthCheckPolicy)"]
 ```
 
 ## 反模式與正確解法
