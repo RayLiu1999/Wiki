@@ -42,7 +42,7 @@ sources:
 
 ```mermaid
 flowchart LR
-    Code["logger.LogWarning(<br/>\"訂單 {OrderId} 付款失敗\", 42)"] --> Logger["ILogger<br/>保留範本與欄位值"]
+    Code["logger.LogWarning(<br/>#quot;訂單 {OrderId} 付款失敗#quot;, 42)"] --> Logger["ILogger<br/>保留範本與欄位值"]
     Logger --> Json["JSON 輸出到 stdout<br/>{OrderId: 42, Message: ...}"]
     Json --> Agent["節點上的日誌收集器"]
     Agent --> Cloud["Cloud Logging／CloudWatch Logs<br/>依欄位查詢與彙總"]

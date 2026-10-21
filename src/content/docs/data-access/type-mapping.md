@@ -45,7 +45,7 @@ flowchart LR
     end
     subgraph Json["JSON 欄位對應（ToJson）"]
         C["C# 物件 Specs"] -->|"EF Core 知道內部結構"| D["jsonb 欄位"]
-        Q["Where(p => p.Specs.Color == \"白\")"] -->|"翻譯成 JSON 查詢"| D
+        Q["Where(p => p.Specs.Color == #quot;白#quot;)"] -->|"翻譯成 JSON 查詢"| D
     end
 ```
 

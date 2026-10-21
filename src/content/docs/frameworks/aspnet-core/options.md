@@ -33,7 +33,7 @@ sources:
 ```mermaid
 flowchart LR
     Sources["appsettings.json<br/>環境變數<br/>Secret"] --> Config["IConfiguration<br/>（後面的來源覆蓋前面的）"]
-    Config -->|"Bind(\"Payment\")"| Options["PaymentOptions 類別"]
+    Config -->|"Bind(#quot;Payment#quot;)"| Options["PaymentOptions 類別"]
     Options --> Validate{"ValidateOnStart<br/>啟動時驗證"}
     Validate -->|通過| Inject["注入到服務"]
     Validate -->|失敗| Fail["啟動失敗，<br/>Pod 不會變成 Ready"]
