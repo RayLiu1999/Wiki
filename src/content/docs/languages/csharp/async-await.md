@@ -1,222 +1,127 @@
 ---
-title: "非同步狀態機（async/await）與執行緒上下文"
-description: "直擊 Sync-over-Async 造成的 ThreadPool 飢餓與死結，剖析編譯器狀態機時序與生產排查方法。"
+title: "async/await：為什麼 CPU 很閒，API 卻全部卡住"
+description: "用白話說明 await 如何把執行緒還給執行緒池，以及 .Result、async void 與逐筆 await 這三個讓服務變慢或當掉的常見寫法。"
 articleId: "csharp-async-await"
 topic: "csharp"
 category: "async-threading"
-order: 1
-tags: ["C#", "非同步", "async", "await", "狀態機", "ThreadPool", "死結"]
+order: 4
+tags: ["C#", "async", "await", "ThreadPool", "Sync-over-Async", "async void"]
 articleType: "deep-dive"
-difficulty: "advanced"
-prerequisites: ["csharp-syntax-traps"]
-relatedArticles: ["csharp-valuetask-tcs", "csharp-cancellation-disposable", "csharp-thread-safety"]
-applicableVersions: "C# 12+ / 14、.NET 8+ / .NET 10"
-lastReviewed: "2026-10-10"
-takeaway: "一路非同步到底（Async all the way down），絕不在非同步方法上呼叫 .Result 或 .Wait()；杜絕 async void。"
+difficulty: "beginner"
+prerequisites: []
+relatedArticles: ["csharp-cancellation-disposable", "dotnet-threadpool", "csharp-valuetask-tcs"]
+applicableVersions: "C# 12～14、.NET 8～10。"
+lastReviewed: "2026-10-21"
+takeaway: "從 Controller 到資料庫一路 await，不要用 .Result 或 .Wait() 等待非同步結果；後端程式不要寫 async void。"
 sources:
-  - title: "Microsoft Learn：以非同步方式使用 async 和 await 進行程式設計"
-    url: "https://learn.microsoft.com/zh-tw/dotnet/csharp/asynchronous-programming/"
-  - title: "Stephen Cleary：Async and Await"
-    url: "https://blog.stephencleary.com/2012/02/async-and-await.html"
+  - title: "Microsoft Learn：使用 async 與 await 的非同步程式設計"
+    url: "https://learn.microsoft.com/dotnet/csharp/asynchronous-programming/"
+  - title: "Microsoft Learn：偵錯 ThreadPool 耗盡"
+    url: "https://learn.microsoft.com/dotnet/core/diagnostics/debug-threadpool-starvation"
+  - title: "Microsoft Learn：ASP.NET Core 最佳做法（避免封鎖呼叫）"
+    url: "https://learn.microsoft.com/aspnet/core/fundamentals/best-practices"
   - title: "David Fowler：Async Guidance"
     url: "https://github.com/davidfowl/AspNetCoreDiagnosticScenarios/blob/master/AsyncGuidance.md"
 ---
 
-在現代 C# 高併發後端服務中，`async/await` 是提升系統吞吐量（Throughput）與 I/O 伸縮性（Scalability）的核心利器。然而，許多工程師誤以為「用了 async 就不會卡死」或「async 等於多執行緒加速」，因而在程式碼中混用同步與非同步，埋下了後端系統中最致命的 **Sync-over-Async（同步阻塞非同步）** 與 **ThreadPool 執行緒池飢餓（Starvation）** 隱患。
+## 這是什麼
 
-## 案發現場
+ASP.NET Core 用「執行緒池」裡的執行緒處理請求。一個請求在等資料庫回應時，如果執行緒就停在那裡等，它就沒辦法去處理別的請求。
 
-某電商核心結帳微服務在年中慶秒殺活動開跑 3 分鐘後，對外 API 呼叫的 P99 延遲突然由 45ms 呈垂直飆升至 30,000ms 以上，前端買家全面遭遇 HTTP 504 Gateway Timeout 錯誤。監控儀表板呈現極其詭異的現象：
+`async` 和 `await` 讓執行緒在等待 I/O 時先離開，去做別的事；等資料庫回應了，再找一條空閒的執行緒接著往下執行。這樣少量的執行緒就能同時服務大量請求。
 
-1. **CPU 負載極低，但請求全部卡死**：Kubernetes 節點與容器的 CPU 使用率僅有 12%~15%，記憶體亦未達上限，看似系統非常悠閒，但所有新進的 HTTP 請求卻無法獲得回應。
-2. **ThreadPool 執行緒數呈階梯式暴增**：.NET Runtime 監控指標顯示，執行緒池的 Worker Threads 數量從平時的 25 條一路被拉升到 800 條以上，而 ThreadPool Queue Length（排隊等待執行緒的任務數）積壓了數萬筆。
-3. **客戶端連鎖重試風暴**：由於請求未及時回應，前端網頁與 App 自動發起重試，更多的 HTTP 請求湧入已陷入飢餓的執行緒池，最終導致整座 Kestrel 伺服器徹底無響應，引發容器存活探針（Liveness Probe）超時而遭 Kubernetes 不斷強制重啟。
+這個機制只有在「一路 await 到底」時才有效。只要中間有一處用 `.Result` 把它卡住，效果就會反過來：執行緒被佔住，服務在 CPU 很閒的情況下全部變慢。
+
+## 運作原理
+
+編譯器會把 `async` 方法改寫成一個「狀態機」：一個記住「目前執行到哪一步」的物件。遇到 `await` 一個還沒完成的工作時，方法先回傳，執行緒回到執行緒池；工作完成後，執行緒池派一條執行緒，從記住的那一步繼續。
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    actor Client as 買家請求 (HTTP)
-    participant ThreadA as ThreadPool Thread A
-    participant AsyncOp as 非同步 I/O (資料庫/Redis)
-    participant Pool as .NET ThreadPool 調度器
-
-    Client->>ThreadA: 進入 Controller
-    ThreadA->>AsyncOp: 發起非同步呼叫 FetchOrderAsync()
-    Note over ThreadA: 💣 致命反模式：呼叫 .Result / .Wait()<br/>Thread A 被強行同步阻塞掛起！
-    AsyncOp-->>Pool: I/O 完成，將延續回呼 (Continuation) 放回 ThreadPool 佇列
-    Note over Pool: 執行緒池已無閒置執行緒！<br/>Thread A 正在阻塞等待回呼完成<br/>回呼排隊等待可用執行緒執行<br/>💥 互相等待，形成死鎖/執行緒池飢餓！
-    Pool-->>ThreadA: 爬山演算法 (每秒僅能注入 1~2 條執行緒)
-    Note over Client: 買家等待 30 秒逾時，觸發 HTTP 504！
+    participant T1 as 執行緒 A
+    participant DB as 資料庫
+    participant Pool as 執行緒池
+    participant T2 as 執行緒 B
+    T1->>DB: await GetOrderAsync()
+    Note over T1: 尚未完成：方法先回傳，<br/>執行緒 A 回去服務其他請求
+    DB-->>Pool: 查詢完成，排入「接著執行」的工作
+    Pool->>T2: 派一條空閒執行緒
+    T2->>T2: 從 await 之後繼續執行
 ```
 
-## 反模式與正確解法
+**卡住會怎樣：** 如果在 await 的位置改用 `.Result`，執行緒 A 會停在原地等。查詢完成後，「接著執行」的工作要排隊等空閒執行緒。尖峰時每個請求都這樣卡住一條執行緒，執行緒池很快就沒有空閒的執行緒。執行緒池會慢慢補新的執行緒，但補的速度遠追不上請求湧入的速度。結果是：CPU 使用率很低，請求卻一個個逾時。這種情況叫做執行緒池耗盡（starvation）。
 
-### 反模式一：Sync-over-Async（在同步環境呼叫 `.Result` 或 `.GetAwaiter().GetResult()`）
+ASP.NET Core 沒有 `SynchronizationContext`，所以不會出現舊版 ASP.NET 那種「回不到原執行緒而死結」的情況，但耗盡的問題一樣存在。
 
-最常見於遺留程式碼改造或建構子（Constructor）中。工程師為了「在不能寫 async 的地方取得資料」，強行在 `Task` 上呼叫 `.Result`、`.Wait()` 或 `.GetAwaiter().GetResult()`。
+## 常見錯誤與正確寫法
 
-#### 崩潰機理：執行緒池爬山演算法（Hill Climbing）的延遲陷阱
-當你在 Thread A 呼叫 `.Result` 時，Thread A 會被作業系統暫停（Blocked）。當底層非同步 I/O 完成時，其後續的回呼（Continuation）會被投遞至 ThreadPool 工作佇列。若此時併發請求升高，執行緒池中所有可用的 Thread 都被類似的 `.Result` 佔用阻塞，回呼任務就只能在佇列中排隊。
-雖然 .NET ThreadPool 具備動態調整能力，但其內建的「爬山演算法」為了避免頻繁 Context Switch 損耗效能，**每秒鐘僅會注入 1 到 2 條新執行緒**。當佇列積壓了數百個任務時，需要等待數十秒甚至數分鐘才能輪到該回呼執行，造成全系統災難性的集體超時！
-
-#### 正確解法：一路非同步到底（Async all the way down）
-
-將整個調用鏈路全面改為非同步，透過 `await` 釋放執行緒：
+### 1. 用 .Result 或 .Wait() 等非同步結果
 
 ```csharp
-// 💣 Bad：在同步方法硬叫 .Result 或 .GetAwaiter().GetResult()
-public OrderDto GetOrderDetails(long orderId)
-{
-    // 強行阻塞當前執行緒，高併發時引發執行緒池飢餓
-    return _orderRepository.GetOrderAsync(orderId).GetAwaiter().GetResult();
-}
+// 錯：執行緒在這裡停住，等查詢完成
+public OrderDto GetOrder(long id) =>
+    _repository.GetOrderAsync(id).GetAwaiter().GetResult();
 ```
 
-~~~csharp title="Program.cs"
-// ✅ Good：一路非同步到底（Async all the way），交還執行緒控制權
-Console.WriteLine("非同步作業開始");
-string data = await FetchDataAsync();
-Console.WriteLine($"非同步作業完成: {data}");
-
-static async Task<string> FetchDataAsync()
-{
-    // await 遇到未完成的作業時，立即釋放當前執行緒給 ThreadPool 去服務其他 HTTP 請求
-    await Task.Delay(10);
-    return "結果資料";
-}
-~~~
-
-預期輸出：
-```text
-非同步作業開始
-非同步作業完成: 結果資料
-```
-
-### 反模式二：使用 `async void` 進行非同步執行（未捕捉例外將崩潰進程）
-
-除了 WPF / WinForms 等 UI 元件的按鈕點擊事件處理器（Event Handlers）之外，在後端服務中**絕對禁止**宣告 `async void`。
-
-#### 崩潰機理：
-`async void` 方法無法被呼叫端 `await`，其內部若拋出任何未處理例外，呼叫端外層的 `try-catch` **完全無法捕獲**。該例外會直接被拋給當前的執行緒上下文或根排程器，觸發 .NET Runtime 的 `AppDomain.UnhandledException`，導致整個伺服器處理程序（Process）立即發生致命 Crash 退出！
-
-#### 正確解法：回傳 `Task` 並受控處理
+改成整條呼叫鏈都是非同步：Controller、Service、Repository 一路回傳 `Task` 並 `await`。
 
 ```csharp
-// 💣 Bad：拋出例外時整座 Kestrel API 行程直接崩潰退出
-public async void FireAndForgetAuditBad(OrderEvent evt)
+public async Task<OrderDto> GetOrderAsync(long id, CancellationToken ct)
 {
-    await Task.Delay(100);
-    throw new InvalidOperationException("稽核日誌寫入失敗！"); // 💥 整座進程瞬間 Crash！
-}
-
-// ✅ Good：回傳 Task，由呼叫端明確處理，或透過背景佇列妥善隔離
-public async Task FireAndForgetAuditGood(OrderEvent evt, ILogger logger)
-{
-    try
-    {
-        await _auditService.RecordEventAsync(evt);
-    }
-    catch (Exception ex)
-    {
-        // 確保例外被妥善記錄，不外溢至未受控環境
-        logger.LogError(ex, "非同步稽核寫入失敗，事件識別碼: {EventId}", evt.EventId);
-    }
+    var order = await _repository.GetOrderAsync(id, ct); // 等待時執行緒先離開
+    return OrderDto.From(order);
 }
 ```
 
-### 反模式三：在迴圈中逐筆 `await` 造成不必要的串行延遲
+建構子、`Dispose` 這類不能寫 `async` 的地方，不要硬叫 `.Result`；把非同步初始化移到 `IHostedService.StartAsync` 或工廠方法裡。
 
-在電商批次查詢或更新情境中，對著集合使用 `foreach` 並在內部逐個 `await`，會強制所有原本獨立的非同步 I/O 依序排隊執行：
+### 2. 寫 async void
+
+`async void` 方法無法被 `await`。它丟出的例外不會回到呼叫端的 `try/catch`，而是直接丟到執行緒池；在 .NET 中，執行緒池上未處理的例外會讓整個程序結束。
 
 ```csharp
-// 💣 Bad：10 個獨立商品查詢，每個耗時 100ms，總延遲長達 1000ms！
-public async Task<List<ProductDto>> GetProductsSequentiallyAsync(List<int> ids)
-{
-    var list = new List<ProductDto>();
-    foreach (var id in ids)
-    {
-        list.Add(await _productClient.GetByIdAsync(id)); // 串行阻塞
-    }
-    return list;
-}
+// 錯：例外會讓程序結束
+public async void RecordAuditLog(OrderEvent evt) { await _audit.WriteAsync(evt); }
 
-// ✅ Good：使用 Task.WhenAll 並行執行，總延遲僅約 100ms
-public async Task<List<ProductDto>> GetProductsConcurrentlyAsync(List<int> ids)
+// 對：回傳 Task，讓呼叫端可以 await 並處理例外
+public async Task RecordAuditLogAsync(OrderEvent evt, CancellationToken ct)
 {
-    var tasks = ids.Select(id => _productClient.GetByIdAsync(id));
-    ProductDto[] results = await Task.WhenAll(tasks);
-    return results.ToList();
-}
-
-// 🚀 Best Practice：若數量極大（如 10,000 筆），應使用 Parallel.ForEachAsync 限制最大並行度，防止打爆下游資料庫或連線池！
-public async Task ProcessOrdersSafelyAsync(List<Order> orders, CancellationToken ct)
-{
-    var options = new ParallelOptions 
-    { 
-        MaxDegreeOfParallelism = 10, // 限制同時最多 10 個非同步作業在執行
-        CancellationToken = ct 
-    };
-
-    await Parallel.ForEachAsync(orders, options, async (order, token) =>
-    {
-        await _orderProcessor.ProcessAsync(order, token);
-    });
+    await _audit.WriteAsync(evt, ct);
 }
 ```
 
-## 踩坑與避坑指南
+`async void` 只適合 UI 框架的事件處理器。後端如果需要「丟出去不等結果」的背景工作，交給 `BackgroundService` 或佇列，見 [BackgroundService](/platforms/dotnet/background-services/)。
 
-### 1. 編譯器狀態機（IAsyncStateMachine）的記憶體配置開銷
-當你將方法宣告為 `async Task` 時，C# 編譯器會為該方法生成一個隱藏的結構體狀態機，並在堆積上配置 `Task` 物件。
-- **過度包裝反模式（Unnecessary async/await）**：如果一個方法內部只是單純把另一個非同步操作回傳，完全沒有在 `await` 之後執行後續程式碼，也沒有被 `using` 或 `try-catch` 包裹，**可以直接回傳 Task**，省去編譯器生成狀態機的開銷：
+### 3. 獨立的工作一個接一個 await
 
 ```csharp
-// 稍微浪費：額外產生了一層狀態機與包裝 Task
-public async Task<User> GetUserAsync(int id)
+// 十個互不相干的查詢，每個 100ms，總共約 1 秒
+foreach (var id in ids)
 {
-    return await _userRepo.FindByIdAsync(id);
-}
-
-// 零開銷省略（Eliding async/await）：直接穿透回傳 Task
-public Task<User> GetUserFast(int id)
-{
-    // 注意：若有 using 或 try-catch 區塊，則絕對不能省略 await，否則 using 會在非同步完成前提前 Dispose！
-    return _userRepo.FindByIdAsync(id);
+    results.Add(await _catalog.GetAsync(id, ct));
 }
 ```
 
-### 2. ASP.NET Core 與 `ConfigureAwait(false)` 的真相
-- 在舊時代的 .NET Framework（ASP.NET 傳統 MVC/WebForms）中，存在全域的 `SynchronizationContext`，若不加 `ConfigureAwait(false)`，延續步驟必須回到原始 Request 執行緒，非常容易引發死鎖。
-- **現代 ASP.NET Core（.NET 6 / 8 / 10）已經完全廢除了 `SynchronizationContext`**！在 Controller、Minimal API、Middleware、業務 Service 層，加不加 `ConfigureAwait(false)` 都不會引發死鎖。
-- **唯一建議加上的地方**：通用底層類別庫（如發布至 NuGet 的 SDK 或開源套件），加上 `ConfigureAwait(false)` 能避免被外部呼叫端在舊型環境（如 WinForms/WPF）使用時遭遇死鎖，同時能微幅減少執行緒上下文流動的代價。
+互相獨立的工作可以一起開始，再一起等：
 
-### 3. ExecutionContext 的流動性與 `AsyncLocal<T>`
-非同步操作在經過 `await` 之後，可能會被分配到完全不同的執行緒繼續執行。因此，**絕對不要使用 `[ThreadStatic]` 儲存非同步請求狀態**！
-- **正確做法**：使用 `AsyncLocal<T>`。`ExecutionContext` 會隨非同步狀態機自動跨執行緒流動，確保鏈路追蹤 ID（TraceId）、租戶資訊（TenantId）安全傳遞。
-
-## 線上排查指令
-
-當懷疑線上環境發生 ThreadPool 飢餓、非同步鎖定或延遲異常時，可使用下列診斷指令排查：
-
-```bash
-# 1. 即時監控執行緒池健康狀態（重點觀察 queue-length 與 thread-count）
-# 若 queue-length 持續大於 0 且 thread-count 不斷增加，即代表發生 Sync-over-Async 或 ThreadPool 飢餓！
-dotnet-counters monitor --process-id <PID> \
-    --counters System.Runtime[threadpool-thread-count,threadpool-queue-length,threadpool-completed-items-count]
-
-# 2. 線上採集記憶體傾印檔案 (Core Dump)
-dotnet-dump collect --process-id <PID> --type Full --output /tmp/app_hang.dump
-
-# 3. 進入 dotnet-dump 分析執行緒呼叫堆疊
-dotnet-dump analyze /tmp/app_hang.dump
-
-# 在 dump 分析互動命令列中檢查所有執行緒是否卡在 Wait / GetResult：
-> clrstack -all
-# 尋找輸出中包含以下關鍵字的大量堆疊：
-# System.Threading.Tasks.Task.GetResultCore
-# System.Threading.Tasks.Task.Wait
-# System.Threading.Monitor.Enter
-
-# 4. 使用 dotnet-trace 採集 30 秒的非同步執行緒切換分析檔案
-dotnet-trace collect --process-id <PID> --duration 00:00:30 --profile cpu-sampling
+```csharp
+// 同時發出，總時間約等於最慢的那一個
+var results = await Task.WhenAll(ids.Select(id => _catalog.GetAsync(id, ct)));
 ```
+
+數量很多時要限制同時進行的數量，避免一次打爆下游服務或連線池：
+
+```csharp
+await Parallel.ForEachAsync(orders, new ParallelOptions
+{
+    MaxDegreeOfParallelism = 10, // 最多同時 10 個
+    CancellationToken = ct,
+}, async (order, token) => await _processor.ProcessAsync(order, token));
+```
+
+## 使用邊界
+
+- `async` 對 I/O（資料庫、HTTP、檔案）有幫助；純 CPU 計算加上 `async` 不會變快。CPU 密集的工作要考慮的是平行化，或移到背景處理。
+- `ConfigureAwait(false)` 在 ASP.NET Core 應用程式裡沒有必要；發布成通用函式庫給其他類型程式使用時才需要加。
+- 不要用 `[ThreadStatic]` 保存請求資料，因為 await 之後可能換了執行緒；需要跨 await 的環境資料，用 `AsyncLocal<T>`。
+- 執行緒池如何補執行緒、如何診斷耗盡，見 [ThreadPool 耗盡](/platforms/dotnet/threadpool/)。取消請求的傳遞方式，見 [取消與資源釋放](/languages/csharp/cancellation-disposable/)。
