@@ -9,7 +9,7 @@ tags: ["EKS", "Pod Identity", "IAM", "ServiceAccount", "IRSA"]
 articleType: "deep-dive"
 difficulty: "advanced"
 prerequisites: ["kubernetes-configuration-security"]
-relatedArticles: ["gke-workload-identity", "eks-data-services", "cloud-service-mapping"]
+relatedArticles: ["gke-workload-identity", "eks-data-services", "security-secrets-management"]
 applicableVersions: "依 2026-10 的 Amazon EKS 官方文件；各語言 AWS SDK 支援 Pod Identity 的最低版本見官方文件。"
 lastReviewed: "2026-10-21"
 takeaway: "每個工作負載一個 ServiceAccount、一個 IAM 角色，透過 Pod Identity 取得會自動輪替的暫時憑證；不要把長期 Access Key 放進叢集。"
@@ -108,7 +108,7 @@ builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 
 - **IRSA（IAM Roles for Service Accounts）**是較早的做法，透過叢集的 OIDC 提供者建立信任，設定散落在 IAM 信任政策與 ServiceAccount 註記上。新叢集優先用 Pod Identity；舊叢集上的 IRSA 可以照常運作，再逐步遷移。
 - Pod Identity 只解決「Pod 怎麼拿到 AWS 憑證」。角色能做什麼，仍要靠 IAM 政策限制到最小。
-- 連資料庫的密碼放在 Secrets Manager，由 Pod 依角色權限讀取；RDS 也可以改用 IAM 驗證，見 [EKS 資料服務](/platforms/eks/data-services/)。
+- 連資料庫的密碼放在 Secrets Manager，由 Pod 依角色權限讀取，見 [機密管理](/security/secrets-management/)；RDS 也可以改用 IAM 驗證，見 [EKS 資料服務](/platforms/eks/data-services/)。
 - GCP 上對應的機制是 Workload Identity Federation for GKE，見 [GKE 工作負載身分](/platforms/gke/workload-identity/)。
 
 ## 雲端排查

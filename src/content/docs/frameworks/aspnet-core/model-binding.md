@@ -9,7 +9,7 @@ tags: ["ASP.NET Core", "Model Binding", "驗證", "MaxRequestBodySize", "DataAnn
 articleType: "deep-dive"
 difficulty: "beginner"
 prerequisites: ["aspnet-core-routing"]
-relatedArticles: ["aspnet-core-http-contracts", "csharp-syntax-traps", "aspnet-core-authentication"]
+relatedArticles: ["aspnet-core-http-contracts", "csharp-syntax-traps", "security-api-risks"]
 applicableVersions: ".NET 8～10、ASP.NET Core 8～10；Minimal API 內建驗證需 .NET 10。"
 lastReviewed: "2026-10-21"
 takeaway: "模型綁定只負責把資料轉成物件，格式驗證用標註或驗證器，業務規則放在用例裡；依端點設定請求大小上限，Body 一律非同步讀取。"
@@ -104,5 +104,5 @@ if (product.Stock < request.Quantity) return TypedResults.Problem(statusCode: 40
 ## 使用邊界
 
 - 可為 null 的參考型別只在編譯期提醒；請求少了欄位時屬性仍會是 null。用 `required` 或 `[Required]` 讓綁定階段就擋下，見 [語法陷阱速查](/languages/csharp/syntax-traps/)。
-- 不要讓用戶端決定伺服器端的欄位，例如價格、訂單狀態、使用者 ID。請求模型只放用戶端能提供的欄位，避免大量指派（mass assignment）的風險；資料擁有權的檢查見 [驗證與授權](/security/authentication/)。
+- 不要讓用戶端決定伺服器端的欄位，例如價格、訂單狀態、使用者 ID。請求模型只放用戶端能提供的欄位，避免大量指派（mass assignment）的風險，見 [API 安全風險](/security/api-risks/)。
 - 錯誤回應的格式統一用 Problem Details，見 [HTTP 契約](/frameworks/aspnet-core/http-contracts/)。

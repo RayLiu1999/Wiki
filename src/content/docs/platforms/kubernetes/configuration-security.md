@@ -106,6 +106,7 @@ securityContext:
 
 ## 使用邊界
 
+- 機密的集中管理與輪替見 [機密管理](/security/secrets-management/)。
 - 掛載的機密檔案在雲端輪替後會更新（依驅動的設定），但環境變數不會；用 `reloadOnChange` 讀檔案，或在輪替後重新部署。
 - RBAC 只能「加上」權限，不能扣除。從最小權限開始，需要時再加。
 - NetworkPolicy 需要叢集的網路外掛支援：GKE 的 Dataplane V2 內建支援；EKS 的 VPC CNI 需要開啟網路政策功能。
