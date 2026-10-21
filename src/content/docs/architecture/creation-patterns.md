@@ -1,225 +1,121 @@
 ---
-title: "Factory、Builder 與物件建立邊界"
-description: "從合法訂單與結帳草稿分清建立入口、組裝步驟與額外抽象的成本。"
+title: "Factory 與 Builder：讓不合法的訂單根本建立不出來"
+description: "說明靜態工廠方法如何把建立規則集中在一處、領域工廠為什麼不該碰資料庫，以及 Builder 在測試資料上的用途。"
 articleId: "architecture-creation-patterns"
 topic: "architecture"
 category: "object-patterns"
-order: 5
-tags:
-  - "Factory、Builder 與物件建立邊界"
-  - "architecture"
-difficulty: "advanced"
-prerequisites:
-  - "csharp-syntax-traps"
-  - "architecture-domain-modeling"
-relatedArticles:
-  - "architecture-behavior-patterns"
-  - "aspnet-core-dependency-injection"
-applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
-lastReviewed: "2026-10-10"
-takeaway: "從合法訂單與結帳草稿分清建立入口、組裝步驟與額外抽象的成本。"
+order: 6
+tags: ["Factory", "Builder", "建構子", "Test Data Builder", "設計模式"]
+articleType: "deep-dive"
+difficulty: "beginner"
+prerequisites: ["architecture-domain-modeling"]
+relatedArticles: ["architecture-behavior-patterns", "engineering-business-tests", "aspnet-core-dependency-injection"]
+applicableVersions: "C# 12～14、.NET 8～10。"
+lastReviewed: "2026-10-21"
+takeaway: "建立物件時就檢查規則，讓不合法的狀態無法存在；領域工廠只做記憶體內的組裝，需要查資料的檢查放在應用層。"
 sources:
-  - title: "Domain Model"
-    url: "https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/net-core-microservice-domain-model"
-  - title: "DI"
-    url: "https://learn.microsoft.com/en-us/dotnet/core/extensions/dependency-injection"
+  - title: "Microsoft Learn：使用 DDD 設計微服務領域模型"
+    url: "https://learn.microsoft.com/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/microservice-domain-model"
+  - title: "Microsoft Learn：相依性插入指導方針（工廠）"
+    url: "https://learn.microsoft.com/dotnet/core/extensions/dependency-injection-guidelines"
+  - title: "Microsoft Learn：建構函式設計"
+    url: "https://learn.microsoft.com/dotnet/standard/design-guidelines/constructor"
 ---
 
-## 案發現場
+## 這是什麼
 
-在複雜的業務領域（如電商結帳、保險核保或金融清算）中，物件的「誕生過程」往往是系統穩定性的第一道防線。
+一張合法的訂單至少要有買家、至少一項商品、每項數量大於零。如果 `Order` 有公開的無參數建構子，任何人都能 `new Order()` 建出一張空訂單，再忘記補上買家。規則只能靠每個呼叫端自己記得檢查。
 
-典型災難現場一：**「半成品物件（Half-baked Objects）」的狀態逸出**。
-開發者在建立訂單時，依賴傳統的公有無參建構子與屬性賦值：
+建立型的設計模式把「怎麼建出一個合法物件」集中在一個地方：
+
+- **Factory（工廠）**：一個專門負責建立物件的方法或類別。它檢查規則，不合法就拒絕建立。
+- **Builder（建造者）**：一步一步設定很多選項，最後呼叫 `Build()` 一次建出物件；在 `Build()` 時做最後檢查。
+
+## 運作原理
+
+```mermaid
+flowchart LR
+    Input["結帳請求：買家、購物車"] --> App["應用層<br/>查價格、查庫存（需要 I/O）"]
+    App --> Factory["Order.Place(...)<br/>領域工廠：只做記憶體內檢查"]
+    Factory -->|規則都成立| Order["合法的 Order"]
+    Factory -->|任一規則失敗| Reject["丟出例外，物件不存在"]
+```
+
+分工的重點是：**需要查資料的檢查放在應用層，純規則的檢查放在工廠。** 應用層先查好商品價格與庫存，把結果交給工廠；工廠只根據傳進來的資料判斷是否合法，不碰資料庫、不呼叫外部服務。這樣工廠可以在單元測試裡直接測試，不需要準備資料庫。
+
+## 常見錯誤與正確寫法
+
+### 1. 公開建構子，讓呼叫端自己組裝
+
 ```csharp
+// 錯：可以建出沒有買家、沒有明細的訂單
 var order = new Order();
-order.CustomerId = req.CustomerId;
-// 開發者在此處發生中斷或順序顛倒：
-// 先計算了折扣，但此時 Items 尚未加入，導致折抵總額永遠為 0！
-order.ApplyDiscount(discount);
-order.Items = req.Items;
+order.BuyerId = request.BuyerId;
+foreach (var item in request.Items) order.Lines.Add(new OrderLine { ... });
 ```
-這種物件在建立的過程中處於**暫態不合法狀態**。一旦拋出未捕捉例外或被其他並行執行緒讀取，系統就會拿著這半生不熟的物件去執行後續流程，引發嚴重的計算錯誤。
 
-典型災難現場二：**模式濫用與過度抽象（Factory Explosion）**。
-另一批工程師走到相反的極端：為了一個僅有 3 個欄位的唯讀 DTO（如 `UserAddressDto`），硬套了包含 4 個介面、3 個抽象工廠與 1 個 Fluent Builder 的架構：
-```text
-IAddressBuilder ➔ AddressBuilder ➔ IAddressFactory ➔ ConcreteAddressFactory
-```
-為了閱讀一行物件建立代碼，新進工程師要在 6 個檔案之間反覆跳轉，代碼膨脹數倍，卻毫無實質商業價值。
-
----
-
-## 反模式與正確解法
-
-### 1. 建立模式選型決策
-
-| 模式 | 適用情境 | 核心價值 | 避免濫用 |
-| :--- | :--- | :--- | :--- |
-| **建構子（Constructor）** | 屬性少（$\le 4$ 個）、參數不可缺少、無複雜分支。 | 最直接、編譯期型別安全。 | 參數過長（超過 6 個參數時極易傳錯順序）。 |
-| **靜態工廠方法（Static Factory Method）** | 語意化建立入口、同型別多種建立語意。 | 具備業務意圖名稱（如 `FromUtc`、`Empty`）。 | 避免在工廠方法中執行隱式 I/O 或資料庫呼叫。 |
-| **領域工廠（Domain Factory）** | 聚合根建立牽涉複雜不變量、序號生成或依賴外部規則。 | 保證「物件一旦產出，即為絕對合法狀態」。 | 不要將簡單物件無端工廠化。 |
-| **Fluent Builder** | 包含大量選填設定（如複雜查詢規格）、或測試資料組裝。 | 語意流暢、按步驟裝配。 | 避免在生產運行時代碼中無節制配置過度鏈式呼叫。 |
-
----
-
-### 反模式一：公有建構子暴露內部結構
-
-物件宣告大量公有 Setter，外部呼叫者必須記住複雜的欄位賦值順序才能拼裝出合法物件。
-
-### 正確解法一：靜態工廠方法封裝業務意圖
-
-將建構子設為 `private`，透過具備業務含義的靜態方法作為唯一入口：
+改成靜態工廠方法，名稱表達業務意圖，建構子設為私有：
 
 ```csharp
-// 正確解法：靜態工廠方法明確表達建立意圖
 public class Order
 {
-    public Guid Id { get; private set; }
-    public OrderStatus Status { get; private set; }
-    public DateTimeOffset CreatedAt { get; private set; }
+    private readonly List<OrderLine> _lines = new();
+    private Order() { } // 給 EF Core 使用
 
-    private Order(Guid id, OrderStatus status, DateTimeOffset createdAt)
+    public static Order Place(Guid buyerId, IReadOnlyCollection<PricedItem> items, DateTimeOffset now)
     {
-        Id = id;
-        Status = status;
-        CreatedAt = createdAt;
-    }
+        if (buyerId == Guid.Empty) throw new ArgumentException("缺少買家", nameof(buyerId));
+        if (items.Count == 0) throw new ArgumentException("訂單至少要有一項商品", nameof(items));
 
-    // 業務入口一：建立常規結帳訂單
-    public static Order CreateNew(Guid customerId)
-    {
-        return new Order(Guid.NewGuid(), OrderStatus.PendingPayment, DateTimeOffset.UtcNow);
-    }
-
-    // 業務入口二：建立快速草稿（例如購物車暫存）
-    public static Order CreateDraft()
-    {
-        return new Order(Guid.NewGuid(), OrderStatus.Draft, DateTimeOffset.UtcNow);
-    }
-}
-```
-
----
-
-### 反模式二：工廠內部注入資料庫連線並執行持久化
-
-工程師將 `IOrderRepository` 甚至 `AppDbContext` 注入到 `OrderFactory` 內部，讓工廠在建立物件的同時呼叫 `SaveChangesAsync()`。這混淆了**「物件實例化（Creation）」**與**「資料持久化（Persistence）」**的邊界。
-
-### 正確解法二：純記憶體領域工廠（Domain Factory）
-
-領域工廠只專注於**純記憶體的聚合組裝與不變量校驗**，絕對不執行資料庫 I/O：
-
-```csharp
-// 正確解法：複雜聚合的專屬領域工廠
-public class OrderFactory
-{
-    private readonly IDiscountPolicy _discountPolicy;
-
-    public OrderFactory(IDiscountPolicy discountPolicy)
-    {
-        _discountPolicy = discountPolicy;
-    }
-
-    public Order CreateOrder(
-        Customer customer, 
-        IReadOnlyList<CartItem> cartItems, 
-        string? couponCode)
-    {
-        if (cartItems == null || !cartItems.Any())
-            throw new DomainValidationException("無法使用空購物車建立訂單");
-
-        var order = Order.CreateNew(customer.Id);
-
-        foreach (var item in cartItems)
+        var order = new Order { Id = Guid.CreateVersion7(), BuyerId = buyerId, PlacedAt = now, Status = OrderStatus.PendingPayment };
+        foreach (var item in items)
         {
-            order.AddItem(item.ProductId, item.UnitPrice, item.Quantity);
-        }
-
-        // 依據促銷策略計算合法折抵（純領域邏輯）
-        var discount = _discountPolicy.CalculateDiscount(customer, order, couponCode);
-        order.ApplyDiscount(discount);
-
-        return order; // 產出之物件保證完整合法！
-    }
-}
-```
-
----
-
-### 正確解法三：在測試中利用 Test Data Builder 保持測試代碼精煉
-
-在單元測試中，若每個測試都手寫 20 行組裝 `Order`，測試代碼將難以閱讀。使用 Builder 模式提供預設值，僅在測試需要時覆蓋特定屬性：
-
-```csharp
-// 測試專用 Builder：極致提升測試可讀性
-public class OrderBuilder
-{
-    private Guid _customerId = Guid.NewGuid();
-    private readonly List<OrderItem> _items = new();
-
-    public OrderBuilder WithCustomer(Guid customerId)
-    {
-        _customerId = customerId;
-        return this;
-    }
-
-    public OrderBuilder WithItem(Guid productId, decimal price, int qty = 1)
-    {
-        _items.Add(new OrderItem(productId, new Money(price), qty));
-        return this;
-    }
-
-    public Order Build()
-    {
-        var order = Order.CreateNew(_customerId);
-        foreach (var item in _items)
-        {
-            order.AddItem(item.ProductId, item.UnitPrice, item.Quantity);
+            order.AddLine(item.ProductId, item.UnitPrice, item.Quantity); // 每一行也各自檢查
         }
         return order;
     }
+    // ...
 }
 ```
 
----
+`now` 由呼叫端傳入，而不是在裡面呼叫 `DateTimeOffset.UtcNow`，測試時就能控制時間。`Guid.CreateVersion7()`（.NET 9 起）產生依時間排序的 ID，對資料庫索引比較友善，見 [分散式識別碼](/platforms/dotnet/identifiers/)。
 
-## 踩坑與避坑指南
+### 2. 工廠裡注入 DbContext 去查資料
 
-### 1. 區分 DI 容器工廠與業務 Domain Factory
-- **DI 容器工廠（如 `Func<TService>`、`IServiceScopeFactory`）**：責任在於管理**服務的依賴注入與生命週期（Singleton / Scoped）**。
-- **Domain Factory**：責任在於管理**實體資料（Data & Business State）的合法性組裝**，完全不屬於 DI 容器範疇。
-
-### 2. Builder 模式中必須在 Build() 進行終端驗證
-- 若使用 Builder 模式，切勿在每個 `With*` 方法中單獨執行完整校驗（因為中間步驟本來就是不完整的）。
-- **鐵律**：所有複合約束驗證（如「有折扣碼時必須存在會員等級」）必須且只能在 **`Build()` 的最後一刻**統一執行。
-
----
-
-## 線上排查指令
-
-### 1. 檢測領域工廠校驗失敗異常頻率
-
-```bash
-# 即時過濾日誌中領域建立驗證失敗事件
-kubectl logs -l app=ecommerce-api --tail=1000 | grep "DomainValidationException"
+```csharp
+// 錯：領域工廠依賴資料庫，測試要準備資料庫，也看不出這個方法會做 I/O
+public class OrderFactory(ShopDbContext db)
+{
+    public async Task<Order> CreateAsync(Guid buyerId, ...) { var stock = await db.Stocks...; }
+}
 ```
 
-### 2. 檢測短命物件記憶體分配速率
+查價格、查庫存屬於應用層的用例流程。工廠只接收已經查好的結果（例如 `PricedItem`）。
 
-使用 `dotnet-counters` 觀察物件頻繁建立造成的 GC 分配壓力：
-```bash
-dotnet-counters monitor -p $(pgrep -f "Ecommerce.Api.dll") \
-  --counters System.Runtime
+### 3. 測試資料散落在每個測試裡
+
+每個測試都要手動組出一張合法訂單，欄位一改，幾十個測試都要改。用 Test Data Builder 提供合理的預設值，測試只寫它關心的部分：
+
+```csharp
+public sealed class OrderBuilder
+{
+    private Guid _buyerId = Guid.NewGuid();
+    private readonly List<PricedItem> _items = new() { new(Guid.NewGuid(), new Money(100, "TWD"), 1) };
+
+    public OrderBuilder WithItem(decimal price, int quantity)
+    {
+        _items.Add(new(Guid.NewGuid(), new Money(price, "TWD"), quantity));
+        return this;
+    }
+
+    // Build 時走真正的工廠，確保測試資料也符合規則
+    public Order Build() => Order.Place(_buyerId, _items, new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+}
 ```
-重點關注 `alloc-rate`（每秒分配記憶體量）與 `gen-0-gc-count`。
 
-### 3. Prometheus / Grafana 監控指標
+## 使用邊界
 
-```text
-# 訂單建立失敗（業務校驗被阻擋）計數器
-rate(order_creation_validation_failures_total[1m])
-
-# 訂單成功建立速率（QPS）
-rate(orders_created_total[1m])
-```
+- **DI 容器的工廠和領域工廠是兩回事。** `IHttpClientFactory`、`AddScoped(sp => ...)` 是在解決「物件的相依怎麼取得」；領域工廠是在解決「業務物件怎麼合法地誕生」。
+- 欄位少、沒有規則的物件（例如 DTO）直接用建構子或物件初始設定式就好，不需要工廠。
+- Builder 適合選項很多、或測試資料；正式程式碼中如果物件只有三四個必填欄位，靜態工廠方法比 Builder 清楚。
+- 建立之後的行為怎麼替換或擴充，見 [Strategy 與 Decorator](/architecture/behavior-patterns/)。

@@ -1,12 +1,4 @@
 [
-  "architecture/application-patterns.md",
-  "architecture/behavior-patterns.md",
-  "architecture/clean-architecture.md",
-  "architecture/communication-boundaries.md",
-  "architecture/creation-patterns.md",
-  "architecture/cross-cutting.md",
-  "architecture/domain-modeling.md",
-  "architecture/outbox-inbox.md",
   "data-access/batch-updates.md",
   "data-access/bulk-retention.md",
   "data-access/concurrency.md",

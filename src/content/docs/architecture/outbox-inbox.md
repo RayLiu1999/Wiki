@@ -1,254 +1,115 @@
 ---
-title: "Outbox、Inbox 與最終一致性"
-description: "用本地交易保存待發布事件與消費結果，分析資料庫提交、Broker 確認及 Ack 之間的故障窗口。"
+title: "Outbox 與 Inbox：訂單存好了，事件卻沒送出去怎麼辦"
+description: "說明「寫資料庫又發訊息」為什麼不能同時保證成功，Outbox 如何把事件和訂單放進同一個交易，Inbox 如何讓重複收到的訊息只處理一次。"
 articleId: "architecture-outbox-inbox"
 topic: "architecture"
 category: "application-patterns"
-order: 4
-tags:
-  - "Transactional Outbox"
-  - "Inbox"
-  - "冪等"
-  - "Integration Event"
-  - "PostgreSQL"
-  - "transaction"
-  - "MessageId"
-  - "最終一致性"
+order: 5
+tags: ["Outbox", "Inbox", "最終一致性", "冪等", "SKIP LOCKED"]
+articleType: "deep-dive"
 difficulty: "advanced"
-prerequisites:
-  - "data-access-transactions"
-  - "rabbitmq-acknowledgements"
-  - "architecture-communication-boundaries"
-relatedArticles:
-  - "rabbitmq-retries-idempotency"
-  - "engineering-cache-messaging-tests"
-  - "redis-cache-aside"
-applicableVersions: "以 .NET 10、RabbitMQ 4.x、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
-lastReviewed: "2026-10-10"
-takeaway: "本地交易保護資料與意圖，Outbox 與 Inbox 協助恢復；跨邊界仍可能重送，因此結果必須冪等。"
+prerequisites: ["architecture-communication-boundaries", "data-access-transactions"]
+relatedArticles: ["rabbitmq-acknowledgements", "rabbitmq-retries-idempotency", "engineering-cache-messaging-tests"]
+applicableVersions: ".NET 8～10、PostgreSQL 14+（MySQL 8.0+ 同樣支援 SKIP LOCKED）、RabbitMQ 4.x。"
+lastReviewed: "2026-10-21"
+takeaway: "Outbox 把「要發的事件」和業務資料放在同一個交易；它保證事件最終會送出，但可能送不只一次，所以消費端一定要用 Inbox 或業務唯一條件去重。"
 sources:
-  - title: "Microsoft Learn：非同步訊息與 Outbox"
-    url: "https://learn.microsoft.com/en-us/dotnet/architecture/microservices/architect-microservice-container-applications/asynchronous-message-based-communication"
-  - title: "Microsoft Learn：訂閱與冪等"
-    url: "https://learn.microsoft.com/en-us/dotnet/architecture/microservices/multi-container-microservice-net-applications/subscribe-events"
-  - title: "PostgreSQL：Constraints"
-    url: "https://www.postgresql.org/docs/18/ddl-constraints.html"
-  - title: "RabbitMQ：Reliability"
-    url: "https://www.rabbitmq.com/docs/reliability"
+  - title: "Microsoft Learn：以訊息為基礎的非同步通訊"
+    url: "https://learn.microsoft.com/dotnet/architecture/microservices/architect-microservice-container-applications/asynchronous-message-based-communication"
+  - title: "Azure Architecture Center：Transactional Outbox 模式"
+    url: "https://learn.microsoft.com/azure/architecture/databases/guide/transactional-outbox-cosmos"
+  - title: "PostgreSQL：SELECT 的 Locking Clause（SKIP LOCKED）"
+    url: "https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE"
+  - title: "RabbitMQ：Consumer Acknowledgements and Publisher Confirms"
+    url: "https://www.rabbitmq.com/docs/confirms"
 ---
 
-## 案發現場
+## 這是什麼
 
-在分散式系統或微服務架構中，最常發生的重大事故莫過於**「雙寫一致性斷裂（Dual-Write Failure）」**。
+訂單成立後，要通知寄信服務。直覺的寫法是「先存訂單，再發一則訊息到 RabbitMQ」。問題是資料庫和 RabbitMQ 是兩個系統，沒有辦法放進同一個交易：
 
-典型案發現場：
-在使用者建立訂單後，系統必須發送整合事件通知庫存服務扣減庫存、並通知促銷服務核銷折價券。開發團隊寫下了看似合情合理的代碼：
+- 先存訂單再發訊息：存好了，程式在發訊息前當掉，**有訂單沒事件**，買家收不到通知。
+- 先發訊息再存訂單：訊息發了，存訂單失敗，**有事件沒訂單**，寄信服務處理一張不存在的訂單。
 
-```csharp
-// 致命的雙寫反模式
-await using var tx = await _db.Database.BeginTransactionAsync();
+**Outbox** 的解法是：不直接發訊息，而是把「要發的事件」寫進資料庫的一張 outbox 表，和訂單放在同一個交易。交易成功，兩者都在；失敗，兩者都不在。另一個背景程式再把 outbox 裡的事件送到 RabbitMQ。
 
-// 1. 寫入訂單至資料庫
-_db.Orders.Add(order);
-await _db.SaveChangesAsync();
-await tx.CommitAsync(); // 資料庫交易成功提交！
+**Inbox** 是消費端的對應做法：收到訊息時，先記下「這則訊息處理過了」，和處理結果放在同一個交易，重複收到時就能辨認並略過。
 
-// 2. 發送整合事件到 RabbitMQ
-// 致命故障窗口：若此時 RabbitMQ 網路抖動、連線逾時、或 Pod 突然 Crash 重啟...
-await _bus.PublishAsync(new OrderCreatedIntegrationEvent(order.Id));
+## 運作原理
+
+```mermaid
+sequenceDiagram
+    participant API as 訂單 API
+    participant DB as 資料庫
+    participant Pub as Outbox 發布器
+    participant MQ as RabbitMQ
+    participant C as 通知 Consumer
+    API->>DB: 交易：INSERT orders + INSERT outbox
+    Pub->>DB: 讀取未發布的 outbox（SKIP LOCKED）
+    Pub->>MQ: 發布並等待 Publisher Confirm
+    Pub->>DB: 標記 published_at
+    MQ->>C: 交付訊息
+    C->>DB: 交易：INSERT inbox(message_id) + 寫入通知結果
+    C->>MQ: Ack
 ```
 
-在這個情境下，資料庫中的訂單已經正式成立，但發送至 RabbitMQ 的操作失敗拋出例外。結果：**訂單成立了，但庫存服務從未收到扣庫存通知，折價券也未被核銷**。
+注意每個箭頭之間都可能中斷：
 
-工程師試圖將順序顛倒：「先發送 RabbitMQ 訊息，成功後再提交資料庫交易」。
-結果引發了更嚴重的災難：訊息剛發送成功，資料庫提交時卻遭遇唯一鍵衝突回滾。消費端庫存服務已經收到訊息並扣減了庫存，但資料庫中**根本沒有這張訂單**！
+- 發布器在「收到 Confirm」之後、「標記已發布」之前當掉，重啟後會再發一次。
+- Consumer 在「交易提交」之後、「Ack」之前斷線，RabbitMQ 會把訊息再交付一次。
 
-在分散式環境下，資料庫與訊息佇列（Message Broker）分屬兩個獨立的儲存系統，跨越網路邊界的兩步操作**在物理上不可能具備單一原子性**。
+所以 Outbox 保證的是「**至少送一次**」，不是「只送一次」。重複交給 Inbox 處理：Inbox 表對 `(consumer 名稱, message_id)` 建唯一約束，重複的訊息在寫入 Inbox 時就會被擋下。
 
----
+## 常見錯誤與正確寫法
 
-## 反模式與正確解法
+### 1. 用分散式交易硬把兩者綁在一起
 
-### 反模式一：分散式雙寫與妄想依賴 2PC / XA 交易
+想用 `TransactionScope` 把資料庫和 RabbitMQ 放進同一個交易，但 RabbitMQ 不支援分散式交易（XA／2PC），.NET 在跨平台環境也不提供這種協調。即使可行，兩階段提交也會讓任一系統變慢時拖住另一個。用 Outbox。
 
-試圖透過跨網路的分散式二階段提交（2PC / XA Transactions）來綁定資料庫與 Message Broker，不僅吞吐量低落、鎖定時間極長，且在雲端環境（Kubernetes / Serverless / Cloud SQL）中絕大多數基礎設施均不支援 XA 協議。
+### 2. 多個發布器同時讀到同一筆 outbox
 
-### 正確解法一：事務性發件箱（Transactional Outbox 模式）
+API 部署了三個 Pod，每個都跑發布器，同時查詢「未發布的事件」，三個都拿到同一筆，於是同一個事件被發三次。
 
-**核心哲學：將「發送訊息的意圖」與「業務資料的變更」，在同一個本地資料庫交易（Local ACID Transaction）中原子提交！**
-
-在資料庫建立一張 `outbox_messages` 表，並在同一筆交易內同時寫入訂單與待發布訊息：
-
-~~~csharp
-await using var order = new NpgsqlCommand(
-    "INSERT INTO orders (id, product_id, quantity, created_at) VALUES ($1, $2, $3, $4)", connection, transaction);
-order.Parameters.AddWithValue(message.OrderId);
-order.Parameters.AddWithValue(message.ProductId);
-order.Parameters.AddWithValue(message.Quantity);
-order.Parameters.AddWithValue(message.OccurredAt);
-await order.ExecuteNonQueryAsync(token);
-
-await using var outbox = new NpgsqlCommand(
-    "INSERT INTO outbox_messages (message_id, order_id, payload, occurred_at, trace_parent) VALUES ($1, $2, $3, $4, $5)",
-    connection, transaction);
-outbox.Parameters.AddWithValue(message.MessageId);
-outbox.Parameters.AddWithValue(message.OrderId);
-outbox.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(message, JsonDefaults.Options));
-outbox.Parameters.AddWithValue(message.OccurredAt);
-outbox.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Text, Value = (object?)Activity.Current?.Id ?? DBNull.Value });
-await outbox.ExecuteNonQueryAsync(token);
-await transaction.CommitAsync(token);
-~~~
-
----
-
-### 正確解法二：非同步 Outbox 發布背景工作（搭配 SKIP LOCKED）
-
-由專屬的背景服務（`BackgroundService`）定期自 `outbox_messages` 取出未發布訊息，發送至 RabbitMQ 並標記完成：
-
-```csharp
-// 生產級 Outbox 發布處理器：利用 SKIP LOCKED 支援多 Pod 平行安全處理
-public class OutboxProcessor : BackgroundService
-{
-    private readonly DbDataSource _dataSource;
-    private readonly IMessagePublisher _publisher;
-    private readonly ILogger<OutboxProcessor> _logger;
-
-    public OutboxProcessor(
-        DbDataSource dataSource, 
-        IMessagePublisher publisher, 
-        ILogger<OutboxProcessor> logger)
-    {
-        _dataSource = dataSource;
-        _publisher = publisher;
-        _logger = logger;
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await ProcessOutboxBatchAsync(stoppingToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "處理 Outbox 訊息時發生異常");
-            }
-
-            await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
-        }
-    }
-
-    private async Task ProcessOutboxBatchAsync(CancellationToken ct)
-    {
-        const string selectSql = """
-            SELECT message_id, payload, trace_parent
-            FROM outbox_messages
-            WHERE published_at IS NULL
-            ORDER BY occurred_at ASC
-            LIMIT 50
-            FOR UPDATE SKIP LOCKED;
-            """;
-
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
-
-        var messages = (await conn.QueryAsync<OutboxItem>(
-            new CommandDefinition(selectSql, transaction: tx, cancellationToken: ct))).ToList();
-
-        foreach (var msg in messages)
-        {
-            await _publisher.PublishAsync("order.placed", msg.Payload, ct);
-
-            await conn.ExecuteAsync(
-                "UPDATE outbox_messages SET published_at = NOW() WHERE message_id = @MessageId",
-                new { msg.MessageId },
-                transaction: tx);
-        }
-
-        await tx.CommitAsync(ct);
-    }
-}
-```
-
----
-
-### 正確解法三：消費端事務性收件箱（Transactional Inbox 模式）
-
-在分散式訊息投遞中，**「至少送達一次（At-least-once Delivery）」是基本定律**——網路抖動或 Consumer 在 ACK 前 Crash，會導致同一則訊息被重複投遞。
-
-消費端必須實作 **Transactional Inbox**，利用訊息的唯一 `MessageId` 進行防重校驗：
-
-~~~csharp
-await using var inbox = new NpgsqlCommand(
-    "INSERT INTO inbox_messages (consumer_name, message_id) VALUES ('notifications-v1', $1) ON CONFLICT DO NOTHING",
-    connection, transaction);
-inbox.Parameters.AddWithValue(message.MessageId);
-if (await inbox.ExecuteNonQueryAsync(token) == 0)
-{
-    await transaction.CommitAsync(token);
-    return false;
-}
-
-await using var notification = new NpgsqlCommand(
-    "INSERT INTO notifications (order_id, message_id) VALUES ($1, $2) ON CONFLICT (order_id) DO NOTHING",
-    connection, transaction);
-notification.Parameters.AddWithValue(message.OrderId);
-notification.Parameters.AddWithValue(message.MessageId);
-await notification.ExecuteNonQueryAsync(token);
-await transaction.CommitAsync(token);
-~~~
-
----
-
-## 踩坑與避坑指南
-
-### 1. Outbox 高頻輪詢對資料庫的 CPU 負擔
-- **踩坑點**：若系統包含 30 個 Pod，每個 Pod 每秒都執行一次 `SELECT ... FROM outbox_messages`，在無訊息時會造成資料庫不必要的每秒 30 次查詢。
-- **最佳實踐**：
-  - 輕量架構：採用單一專屬 Worker 或搭配 Postgres `LISTEN/NOTIFY` 喚醒 Worker。
-  - 大規模架構：採用 **CDC（Change Data Capture）** 工具（如 Debezium），直接監聽資料庫 WAL 日誌串流並轉發至 Kafka/RabbitMQ，完全零資料庫輪詢開銷。
-
-### 2. Outbox 資料保留與歸檔策略
-- `outbox_messages` 表如果只增不減，半年內會累積數千萬列，拖慢查詢。
-- 必須配置每日排程分塊清理（Chunked Delete），將 `published_at` 超過 7 天的歷史記錄安全清除。
-
-### 3. 發布與消費的失敗隔離
-- 若某則訊息格式損壞導致發布反覆崩潰，必須在 Outbox 加入 `retry_count` 與 `error` 欄位。超過 3 次重試後標記為 `Failed`，並觸發告警，切勿阻擋後續其他正常訊息的處理。
-
----
-
-## 線上排查指令
-
-### 1. 查詢卡死或延遲未發布的 Outbox 訊息
+用 `FOR UPDATE SKIP LOCKED`：每個發布器鎖住自己拿到的那幾筆，其他發布器自動跳過被鎖住的資料。
 
 ```sql
--- 找出超過 30 秒仍未發布的堆積訊息
-SELECT message_id, occurred_at, trace_parent
-FROM outbox_messages
+-- 在一個交易內：取出最多 50 筆未發布事件，並鎖住它們
+SELECT id, type, payload
+FROM outbox
 WHERE published_at IS NULL
-  AND occurred_at < NOW() - INTERVAL '30 seconds'
-ORDER BY occurred_at ASC
-LIMIT 10;
+ORDER BY id
+LIMIT 50
+FOR UPDATE SKIP LOCKED;
 ```
 
-### 2. 檢測 Inbox 訊息重複消費與防重成效
+發布並收到 Confirm 後，在同一個交易裡更新 `published_at` 再提交。交易持有期間包含網路往返，所以批次不要太大，並設定發布逾時。
 
-```sql
--- 統計 Inbox 總處理量與最近接收記錄
-SELECT consumer_name, count(*) AS total_processed
-FROM inbox_messages
-GROUP BY consumer_name;
+### 3. Consumer 先 Ack 再處理
+
+先 Ack 再寫資料庫，寫入失敗時訊息已經從佇列移除，工作就遺失了。正確順序是：處理並提交交易，然後才 Ack。
+
+```csharp
+await using var tx = await db.Database.BeginTransactionAsync(ct);
+try
+{
+    db.InboxMessages.Add(new InboxMessage("notification-consumer", message.MessageId));
+    db.Notifications.Add(Notification.ForOrder(message.OrderId));
+    await db.SaveChangesAsync(ct);   // 重複的 MessageId 會在這裡違反唯一約束
+    await tx.CommitAsync(ct);
+}
+catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+{
+    // 已經處理過：視為成功，直接 Ack
+}
+await channel.BasicAckAsync(deliveryTag, multiple: false, ct);
 ```
 
-### 3. Prometheus / Grafana 監控指標
+`IsUniqueViolation` 依資料庫判斷，例如 PostgreSQL 的錯誤碼 `23505`。
 
-```text
-# Outbox 未處理訊息堆積量告警（大於 100 筆即需注意 Worker 是否卡死）
-outbox_unprocessed_messages_count > 100
+## 使用邊界
 
-# 訊息從產生到發布的平均延遲（秒）
-outbox_message_publishing_latency_seconds > 5
-```
+- **outbox 表會一直長大。** 已發布的事件要定期封存或刪除，並在 `published_at IS NULL` 上建立合適的索引，避免發布器每次都掃整張表。
+- 發布器輪詢的間隔是延遲與資料庫負擔的取捨；也可以用 PostgreSQL 的 LISTEN／NOTIFY 或 CDC（變更資料擷取）工具取代輪詢。
+- Inbox 只能防止「同一則訊息」被處理兩次。不同的訊息代表同一件業務事情時（例如兩個不同 ID 的「訂單已成立」），還要靠業務唯一條件，例如通知表對 `order_id` 建唯一約束。
+- 外部系統（例如真的寄信）無法放進你的資料庫交易；要依賴對方提供的冪等鍵或查詢結果的 API，接受「可能寄兩次」的風險並降低它。
+- RabbitMQ 端的確認機制見 [Ack 與 Publisher Confirm](/infrastructure/rabbitmq/acknowledgements/)。

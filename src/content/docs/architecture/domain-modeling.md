@@ -1,230 +1,146 @@
 ---
-title: "DDD 模型與分層責任"
-description: "用 Entity、Value Object 與 Aggregate 保護商業規則，分清 Domain、Application、Infrastructure 與 API。"
+title: "DDD 領域模型：讓訂單自己守住規則，而不是到處檢查"
+description: "用白話說明 Entity、Value Object 與 Aggregate，為什麼公開 setter 會讓規則失守，以及聚合邊界太大時會發生什麼事。"
 articleId: "architecture-domain-modeling"
 topic: "architecture"
 category: "domain-design"
 order: 1
-tags:
-  - "DDD"
-  - "Entity"
-  - "Value Object"
-  - "Aggregate Root"
-  - "Domain"
-  - "Application"
-  - "Infrastructure"
-  - "Web API"
-  - "不變量"
-difficulty: "advanced"
-prerequisites:
-  - "csharp-syntax-traps"
-relatedArticles:
-  - "architecture-application-patterns"
-  - "engineering-business-tests"
-  - "data-access-ef-core"
-applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-lastReviewed: "2026-10-10"
-takeaway: "先找需要保持一致的商業規則，再決定模型與邊界；資料表不會自動等於 Aggregate。"
+tags: ["DDD", "Entity", "Value Object", "Aggregate", "領域模型"]
+articleType: "deep-dive"
+difficulty: "beginner"
+prerequisites: []
+relatedArticles: ["architecture-application-patterns", "architecture-clean-architecture", "data-access-concurrency"]
+applicableVersions: "C# 12～14、.NET 8～10、EF Core 8～10。"
+lastReviewed: "2026-10-21"
+takeaway: "先找出必須一起成立的商業規則，再決定 Aggregate 的範圍；狀態只能透過表達業務意圖的方法改變，聚合之間只用 ID 互相引用。"
 sources:
-  - title: "Microsoft Learn：DDD 導向服務"
-    url: "https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/ddd-oriented-microservice"
-  - title: "Microsoft Learn：領域模型驗證"
-    url: "https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/domain-model-layer-validations"
+  - title: "Microsoft Learn：設計 DDD 導向的微服務"
+    url: "https://learn.microsoft.com/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/ddd-oriented-microservice"
+  - title: "Microsoft Learn：使用 DDD 設計微服務領域模型"
+    url: "https://learn.microsoft.com/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/microservice-domain-model"
+  - title: "Microsoft Learn：實作值物件"
+    url: "https://learn.microsoft.com/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/implement-value-objects"
+  - title: "Microsoft Learn：EF Core Backing Fields"
+    url: "https://learn.microsoft.com/ef/core/modeling/backing-field"
 ---
 
-## 案發現場
+## 這是什麼
 
-在維護一個運行兩年的電商系統時，團隊經常遇到以下詭異的業務 Bug：
-- 客服發現某筆訂單的 `TotalAmount` 是 500 元，但明細中的商品加總卻是 800 元。
-- 物流系統收到了「已出貨」通知，但財務系統卻顯示該訂單「尚未付款」。
-- 開發者在 Controller 中隨意寫下：
-  ```csharp
-  order.Status = "Shipped"; // 繞過了所有業務校驗！
-  ```
+電商系統裡有很多「必須一直成立」的規則：訂單總額要等於明細加總、已出貨的訂單不能再加商品、金額不能是負數。這些規則叫**不變量**（invariant）。
 
-查看代碼時，發現領域模型完全是由純資料屬性構成的**貧血模型（Anemic Domain Model）**：
-所有的屬性都是 `public { get; set; }`，所有集合都是 `List<T>`。所有的商業邏輯與校驗規則，散落在 Controller、十幾個不同的 Service 類別、甚至是前端 JavaScript 中。
+如果訂單類別的每個屬性都是 `public get; set;`，任何程式碼都能直接改狀態，規則就只能散落在 Controller、Service、甚至前端各自檢查，漏一個地方就出錯。
 
-任何工程師只要拿到這個 `Order` 實體，都能在任何地方任意竄改其內部狀態，而沒有任何地方保證**業務不變量（Business Invariants）**的完整性。
+**DDD（領域驅動設計）**的做法是：讓「訂單」這個物件自己負責守住規則。外部只能呼叫 `AddItem()`、`MarkAsPaid()` 這類表達業務意圖的方法，方法內部先檢查規則，通過了才改狀態。
 
-更嚴重的另一種極端是**超大聚合（God Aggregate）**：
-工程師把 `Customer` 設計成聚合根，底下掛了該客戶的所有歷史訂單、所有購物車商品、所有收件地址。當使用者只是想更新手機號碼時，EF Core 將幾千筆歷史訂單全部載入記憶體，引發嚴重的記憶體暴增與樂觀鎖衝突。
+## 運作原理
 
----
+DDD 用三個概念組織模型：
 
-## 反模式與正確解法
+| 概念 | 白話說明 | 電商例子 |
+| --- | --- | --- |
+| **Entity（實體）** | 有身分、會隨時間改變；兩筆資料內容一樣，只要 ID 不同就是不同的東西 | 訂單、商品、買家 |
+| **Value Object（值物件）** | 沒有身分，只看值；建立後不可變，要改就換一個新的 | 金額、地址、數量 |
+| **Aggregate（聚合）** | 一組必須一起保持一致的物件，外部只能透過「聚合根」操作 | 訂單（根）與訂單明細 |
 
-### 1. DDD 核心概念對照
+```mermaid
+flowchart LR
+    subgraph OrderAgg["訂單聚合（一個交易內一起儲存）"]
+        Order["Order（聚合根）<br/>Status、Total"] --> Line1["OrderLine"]
+        Order --> Line2["OrderLine"]
+    end
+    subgraph ProductAgg["商品聚合"]
+        Product["Product（聚合根）"]
+    end
+    subgraph BuyerAgg["買家聚合"]
+        Buyer["Buyer（聚合根）"]
+    end
+    Line1 -. "只存 ProductId" .-> Product
+    Order -. "只存 BuyerId" .-> Buyer
+```
 
-| 概念 | 核心定義 | 特性與規範 |
-| :--- | :--- | :--- |
-| **Entity（實體）** | 擁有唯一識別碼（Identity），貫穿其生命週期。 | 狀態會隨時間改變，但身分唯一（例如：`Order`, `User`）。 |
-| **Value Object（值物件）** | 沒有唯一識別碼，依據屬性值決定相等性。 | **完全不可變（Immutable）**，可自由替換（例如：`Money`, `Address`）。 |
-| **Aggregate Root（聚合根）** | 一組高度相關實體的唯一外部訪問入口。 | **守護不變量的邊界**，外部物件只能引用聚合根的 ID，不可直接修改聚合內部實體。 |
+聚合的邊界就是一致性的邊界：同一個聚合內的規則在一次交易裡全部成立；不同聚合之間只存對方的 ID，彼此的同步透過事件，接受短暫的不一致（最終一致性）。
 
----
+## 常見錯誤與正確寫法
 
-### 反模式一：貧血模型與公有 Setter
+### 1. 所有屬性都是公開 setter
 
 ```csharp
-// 致命反模式：貧血模型，允許任何外部代碼任意竄改狀態與集合
+// 錯：任何地方都能把總額改成負數、把狀態直接改成已出貨
 public class Order
 {
-    public Guid Id { get; set; }
-    public decimal TotalAmount { get; set; } // 可以被直接設成負數！
-    public string Status { get; set; } // 可以被任意設為未知狀態
-    public List<OrderItem> Items { get; set; } // 外部可隨意 Add，繞過總額計算！
+    public decimal TotalAmount { get; set; }
+    public string Status { get; set; } = "";
+    public List<OrderLine> Lines { get; set; } = new();
 }
 ```
 
-### 正確解法一：富領域模型與業務不變量守護
-
-將屬性設為私有變更（`private set`），只暴露表達業務意圖的方法（如 `Cancel()`、`AddItem()`），並透過 Value Object 封裝複合規則：
+改成狀態只能透過方法改變。金額做成值物件，在建立時就檢查：
 
 ```csharp
-// 正確解法：使用 C# 14 record 宣告不可變值物件（Value Object）
-public readonly record struct Money
+// 值物件：用 sealed record（class），沒有「繞過建構子」的預設值
+public sealed record Money
 {
+    public Money(decimal amount, string currency)
+    {
+        if (amount < 0) throw new ArgumentOutOfRangeException(nameof(amount), "金額不可為負數");
+        Amount = amount;
+        Currency = currency;
+    }
     public decimal Amount { get; }
     public string Currency { get; }
 
-    public Money(decimal amount, string currency = "TWD")
-    {
-        if (amount < 0)
-            throw new ArgumentException("金額不可為負數", nameof(amount));
-
-        Amount = amount;
-        Currency = string.IsNullOrWhiteSpace(currency) ? "TWD" : currency;
-    }
-
-    public static Money Zero => new(0);
-
-    public static Money operator +(Money a, Money b)
-    {
-        if (a.Currency != b.Currency)
-            throw new InvalidOperationException($"無法跨幣別相加: {a.Currency} vs {b.Currency}");
-        return new Money(a.Amount + b.Amount, a.Currency);
-    }
+    public Money Add(Money other) =>
+        other.Currency == Currency ? new Money(Amount + other.Amount, Currency)
+                                   : throw new InvalidOperationException("不同幣別不能直接相加");
 }
 
-// 富領域聚合根（Aggregate Root）：統一守護業務不變量
 public class Order
 {
+    private readonly List<OrderLine> _lines = new();
+    private Order() { } // 給 EF Core 使用
+
+    public Order(Guid id, Guid buyerId) => (Id, BuyerId, Status) = (id, buyerId, OrderStatus.PendingPayment);
+
     public Guid Id { get; private set; }
+    public Guid BuyerId { get; private set; }           // 只存買家的 ID
     public OrderStatus Status { get; private set; }
-    private readonly List<OrderItem> _items = new();
-    public IReadOnlyCollection<OrderItem> Items => _items.AsReadOnly();
-
-    public Money TotalAmount => _items.Aggregate(Money.Zero, (acc, item) => acc + item.Subtotal);
-
-    private Order() { } // EF Core 反射建構子
-
-    public Order(Guid id)
-    {
-        Id = id;
-        Status = OrderStatus.PendingPayment;
-    }
+    public IReadOnlyList<OrderLine> Lines => _lines;    // 外部只能讀
 
     public void AddItem(Guid productId, Money unitPrice, int quantity)
     {
         if (Status != OrderStatus.PendingPayment)
-            throw new InvalidOperationException("僅待付款訂單允許修改明細");
-
-        var existing = _items.FirstOrDefault(x => x.ProductId == productId);
-        if (existing is not null)
-        {
-            existing.AddQuantity(quantity);
-        }
-        else
-        {
-            _items.Add(new OrderItem(productId, unitPrice, quantity));
-        }
+            throw new InvalidOperationException("只有待付款訂單可以修改明細");
+        if (quantity <= 0)
+            throw new ArgumentOutOfRangeException(nameof(quantity));
+        _lines.Add(new OrderLine(productId, unitPrice, quantity));
     }
 
     public void MarkAsPaid()
     {
-        if (Status != OrderStatus.PendingPayment)
-            throw new InvalidOperationException($"處於 {Status} 狀態的訂單無法執行付款");
-
-        if (!_items.Any())
-            throw new InvalidOperationException("無明細的空訂單無法付款");
-
+        if (Status != OrderStatus.PendingPayment || _lines.Count == 0)
+            throw new InvalidOperationException("此訂單目前不能付款");
         Status = OrderStatus.Paid;
     }
 }
 ```
 
----
+值物件用 `sealed record` 而不是 `struct`：struct 的預設值（`default(Money)`）會跳過建構子，`Currency` 變成 null，等於繞過了檢查。
 
-### 反模式二：超大聚合與跨聚合直接物件引用
+EF Core 可以透過 backing field 載入私有的 `_lines`，不需要公開 setter。
 
-將整個電商資料庫串成一棵巨大物件樹：`Customer` 直接包含 `Orders`，`Order` 直接包含 `Product` 物件。這會導致每次儲存訂單時，EF Core 不小心觸發了對商品表或顧客表的額外查詢與鎖定。
+### 2. 聚合畫得太大
 
-### 正確解法二：依賴 ID 關聯跨聚合邊界
+把「買家」設計成聚合根，底下掛著他所有的訂單、地址和購物車。買家只是改個手機號碼，EF Core 也可能載入上千筆歷史訂單；任何一筆訂單變動，都會和改手機號碼的請求搶同一個聚合的版本號，造成不必要的並行衝突。
 
-**不同 Aggregate Root 之間，只允許保存對方的 ID（識別碼），絕不能直接持有物件引用實體！**
-- `Order` 只持有 `CustomerId: Guid` 與 `ProductId: Guid`。
-- 一致性邊界：單一交易內只允許修改一個聚合根；跨聚合的狀態變更透過**領域事件（Domain Events）**達成最終一致性。
+聚合要以「必須一起成立的規則」來畫，越小越好。訂單和買家之間沒有必須在同一個交易裡成立的規則，就分成兩個聚合，訂單只存 `BuyerId`。
 
----
+### 3. 在實體裡呼叫外部服務
 
-## 踩坑與避坑指南
+`order.Cancel(emailSender)` 讓實體依賴寄信服務，測試時也要準備假的寄信服務。實體只負責改變自己的狀態並記錄「發生了什麼事」（領域事件），寄信由應用層在交易提交後處理，見 [Outbox 與 Inbox](/architecture/outbox-inbox/)。
 
-### 1. EF Core 映射私有集合（Backing Fields）
-- **避坑點**：當實體中的 `Items` 暴露為 `IReadOnlyCollection<OrderItem>` 且底層私有欄位為 `_items` 時，若未正確配置，EF Core 可能無法在查詢時填入子明細。
-- **配置技巧**：
-  ```csharp
-  builder.HasMany(o => o.Items)
-      .WithOne()
-      .HasForeignKey("OrderId");
+## 使用邊界
 
-  // 明確指定 backing field
-  builder.Navigation(o => o.Items)
-      .UsePropertyAccessMode(PropertyAccessMode.Field);
-  ```
-
-### 2. 領域邏輯中嚴禁注入 IRepository 或外部 I/O 服務
-- 實體類別（Entity）不應注入任何依賴（如 `Order.Cancel(IEmailSender sender)`）。
-- **原則**：實體應該只專注於純記憶體運算與業務狀態校驗；外部相依服務必須由 Application 層的 Use Case 協調傳入。
-
-### 3. Aggregate 邊界劃分法則
-- 如果兩個業務概念不需要在**同一個微秒的資料庫硬性交易（ACID）**內保持絕對一致，它們就**不屬於同一個 Aggregate**！分拆成兩個小聚合，能大幅降低並行鎖競爭。
-
----
-
-## 線上排查指令
-
-### 1. 檢測資料庫中的不變量違規資料（資料修復 SQL）
-
-```sql
--- 稽核是否存在總額與明細加總不一致的髒資料
-SELECT o.id, o.total_amount, COALESCE(SUM(oi.price * oi.quantity), 0) AS calculated_total
-FROM orders o
-LEFT JOIN order_items oi ON oi.order_id = o.id
-GROUP BY o.id, o.total_amount
-HAVING o.total_amount != COALESCE(SUM(oi.price * oi.quantity), 0);
-
--- 稽核未付款卻直接出貨的狀態異常
-SELECT id, status, payment_id
-FROM orders
-WHERE status = 'Shipped' AND payment_id IS NULL;
-```
-
-### 2. 即時觀測單一請求載入實體的數量
-
-使用 EF Core 記錄器檢測是否有聚合過大導致載入過多實體：
-```bash
-# 觀察 EF Core ChangeTracker 內部追蹤的實體數量
-dotnet-dump analyze dump.bin
-> dumpheap -type Ecommerce.Domain.Orders.OrderItem
-```
-
-### 3. Prometheus / Grafana 業務健康度指標
-
-```text
-# 領域不變量校驗失敗率（若激增代表前端與後端合約不一致或惡意注入）
-rate(domain_invariant_violations_total[1m]) > 1
-
-# 聚合根操作平均延遲
-histogram_quantile(0.99, rate(aggregate_execution_seconds_bucket[5m]))
-```
+- **規則很少的資料不需要 DDD。** 商品分類、系統設定這類「存進去、讀出來」的資料，用簡單的資料模型就好，不必包成聚合。
+- 資料表不等於聚合。一張表可能屬於某個聚合的一部分，聚合的範圍由業務規則決定，而不是由外鍵決定。
+- 聚合之間的一致性靠事件與重試，要接受短暫的不一致；如果業務真的要求兩者在同一瞬間一致，代表它們可能應該是同一個聚合。
+- 聚合怎麼載入與儲存，見 [Repository 與 CQRS](/architecture/application-patterns/)；兩個請求同時改同一個聚合，見 [EF Core 樂觀並行](/data-access/concurrency/)。

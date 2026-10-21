@@ -1,209 +1,122 @@
 ---
-title: "Repository、Unit of Work 與 CQRS"
-description: "將 Command、Query、Handler、DTO 與 Validator 放在適當位置，避免模式堆疊。"
+title: "Repository、Unit of Work 與 CQRS：寫入走模型、查詢走捷徑"
+description: "說明 EF Core 已經提供的 Repository 與 Unit of Work 能力、泛用 Repository 為什麼常常是多餘的一層，以及同一個資料庫內的輕量 CQRS。"
 articleId: "architecture-application-patterns"
 topic: "architecture"
 category: "application-patterns"
-order: 2
-tags:
-  - "Repository"
-  - "Unit of Work"
-  - "Mediator"
-  - "CQRS"
-  - "Command"
-  - "Query"
-  - "Handler"
-  - "DTO"
-  - "Validator"
+order: 3
+tags: ["Repository", "Unit of Work", "CQRS", "EF Core", "用例"]
+articleType: "deep-dive"
 difficulty: "advanced"
-prerequisites:
-  - "architecture-domain-modeling"
-relatedArticles:
-  - "data-access-transactions"
-  - "data-access-ef-core"
-  - "engineering-business-tests"
-  - "aspnet-core-model-binding"
-  - "architecture-outbox-inbox"
-  - "architecture-communication-boundaries"
-applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-lastReviewed: "2026-10-10"
-takeaway: "模式用來釐清責任；CQRS 不要求分開資料庫，Mediator 也不會自動提供交易。"
+prerequisites: ["architecture-domain-modeling"]
+relatedArticles: ["data-access-ef-core", "data-access-tracking", "architecture-clean-architecture"]
+applicableVersions: ".NET 8～10、EF Core 8～10。"
+lastReviewed: "2026-10-21"
+takeaway: "Repository 以聚合為單位、只提供業務需要的方法；查詢畫面直接投影成 DTO，不必載入整個聚合。CQRS 不代表一定要兩個資料庫。"
 sources:
-  - title: "Microsoft Learn：CQRS"
-    url: "https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs"
-  - title: "Microsoft Learn：實作 Repository 與 Unit of Work"
-    url: "https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/infrastructure-persistence-layer-implementation"
+  - title: "Microsoft Learn：設計基礎結構持續性層"
+    url: "https://learn.microsoft.com/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/infrastructure-persistence-layer-design"
+  - title: "Azure Architecture Center：CQRS 模式"
+    url: "https://learn.microsoft.com/azure/architecture/patterns/cqrs"
+  - title: "Microsoft Learn：DbContext 的存留期、設定與初始化"
+    url: "https://learn.microsoft.com/ef/core/dbcontext-configuration/"
 ---
 
-## 案發現場
+## 這是什麼
 
-在 .NET 專案中，幾乎所有工程師都曾見過以下這種「經典的過度封裝反模式」：
+應用層的用例（例如「建立訂單」）需要載入聚合、改變狀態、存回去。這幾個名詞描述的是「資料怎麼進出」：
 
-開發者定義了泛型倉儲介面：
+- **Repository**：像一個裝聚合的集合，提供「依 ID 取得訂單」「加入一筆新訂單」這種以業務為單位的操作，藏起 SQL 的細節。
+- **Unit of Work**：把一次用例裡所有的變更收集起來，最後一次提交，要嘛全部成功，要嘛全部不生效。
+- **CQRS**（命令查詢責任分離）：把「改資料」（命令）和「讀資料」（查詢）分成兩條路徑，各自用最合適的方式實作。
+
+EF Core 的 `DbContext` 本身就同時扮演了 Unit of Work（`SaveChanges` 一次提交）和 Repository（`DbSet<T>`）。所以問題不是「要不要做這些模式」，而是「要不要在 EF Core 上面再包一層」。
+
+## 運作原理
+
+```mermaid
+flowchart LR
+    subgraph Command["命令：PlaceOrder"]
+        H1["Handler"] --> Repo["IOrderRepository<br/>載入整個 Order 聚合"]
+        Repo --> Domain["order.AddItem()<br/>領域規則檢查"]
+        Domain --> Save["SaveChangesAsync()<br/>一次交易提交"]
+    end
+    subgraph Query["查詢：GetOrderHistory"]
+        H2["Handler"] --> Proj["AsNoTracking + Select<br/>直接投影成 DTO"]
+    end
+    Save --> DB[("同一個資料庫")]
+    Proj --> DB
+```
+
+**命令**需要規則檢查，所以載入完整的聚合、透過領域方法修改，再由 Unit of Work 提交。
+
+**查詢**不改資料、不需要規則，直接用 `Select` 只取畫面需要的欄位，加上 `AsNoTracking()` 省去變更追蹤的成本。兩條路徑讀寫同一個資料庫，這就是「輕量 CQRS」。
+
+## 常見錯誤與正確寫法
+
+### 1. 泛用 Repository 把 IQueryable 開放出去
+
 ```csharp
-public interface IGenericRepository<T> where T : class
+// 錯：什麼都能查，等於沒有邊界；呼叫端仍需要懂 EF Core 的查詢行為
+public interface IRepository<T>
 {
-    IQueryable<T> GetAll();
-    Task<T?> GetByIdAsync(object id);
-    Task AddAsync(T entity);
-    Task UpdateAsync(T entity);
-    Task DeleteAsync(object id);
+    IQueryable<T> Query();
+    void Add(T entity);
 }
 ```
-宣稱的理由通常是：「為了將業務邏輯與 EF Core 解耦，方便未來把資料庫從 SQL Server 換成 MongoDB 或 PostgreSQL，並且方便寫 Mock 單元測試」。
 
-然而在真實維護中，慘況迅速顯現：
-1. **抽象洩漏**：`GetAll()` 回傳了 `IQueryable<T>`。所有複雜的 `Where`、`Include`、`OrderBy` 依然由 Service 層拼湊。這意味著 Service 層依然深深依賴 LINQ-to-Entities 的 SQL 轉譯行為，換資料庫的承諾從第一天起就是謊言。
-2. **效能災難**：因為包了一層 `IGenericRepository`，開發者無法在倉儲層精確控制 `AsSplitQuery`、`AsNoTracking` 或自訂 SQL 批次。
-3. **偽 CQRS 泥淖**：團隊決定引入 CQRS（命令查詢職責分離），卻誤信網路教學，立刻搞出兩個實體資料庫（一個寫庫，一個讀庫），結果為了解決兩庫之間的非同步同步延遲，整整耗費三個月排查「剛下單卻查不到」的幽靈 Bug。
-
----
-
-## 反模式與正確解法
-
-### 1. EF Core 本身就是 Repository 與 Unit of Work
-
-必須正視一個技術事實：
-- **`DbSet<T>` 本身就是 Repository**：它提供對特定實體集合的查詢與變更追蹤。
-- **`DbContext` 本身就是 Unit of Work**：它維護記憶體中的異動清單，並在呼叫 `SaveChangesAsync()` 時以單一資料庫交易原子提交。
-
-在 `DbContext` 外面再機械性地包一層 1:1 的 `GenericRepository<T>` 與 `IUnitOfWork`，大多只是無謂的重複轉發。
-
----
-
-### 反模式一：Generic Repository 暴露 IQueryable
-
-若倉儲介面暴露 `IQueryable<T>`，資料庫查詢邏輯將無節制地滲透並散落至全系統任何角落，無法在單一地方進行索引審查或查詢優化。
-
-### 正確解法一：以 Aggregate Root 為邊界的語意化倉儲（Semantic Repository）
-
-倉儲介面應**完全依附於 Aggregate Root**，方法名稱應直接體現業務語意，且永遠只回傳已完成評估的領域實體或唯讀資料（Task<T>，絕不回傳 IQueryable）：
+這一層沒有藏起任何東西，卻多了一層要維護。要包一層，就以聚合為單位，只提供用例真的需要的操作：
 
 ```csharp
-// 正確解法：語意化倉儲介面（純領域語意，零抽象洩漏）
 public interface IOrderRepository
 {
-    Task<Order?> GetByIdForUpdateAsync(Guid id, CancellationToken ct);
-    Task<IReadOnlyList<Order>> GetPendingPaymentOrdersOlderThanAsync(DateTimeOffset thresholdUtc, CancellationToken ct);
-    Task AddAsync(Order order, CancellationToken ct);
+    Task<Order?> GetAsync(Guid orderId, CancellationToken ct);
+    void Add(Order order);
 }
 
-// 實作層：在內部精準封裝 EF Core 的查詢優化與追蹤行為
-public class OrderRepository : IOrderRepository
+internal sealed class OrderRepository(ShopDbContext db) : IOrderRepository
 {
-    private readonly AppDbContext _db;
+    public Task<Order?> GetAsync(Guid orderId, CancellationToken ct) =>
+        db.Orders.Include(o => o.Lines).SingleOrDefaultAsync(o => o.Id == orderId, ct);
 
-    public OrderRepository(AppDbContext db) => _db = db;
-
-    public async Task<Order?> GetByIdForUpdateAsync(Guid id, CancellationToken ct)
-    {
-        // 內部決定載入策略：包含明細並保持追蹤
-        return await _db.Orders
-            .Include(o => o.Items)
-            .FirstOrDefaultAsync(o => o.Id == id, ct);
-    }
-
-    public async Task<IReadOnlyList<Order>> GetPendingPaymentOrdersOlderThanAsync(
-        DateTimeOffset thresholdUtc, 
-        CancellationToken ct)
-    {
-        return await _db.Orders
-            .AsNoTracking()
-            .Where(o => o.Status == OrderStatus.PendingPayment && o.CreatedAt < thresholdUtc)
-            .ToListAsync(ct);
-    }
-
-    public async Task AddAsync(Order order, CancellationToken ct) =>
-        await _db.Orders.AddAsync(order, ct);
+    public void Add(Order order) => db.Orders.Add(order);
 }
 ```
 
----
+`SaveChangesAsync` 由用例在最後呼叫一次，而不是每個 Repository 方法各自提交。
 
-### 反模式二：無痛點地盲目引入跨庫 CQRS
+### 2. 查詢畫面也載入完整聚合
 
-為了 CQRS，將讀取端搬到 Elasticsearch 或另一個 Redis 庫，卻為了維持資料一致性搞出複雜的補償邏輯。
+訂單列表頁只需要訂單編號、日期、總額，卻透過 Repository 載入每張訂單和全部明細，再在記憶體裡轉成 DTO。資料庫多傳了很多欄位，EF Core 還要追蹤每個實體的變更。
 
-### 正確解法二：同庫輕量級 CQRS（Command / Query 路徑分離）
-
-CQRS 的核心精髓是**職責分離（Separation of Concerns）**，**不需要拆分實體資料庫！**
-- **Command（寫入路徑）**：注重商業不變量與狀態一致性，透過 Aggregate 載入、執行領域方法、由 EF Core 交易提交。
-- **Query（讀取路徑）**：注重吞吐量與低延遲，直接繞過 Domain Model 與 ChangeTracker，利用 Dapper 或 EF Core `AsNoTracking()` 扁平投影至 DTO：
+查詢直接投影：
 
 ```csharp
-// CQRS 讀取路徑：直接利用 Dapper 扁平投影，極致速度且零追蹤開銷
-public class GetOrderSummaryQueryHandler : IRequestHandler<GetOrderSummaryQuery, OrderSummaryDto?>
+public sealed class GetOrderHistoryHandler(ShopDbContext db)
 {
-    private readonly DbDataSource _dataSource;
-
-    public GetOrderSummaryQueryHandler(DbDataSource dataSource)
-    {
-        _dataSource = dataSource;
-    }
-
-    public async Task<OrderSummaryDto?> Handle(GetOrderSummaryQuery request, CancellationToken ct)
-    {
-        const string sql = """
-            SELECT id, customer_id, total_amount, status, created_at
-            FROM orders
-            WHERE id = @OrderId;
-            """;
-
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        return await conn.QuerySingleOrDefaultAsync<OrderSummaryDto>(
-            new CommandDefinition(sql, new { request.OrderId }, cancellationToken: ct));
-    }
+    public Task<List<OrderSummaryDto>> HandleAsync(Guid buyerId, CancellationToken ct) =>
+        db.Orders.AsNoTracking()
+            .Where(o => o.BuyerId == buyerId)
+            .OrderByDescending(o => o.PlacedAt)
+            .Select(o => new OrderSummaryDto(o.Id, o.PlacedAt, o.TotalAmount)) // 成立時存下的總額快照
+            .Take(20)
+            .ToListAsync(ct);
 }
 ```
 
----
+`Select` 會被翻譯成只取這三個欄位的 SQL；結果是 DTO，不是實體，所以也不會被變更追蹤。
 
-## 踩坑與避坑指南
+### 3. 還沒有需要就拆成兩個資料庫
 
-### 1. MediatR Pipeline Behavior 中「無腦包裹交易」的陷阱
-- **現象**：很多架構範例中寫了一個 `TransactionBehavior<TRequest, TResponse>`，對所有經過 MediatR 的請求自動開啟 `BeginTransactionAsync()`。
-- **踩坑點**：所有的 `Query`（讀取操作）也會被無辜地包裹進資料庫交易中，白白佔用連線池與鎖資源！
-- **規則**：交易行為管線必須只針對實作了標記介面（如 `ITransactionalCommand`）的請求生效，Query 請求必須完全跳過。
+完整的 CQRS 可能讓查詢端使用另一個資料庫或搜尋引擎，由事件同步。代價是查詢資料會落後、同步可能失敗、要多維護一套儲存。只有在查詢量或查詢形式（例如全文搜尋）已經是單一資料庫解決不了的瓶頸時，才值得付這個代價。
 
-### 2. 查詢端過度載入 Aggregate 實體樹
-- 只要是為了在網頁或 App 列表顯示資訊，**絕不要**載入完整的領域聚合根！
-- 載入整顆包含明細、日誌的 Aggregate，再手動轉為 DTO，不僅浪費記憶體，還會產生昂貴的資料庫 JOIN 與多餘的實體追蹤。
+### 4. 在共用的 pipeline 裡替所有請求開交易
 
----
+用 MediatR 這類函式庫的 pipeline 自動替每個請求包一個交易，連純查詢也開交易，延長了連線持有時間。交易只包住命令，而且以一次 `SaveChangesAsync` 為主；跨多次 `SaveChanges` 的情況才需要明確的交易，見 [交易](/data-access/transactions/)。
 
-## 線上排查指令
+## 使用邊界
 
-### 1. 檢驗讀寫查詢的路徑延遲與資料庫耗時
-
-```sql
--- PostgreSQL 查詢 Command（寫入）與 Query（讀取）的前 5 名耗時陳述式
-SELECT 
-    substring(query, 1, 50) AS short_query,
-    calls, 
-    round(total_exec_time::numeric, 2) AS total_time_ms,
-    round(mean_exec_time::numeric, 2) AS avg_time_ms
-FROM pg_stat_statements
-WHERE query ILIKE '%orders%'
-ORDER BY total_exec_time DESC
-LIMIT 5;
-```
-
-### 2. .NET 診斷觀測 ChangeTracker 實體追蹤負擔
-
-在開發與效能檢測環境，監控讀取請求是否誤開啟了追蹤：
-```bash
-# 監控 EF Core 實體追蹤計數器
-dotnet-counters monitor -p $(pgrep -f "Ecommerce.Api.dll") \
-  --counters Microsoft.EntityFrameworkCore
-```
-重點關注 `active-contexts` 與 `execution-strategy-operation-failures`。
-
-### 3. Prometheus / Grafana 監控指標
-
-```text
-# 寫入 Command 執行耗時 p95 分位數
-histogram_quantile(0.95, sum(rate(application_command_duration_seconds_bucket[1m])) by (le, command))
-
-# 讀取 Query 執行耗時 p95 分位數（通常應低於 10ms）
-histogram_quantile(0.95, sum(rate(application_query_duration_seconds_bucket[1m])) by (le, query))
-```
+- 小型服務直接在用例裡使用 `DbContext` 完全沒問題。包一層 Repository 的好處是把聚合的載入方式集中管理，並讓用例測試可以替換資料存取。
+- Repository 以聚合為單位，不是以資料表為單位；訂單明細沒有自己的 Repository。
+- 查詢端越過 Repository 直接讀資料庫是刻意的設計，不是破壞分層。
+- `DbContext` 不是執行緒安全的，同一個請求內不要平行使用；生命週期見 [EF Core 查詢](/data-access/ef-core/)。
