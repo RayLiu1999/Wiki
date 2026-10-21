@@ -53,6 +53,7 @@ const result = await injectManifest({
     'infrastructure/containers-networking/index.html',
     'platforms/kubernetes/index.html',
     'platforms/gke/index.html',
+    'platforms/eks/index.html',
     'platforms/dotnet/index.html',
     'engineering/index.html',
     'topics/index.html',

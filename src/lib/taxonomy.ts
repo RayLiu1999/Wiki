@@ -50,6 +50,10 @@ export const topics = {
     { id: 'gke-platform', name: '平台與身分', description: 'Project、Autopilot／Standard、IAM 與工作負載身分' },
     { id: 'gke-integration', name: '網路與資料', description: 'Gateway、TLS、Cloud SQL 與依賴端點' },
   ] },
+  eks: { name: 'AWS 與 EKS', path: 'platforms/eks', mark: 'EKS', icon: 'network', description: '把 Kubernetes 接到 AWS 的身分、負載平衡與託管資料服務，並對照 GCP 的同類服務。', categories: [
+    { id: 'eks-platform', name: '平台與身分', description: '服務對照、Auto Mode、節點與 Pod Identity' },
+    { id: 'eks-integration', name: '流量與資料', description: 'ALB、TLS、RDS、ElastiCache 與 Amazon MQ' },
+  ] },
   dotnet: { name: '.NET 執行環境', path: 'platforms/dotnet', mark: '.NET', icon: 'layers', description: '從 SDK 與 Hosting 深入 CLR、GC、ThreadPool 和效能診斷，理解程式如何執行與管理資源。', categories: [
     { id: 'toolchain', name: 'SDK 與套件', description: 'SDK 版本、NuGet 與集中版本管理' },
     { id: 'runtime-models', name: 'Hosting 模型', description: 'Generic Host、Minimal Hosting 與 Startup' },

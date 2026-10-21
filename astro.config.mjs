@@ -42,6 +42,7 @@ export default defineConfig({
         { label: '容器與網路', items: [{ autogenerate: { directory: 'infrastructure/containers-networking' } }] },
         { label: 'Kubernetes', items: [{ autogenerate: { directory: 'platforms/kubernetes' } }] },
         { label: 'GCP 與 GKE', items: [{ autogenerate: { directory: 'platforms/gke' } }] },
+        { label: 'AWS 與 EKS', items: [{ autogenerate: { directory: 'platforms/eks' } }] },
         { label: '.NET 執行環境', items: [{ autogenerate: { directory: 'platforms/dotnet' } }] },
         { label: '工程實務', items: [{ autogenerate: { directory: 'engineering' } }] },
       ],
