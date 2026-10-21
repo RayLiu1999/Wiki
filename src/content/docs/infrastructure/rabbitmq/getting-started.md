@@ -1,161 +1,127 @@
 ---
-title: "訊息佇列與 RabbitMQ 入門"
-description: "用訂單背景通知理解訊息代理、工作佇列與發布訂閱，分清接收與完成。"
+title: "RabbitMQ 入門：把工作交給佇列，回應時說清楚完成到哪一步"
+description: "說明訊息佇列解決什麼問題、RabbitMQ 的 Producer、Exchange、Queue、Consumer 怎麼分工，以及「訊息送出」和「工作完成」為什麼是兩件事。"
 articleId: "rabbitmq-getting-started"
 topic: "rabbitmq"
 category: "rabbitmq-basics"
 order: 1
-tags:
-  - "RabbitMQ"
-  - "message broker"
-  - "Producer"
-  - "Exchange"
-  - "Queue"
-  - "Binding"
-  - "Consumer"
-  - "工作佇列"
-  - "pub/sub"
+tags: ["RabbitMQ", "訊息佇列", "AMQP", "非同步", "202 Accepted"]
+articleType: "deep-dive"
 difficulty: "beginner"
-prerequisites:
-  - "csharp-channels"
-relatedArticles:
-  - "rabbitmq-routing"
-  - "architecture-communication-boundaries"
-  - "aspnet-core-dapr"
-applicableVersions: "RabbitMQ 4.x／AMQP 0-9-1／RabbitMQ.Client 7.x／.NET 10。"
-lastReviewed: "2026-10-10"
-takeaway: "把工作交給佇列後，發布、排隊與完成是不同階段；API 的回應契約要說清楚已完成哪一步。"
+prerequisites: []
+relatedArticles: ["rabbitmq-routing", "architecture-communication-boundaries", "csharp-channels"]
+applicableVersions: "RabbitMQ 4.x（AMQP 0-9-1）、RabbitMQ.Client 7.x、Amazon MQ for RabbitMQ。"
+lastReviewed: "2026-10-21"
+takeaway: "訊息佇列讓「接下工作」和「完成工作」分開；API 回應時要明確告訴用戶端完成到哪一步，佇列也不該被當成長期保存資料的地方。"
 sources:
-  - title: "RabbitMQ：AMQP 0-9-1 Model"
+  - title: "RabbitMQ：AMQP 0-9-1 Model Explained"
     url: "https://www.rabbitmq.com/tutorials/amqp-concepts"
-  - title: "RabbitMQ：Tutorials"
-    url: "https://www.rabbitmq.com/tutorials"
-  - title: "RabbitMQ：Reliability"
-    url: "https://www.rabbitmq.com/docs/reliability"
+  - title: "RabbitMQ：Queues"
+    url: "https://www.rabbitmq.com/docs/queues"
+  - title: "RabbitMQ：Monitoring"
+    url: "https://www.rabbitmq.com/docs/monitoring"
+  - title: "RabbitMQ：Cluster Operator for Kubernetes"
+    url: "https://www.rabbitmq.com/kubernetes/operator/operator-overview"
+  - title: "Amazon MQ：Monitoring RabbitMQ brokers with CloudWatch"
+    url: "https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/security-logging-monitoring-cloudwatch.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-在單體系統或初期的微服務中，業務流程往往採用同步 HTTP 或行程內方法呼叫：
-當使用者點擊「完成訂單」時，訂單 API 必須在一條請求管線內完成：
-1. 建立訂單落庫（20ms）
-2. 呼叫第三方簡訊網關發送通知（1,200ms）
-3. 呼叫發票系統開立電子發票（800ms）
-4. 同步資料至倉儲物流 WMS 系統（1,500ms）
+買家下單後，系統要寄確認信、通知倉庫、更新推薦資料。如果這些都在下單 API 裡同步完成，寄信服務慢，買家就跟著等；寄信服務停機，下單就失敗。
 
-整筆結帳請求耗時長達 3.5 秒以上。使用者焦慮地看著轉圈圖示；一旦簡訊網關網路抖動超時，整筆訂單拋出 500 錯誤，使用者重複點擊，造成重複扣款。
+**訊息佇列**讓 API 只做必要的部分（建立訂單），然後把「要寄信」這件事寫成一則訊息丟進佇列，立刻回應買家。另一個背景程式（Consumer）從佇列取出訊息，慢慢處理。即使寄信服務暫時停機，訊息也會留在佇列裡，恢復後繼續處理。
 
-工程師為了解耦，初期使用 C# 的 `System.Threading.Channels` 或本機 `Task.Run` 在背景執行。然而，當後續系統部署至 Kubernetes 時，致命問題爆發：
-每次發布新版本或 HPA 縮容終止 Pod 時，**停留在本機記憶體隊列中的數百筆發票與物流通知直接隨著容器銷毀而永久蒸發**！財務系統收不到發票紀錄、倉庫漏出貨，引發嚴重的客訴。
+**RabbitMQ** 是常用的訊息佇列服務（broker），使用 AMQP 協定。
 
-問題的本質在於：**缺乏具備獨立持久化、確認機制與網路解耦能力的中心化訊息代理（Message Broker）**。
+## 運作原理
 
----
-
-## 反模式與正確解法
-
-### 1. AMQP 0-9-1 核心模型解析
-
-RabbitMQ 遵循 **AMQP 0-9-1** 規範。理解其拓撲架構是正確使用的第一步：
-
-```text
-[ Producer (發布者) ] 
-       │
-       ▼ (發布至 Exchange，帶 Routing Key)
-[ Exchange (交換機) ] ── (Binding 規則) ──> [ Queue (持久化佇列) ]
-                                                   │
-                                                   ▼ (Push / Pull)
-                                            [ Consumer (消費者) ]
+```mermaid
+flowchart LR
+    API["訂單 API<br/>（Producer）"] -->|"發布：order.placed"| X["Exchange<br/>依規則分送"]
+    X -->|"Binding"| Q1["佇列：notification"]
+    X -->|"Binding"| Q2["佇列：warehouse"]
+    Q1 --> C1["通知 Worker<br/>（Consumer）"]
+    Q2 --> C2["倉儲 Worker"]
 ```
 
-- **Producer**：只負責將訊息發送給 **Exchange**，**絕不能直接指定特定的 Queue**。
-- **Exchange**：負責依據路由鍵（Routing Key）與綁定規則（Binding），決定將訊息轉發至哪一個或多個 Queue。
-- **Queue**：真正儲存訊息的緩衝池，具備磁碟持久化與記憶體保護機制。
-- **Consumer**：訂閱 Queue，處理任務並回傳確認（Ack）。
+- **Producer（生產者）**：發布訊息的程式。它不直接把訊息放進佇列，而是送到 Exchange。
+- **Exchange（交換器）**：依照規則決定訊息要送到哪些佇列。
+- **Binding（綁定）**：Exchange 和佇列之間的規則，例如「routing key 是 `order.placed` 的訊息送到 notification 佇列」。
+- **Queue（佇列）**：保存訊息，直到被 Consumer 取走並確認。
+- **Consumer（消費者）**：從佇列取出訊息並處理，處理完回報確認（Ack），RabbitMQ 才刪除訊息。
 
----
+一則訊息從發布到處理完成，經過好幾個階段：API 送出、broker 收下、送到佇列、Consumer 取走、處理完成、確認。每一段都可能失敗，所以「訊息送出了」不等於「工作做完了」。
 
-### 反模式一：混淆「發布成功」與「業務完成」的邊界合約
+## 常見錯誤與正確寫法
 
-將工作交給 RabbitMQ 後，前端 API 卻立即向使用者回傳「發票已開立、物流已出貨」。
-事實上，訊息此時只是躺在佇列中等待排隊。如果後續 Consumer 當機或金流服務異常，使用者的認知與實際狀態會產生巨大落差。
+### 1. 回應讓用戶端以為事情已經完成
 
-### 正確解法一：明確的非同步語意與 HTTP 202 Accepted 契約
+下單 API 發布了「寄確認信」的訊息後回應 `200 OK` 和「已寄出確認信」，但信其實還在佇列裡排隊，甚至可能失敗。
 
-當核心訂單資料寫入後，API 將非核心事件推入 RabbitMQ，並對外傳達「已受理排隊處理」的合約：
+回應的內容要符合實際完成的階段。訂單已建立，就回 `201 Created`，並讓用戶端可以查詢通知狀態；整件工作都還沒開始處理（例如產生報表），回 `202 Accepted` 和查詢進度的網址：
 
 ```csharp
-// 正確解法：核心業務同步落庫，非同步事件解耦周邊服務
-[HttpPost("orders")]
-public async Task<IActionResult> CreateOrderAsync(CreateOrderDto dto, CancellationToken ct)
+app.MapPost("/reports/sales", async (SalesReportRequest req, ReportQueue queue, CancellationToken ct) =>
 {
-    // 1. 核心業務落庫（交易提交）
-    var orderId = await _orderService.CreateOrderAsync(dto, ct);
-
-    // 2. 發布非同步整合事件至 RabbitMQ
-    var integrationEvent = new OrderCreatedEvent(orderId, dto.CustomerId, DateTimeOffset.UtcNow);
-    await _eventPublisher.PublishAsync("orders.events", "order.created", integrationEvent, ct);
-
-    // 3. 回傳 HTTP 202 Accepted，清楚告知客戶端工作已受理進入排程
-    return Accepted(new { OrderId = orderId, Status = "PendingProcessing" });
-}
+    var jobId = await queue.EnqueueAsync(req, ct);
+    // 202：已經收下，還沒完成；Location 指向可以查詢進度的端點
+    return TypedResults.Accepted($"/reports/jobs/{jobId}", new { jobId, status = "queued" });
+});
 ```
 
----
+### 2. 把佇列當成資料庫
 
-### 反模式二：把 RabbitMQ 當作長期資料庫使用
+把幾百萬筆訂單紀錄放在佇列裡「需要時再取」。RabbitMQ 的設計是讓訊息盡快被消費掉，佇列越長，記憶體與磁碟用量越大，broker 的效能與恢復時間都會變差。佇列應該是「短的」：正常情況下，訊息在幾秒到幾分鐘內就被處理。
 
-認為「反正 Queue 有持久化，我就把過去半年的所有已處理訂單留在 Queue 裡面備份」。
-RabbitMQ 的底層是 Erlang 行程與索引樹，專為**「高流動性的訊息中轉」**而設計。當單一 Queue 堆積數百萬筆訊息時，Erlang 會頻繁將訊息從記憶體換頁（Paging）至磁碟，導致吞吐量雪崩式下跌，記憶體嚴重膨脹。
+需要長期保存、可以重複讀取的事件，放資料庫，或使用 RabbitMQ 的 Stream 佇列類型，見 [佇列類型與順序](/infrastructure/rabbitmq/queues-ordering/)。
 
-### 正確解法二：保持佇列短淺與有界消費（Ephemeral Queues）
+### 3. 在程式碼的各處宣告佇列，參數卻不一致
 
-佇列中的訊息應該是**「隨來隨走」**。任何已成功處理的訊息必須在 Consumer 發送 Ack 後立即自 Queue 移除；若需要長期歷史日誌分析，應同步至 Elasticsearch 或 Kafka 等串流日誌儲存。
+Producer 宣告佇列為 durable，Consumer 宣告同名佇列時忘了加，RabbitMQ 會因參數衝突而關閉 channel。佇列、Exchange 與 Binding 的宣告集中在一處（例如啟動時的拓撲設定，或由維運以設定檔管理），所有程式使用相同的參數。
 
----
+## 使用邊界
 
-## 踩坑與避坑指南
+- **需要立即知道結果的事，不適合丟進佇列。** 例如「這張卡能不能扣款」，買家必須等到答案。
+- 同一個程序內、可以接受遺失的背景工作，用程序內佇列更簡單，見 [Channels](/languages/csharp/channels/)。
+- 訂單建立與訊息發布要一起成功，需要 Outbox，見 [Outbox 與 Inbox](/architecture/outbox-inbox/)。
+- 什麼時候用同步呼叫、什麼時候用訊息，見 [通訊方式的選擇](/architecture/communication-boundaries/)。
 
-### 1. 佇列聲明（Queue Declare）的冪等性與屬性衝突
-- 在 RabbitMQ 中，Queue 的屬性（如 `durable: true`, `exclusive: false`, `x-queue-type: quorum`）**一旦建立就不可更改**！
-- **踩坑點**：若歷史代碼建立的 Queue 是 `durable: false`，新代碼嘗試以 `durable: true` 呼叫 `QueueDeclareAsync`，Broker 會立即拋出 `PRECONDITION_FAILED - inequivalent arg` 錯誤並強制關閉該 Channel！
-- **避坑規則**：修改 Queue 核心屬性時，必須規劃藍綠遷移（建立新名稱 Queue 並重新綁定），切勿直接在既有 Queue 上變更參數。
+## 雲端排查
 
-### 2. 連線心跳（Heartbeat）與網路防火牆靜默中斷
-- 生產環境中，應用程式與 RabbitMQ 之間常跨越雲端負載平衡器或 NAT 防火牆。若長時間無訊息流動，防火牆會靜默關閉空閒 TCP 連線。
-- **規則**：在連線字串中保留標準心跳配置（`RequestedHeartbeat = TimeSpan.FromSeconds(60)`），確保底層 Socket 維持活性。
-
----
-
-## 線上排查指令
-
-### 1. 查詢 RabbitMQ 伺服器佇列健康度
-
-使用 `rabbitmqctl` 命令行工具檢查：
-```bash
-# 列出所有 Queue 名稱、堆積訊息數、未確認數、Consumer 數量與佇列類型
-rabbitmqctl list_queues name messages messages_unacknowledged consumers type
-```
-**健康指標判斷：**
-- `messages` 應維持在低水位（接近 0）。
-- `consumers` 必須大於 0（若為 0 代表下游服務已全部離線！）。
-
-### 2. 檢測交換機與綁定路由關係
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-# 查看所有已聲明的 Exchange 及其型別
-rabbitmqctl list_exchanges name type durable
-
-# 查看特定 Queue 的綁定關係
-rabbitmqctl list_bindings source_name destination_name destination_kind routing_key
+# Consumer（Worker）是否在執行、是否反覆重啟
+kubectl get pods -n shop -l app=notification-worker
+kubectl logs -n shop -l app=notification-worker --since=15m | tail -30
 ```
 
-### 3. Prometheus / Grafana 監控指標
+### 託管服務層
 
-```text
-# 佇列堆積警告：訊息數大於 1,000 且持續 5 分鐘
-rabbitmq_queue_messages_ready{queue="order.notifications"} > 1000
+#### GKE
 
-# 無消費者在線告警（下游 Consumer 全部死機）
-rabbitmq_queue_consumers{queue="order.notifications"} == 0
+本站假設 RabbitMQ 以 Cluster Operator 部署在 GKE 上，由你自己維運：
+
+```bash
+# 叢集狀態
+kubectl get rabbitmqclusters -n messaging
+
+# 各佇列的待處理、未確認訊息數與 Consumer 數
+kubectl exec -n messaging shop-mq-server-0 -- \
+  rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
 ```
+
+#### EKS
+
+Amazon MQ 不提供 `rabbitmqctl`，改看 CloudWatch 的 `AWS/AmazonMQ` 指標：佇列層級的 `MessageReadyCount`、`MessageUnacknowledgedCount`、`ConsumerCount`，以及 broker 層級的 `ConnectionCount`。
+
+| 看到什麼 | 代表什麼 |
+| --- | --- |
+| 待處理訊息持續增加 | Consumer 處理不及，或 Consumer 數為 0 |
+| 未確認訊息很多 | Consumer 取走了訊息卻沒有 Ack，可能卡住或 prefetch 太大 |
+| Consumer 數為 0 | Worker 沒有在執行，或連不上 broker |
+
+### 應用程式層
+
+在訊息中帶上建立時間，Consumer 處理時記錄「從發布到開始處理花了多久」。這個延遲比佇列長度更貼近使用者的感受：佇列只有 100 則，但每則要處理 10 秒，買家仍然要等十幾分鐘才收到信。

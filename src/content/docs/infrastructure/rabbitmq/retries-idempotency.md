@@ -1,212 +1,146 @@
 ---
-title: "有限重試、死信與冪等處理"
-description: "區分可恢復與無法處理的訊息，用確認、退避、死信及資料庫約束避免無限循環。"
+title: "重試、死信與冪等：處理失敗的訊息，不要無限重來也不要做兩次"
+description: "說明哪些失敗該重試、無限 requeue 為什麼會卡死佇列、用延遲重試與死信佇列有限度地重試，以及 quorum 佇列的投遞次數上限。"
 articleId: "rabbitmq-retries-idempotency"
 topic: "rabbitmq"
 category: "rabbitmq-reliability"
 order: 5
-tags:
-  - "retry"
-  - "backoff"
-  - "DLX"
-  - "DLQ"
-  - "dead letter"
-  - "冪等"
-  - "idempotency"
-  - "Inbox"
-  - "poison message"
+tags: ["RabbitMQ", "重試", "死信佇列", "DLX", "x-delivery-limit", "冪等"]
+articleType: "deep-dive"
 difficulty: "advanced"
-prerequisites:
-  - "rabbitmq-acknowledgements"
-relatedArticles:
-  - "architecture-outbox-inbox"
-  - "redis-concurrency"
-  - "engineering-cache-messaging-tests"
-applicableVersions: "RabbitMQ 4.x／AMQP 0-9-1／RabbitMQ.Client 7.x／.NET 10。"
-lastReviewed: "2026-10-10"
-takeaway: "重試需要次數與退避上限；消費成功與去重紀錄必須一起提交，才能安全面對重送。"
+prerequisites: ["rabbitmq-acknowledgements"]
+relatedArticles: ["architecture-outbox-inbox", "rabbitmq-queues-ordering", "aspnet-core-http-resilience"]
+applicableVersions: "RabbitMQ 4.x（quorum 佇列預設投遞上限需 4.0 以上）、RabbitMQ.Client 7.x、Amazon MQ for RabbitMQ。"
+lastReviewed: "2026-10-21"
+takeaway: "暫時性失敗以遞增的延遲有限次重試，永久性失敗直接送進死信佇列；處理結果與「已處理」紀錄放在同一個交易，重送時才不會做兩次。"
 sources:
   - title: "RabbitMQ：Dead Letter Exchanges"
     url: "https://www.rabbitmq.com/docs/dlx"
-  - title: "RabbitMQ：Reliability"
+  - title: "RabbitMQ：Quorum Queues（poison message handling）"
+    url: "https://www.rabbitmq.com/docs/quorum-queues#poison-message-handling"
+  - title: "RabbitMQ：Time-To-Live and Expiration"
+    url: "https://www.rabbitmq.com/docs/ttl"
+  - title: "RabbitMQ：Reliability Guide"
     url: "https://www.rabbitmq.com/docs/reliability"
-  - title: "RabbitMQ：Quorum Queues"
-    url: "https://www.rabbitmq.com/docs/quorum-queues"
-  - title: "Microsoft Learn：訂閱與冪等"
-    url: "https://learn.microsoft.com/en-us/dotnet/architecture/microservices/multi-container-microservice-net-applications/subscribe-events"
+  - title: "Amazon MQ：Monitoring RabbitMQ brokers with CloudWatch"
+    url: "https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/security-logging-monitoring-cloudwatch.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-在以訊息佇列驅動的非同步架構中，如果錯誤處理設計不當，輕則引發全站死鎖風暴，重則造成嚴重的重複扣款與資料損壞。
+通知 Worker 處理訊息時會遇到兩種失敗：
 
-典型災難現場一：**「毒訊息（Poison Message）」引發的無窮 Requeue 活鎖死迴圈**。
-生產環境接收到了一筆上游發送的損壞資料（例如 JSON 缺少必要欄位，反序列化必然拋出例外）。消費端工程師在 `catch` 區塊中寫下了這行看似負責任的代碼：
-```csharp
-// 致命反模式：發生未捕捉例外時，無腦 requeue: true
-await channel.BasicNackAsync(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
-```
-這行代碼引爆了系統自殘：
-1. Consumer 報錯 ➔ 發送 Nack 并要求 Requeue。
-2. RabbitMQ 立即將這筆壞訊息放回佇列最前端。
-3. Consumer 毫無延遲地再次拉取這筆壞訊息 ➔ 再次拋錯 ➔ 再次 Requeue。
-**每秒鐘這筆壞訊息被反覆處理與拋錯 5,000 次！** Consumer 的 CPU 飆上 100%，RabbitMQ 的日誌被塞爆數十 GB，而隊列中排在後面的數萬筆正常訂單訊息被徹底卡死，系統陷入完全癱瘓。
+- **暫時性失敗**：寄信服務暫時逾時、資料庫正在容錯移轉。等一下再試通常就會成功。
+- **永久性失敗**：訊息格式錯誤、引用的訂單根本不存在。重試一百次結果都一樣，這種訊息叫**毒訊息**（poison message）。
 
-典型災難現場二：**網路抖動重送導致的重複扣款**。
-當 Consumer 處理完扣款業務後，在發送 Ack 的前一刻網路短暫抖動斷開。RabbitMQ 判定消費者離線，自動將該訊息重新投遞給另一個 Consumer。由於缺乏冪等性防護，第二個 Consumer 再次對同一個訂單執行扣款，引發重大帳務客訴。
+處理失敗的原則是：暫時性的**有限度地重試**，永久性的**移到一旁**（死信佇列）等人處理，而且不管重試幾次，**業務結果只能發生一次**。
 
----
+## 運作原理
 
-## 反模式與正確解法
-
-### 1. 錯誤類型分類與處置矩陣
-
-並非所有錯誤都應該重試！在消費端必須精確區分錯誤類型：
-
-| 錯誤類型 | 特徵與成因 | 處置策略 |
-| :--- | :--- | :--- |
-| **暫態錯誤（Transient Faults）** | 外部微服務網路短暫抖動、資料庫連線逾時、資料庫死鎖。 | **有限指數退避重試（Backoff Retry）**。 |
-| **永久錯誤（Permanent Faults）** | JSON 格式損壞、型別轉換失敗、違反商業約束（如商品已下架）。 | **直接轉發死信（Dead Letter）**，絕不原隊列重試！ |
-
----
-
-### 正確解法一：三級有界延時重試與死信隊列（DLX / DLQ）
-
-透過 RabbitMQ 的 **Dead Letter Exchange (DLX)** 與訊息 TTL 機制，建構階梯式重試管道，將毒訊息隔離：
-
-```text
-[ Work Queue (正常工作佇列) ] 
-       │ (消費失敗，且未達最大次數)
-       ▼
-[ Retry Queue (帶 TTL 例如 500ms，無消費者) ] ── (TTL到期死信轉發) ──> [ Work Queue (重試) ]
-       │
-       ▼ (超過最大重試次數例如 3 次)
-[ Dead Letter Queue (死信佇列 DLQ) ] ──> 人工檢視 / 報警修復
+```mermaid
+flowchart LR
+    Q["notification 佇列"] --> C["Consumer"]
+    C -->|"成功"| Ack["Ack"]
+    C -->|"暫時失敗，第 n 次"| Retry["retry.30s 佇列<br/>TTL 到期後回到原佇列"]
+    Retry -->|"dead-letter 回原 Exchange"| Q
+    C -->|"永久失敗或超過次數"| DLQ["notification.dlq<br/>死信佇列，人工處理"]
 ```
 
-拓撲宣告與延時重試邏輯：
+**為什麼不能直接 requeue？** `BasicNack` 加上 `requeue: true` 會把訊息立刻放回佇列，Consumer 馬上又拿到它、又失敗，形成一個高速的無限迴圈。毒訊息會一直佔著 Consumer，CPU 打滿，後面正常的訊息也處理不到。
+
+**延遲重試**：把失敗的訊息發到一個設定了 TTL 的重試佇列，它沒有 Consumer；訊息在裡面等 TTL 到期後，透過 dead-letter 設定回到原本的佇列，再被處理一次。可以準備多個不同延遲的重試佇列（例如 30 秒、5 分鐘），讓間隔逐次拉長。
+
+**死信佇列（DLQ）**：Consumer 以 `requeue: false` 拒絕訊息，或訊息過期、佇列滿了時，訊息會被送到該佇列設定的 dead-letter exchange，最後進入死信佇列。
+
+**quorum 佇列的投遞上限**：quorum 佇列會計算每則訊息被重新交付的次數。RabbitMQ 4.0 起預設上限是 20 次，超過就丟棄，或在設定了 dead-letter 時送進死信佇列。這是最後一道防線，避免毒訊息無限循環。
+
+## 常見錯誤與正確寫法
+
+### 1. 失敗就 requeue
+
+依錯誤類型決定去向：
+
 ```csharp
-// 宣告死信與延時重試拓撲
-public async Task DeclareRetryTopologyAsync(IChannel channel, CancellationToken ct)
+catch (Exception ex) when (IsTransient(ex))
 {
-    // 1. 正常工作佇列：設定死信交換機為 failed-exchange
-    var workArgs = new Dictionary<string, object?>
+    var attempt = GetRetryCount(ea.BasicProperties) + 1;
+    if (attempt <= 3)
+    {
+        // 送進延遲重試佇列，保留原本的 MessageId，並記錄重試次數
+        var props = new BasicProperties
+        {
+            MessageId = ea.BasicProperties.MessageId,
+            Persistent = true,
+            Headers = new Dictionary<string, object?> { ["x-retry-count"] = attempt },
+        };
+        await publishChannel.BasicPublishAsync("", $"notification.retry.{RetryDelay(attempt)}", true, props, ea.Body, ct);
+        await channel.BasicAckAsync(ea.DeliveryTag, false); // 重試副本已確認送出，才 Ack 原訊息
+    }
+    else
+    {
+        await channel.BasicNackAsync(ea.DeliveryTag, false, requeue: false); // 進死信佇列
+    }
+}
+catch (Exception)
+{
+    await channel.BasicNackAsync(ea.DeliveryTag, false, requeue: false); // 永久失敗：直接進死信佇列
+}
+```
+
+重試佇列的宣告：沒有 Consumer，訊息到期後回到原本的佇列。
+
+```csharp
+await channel.QueueDeclareAsync("notification.retry.30s", durable: true, exclusive: false, autoDelete: false,
+    arguments: new Dictionary<string, object?>
     {
         ["x-queue-type"] = "quorum",
-        ["x-dead-letter-exchange"] = "failed.events",
-        ["x-dead-letter-routing-key"] = "orders.dead"
-    };
-    await channel.QueueDeclareAsync("orders.work", durable: true, exclusive: false, autoDelete: false, arguments: workArgs, cancellationToken: ct);
-
-    // 2. 延時重試佇列：設定 1,000ms TTL，到期自動死信回 orders.events
-    var retryArgs = new Dictionary<string, object?>
-    {
-        ["x-message-ttl"] = 1000, // 延遲 1 秒後重試
-        ["x-dead-letter-exchange"] = "orders.events",
-        ["x-dead-letter-routing-key"] = "orders.placed"
-    };
-    await channel.QueueDeclareAsync("orders.retry.1s", durable: true, exclusive: false, autoDelete: false, arguments: retryArgs, cancellationToken: ct);
-
-    // 3. 最終死信佇列（DLQ）
-    await channel.QueueDeclareAsync("orders.dead", durable: true, exclusive: false, autoDelete: false, cancellationToken: ct);
-}
+        ["x-message-ttl"] = 30_000,                 // 等 30 秒
+        ["x-dead-letter-exchange"] = "",            // 預設 exchange
+        ["x-dead-letter-routing-key"] = "notification", // 回到原本的佇列
+    }, cancellationToken: ct);
 ```
 
----
+### 2. 重試會讓業務結果發生兩次
 
-### 正確解法二：Quorum Queue 原生 x-delivery-limit（極簡重試）
+重試、重新交付都會讓同一則訊息被處理不只一次。在同一個資料庫交易裡記錄「這則訊息處理過了」與業務結果，重複時就能辨認並略過，寫法見 [Outbox 與 Inbox](/architecture/outbox-inbox/)。
 
-在現代 RabbitMQ 4.x 中，若使用 **Quorum Queue**，無需手動建立複雜的 TTL 重試隊列，直接配置 `x-delivery-limit`：
+### 3. 死信佇列沒人看
 
-```csharp
-// Quorum Queue 原生支援投遞次數限制
-var quorumArgs = new Dictionary<string, object?>
-{
-    ["x-queue-type"] = "quorum",
-    ["x-delivery-limit"] = 3, // 最多投遞 3 次，第 4 次失敗自動直接進 DLQ！
-    ["x-dead-letter-exchange"] = "failed.events"
-};
-await channel.QueueDeclareAsync("orders.quorum.work", durable: true, exclusive: false, autoDelete: false, arguments: quorumArgs, cancellationToken: ct);
-```
+訊息進了死信佇列就被遺忘，買家的通知永遠沒有寄出。為死信佇列的訊息數設定告警，並準備處理流程：查明原因、修正程式或資料後，把訊息重新發布回原佇列（保留原本的 MessageId，讓冪等繼續有效）。
 
----
+## 使用邊界
 
-### 正確解法三：消費端事務性收件箱（Transactional Inbox）防重冪等
+- 重試只對暫時性錯誤有意義。分辨不出錯誤類型時，寧可少重試、早點進死信佇列由人判斷。
+- 多層都在重試時（HTTP 用戶端重試、訊息重試），次數會相乘；外部 HTTP 呼叫的重試見 [HTTP 彈性策略](/frameworks/aspnet-core/http-resilience/)。
+- 重試會改變訊息的處理順序；依賴順序的處理見 [佇列類型與順序](/infrastructure/rabbitmq/queues-ordering/)。
 
-利用全域唯一的 `MessageId` 與資料庫唯一索引，保證即使訊息因網路抖動被重複投遞 10 次，核心業務也只會執行一次：
+## 雲端排查
 
-```csharp
-// 正確解法：本地交易同時寫入業務與 Inbox 記錄
-public async Task<bool> ProcessIdempotentAsync(
-    Guid messageId, 
-    Func<NpgsqlTransaction, Task> businessAction, 
-    CancellationToken ct)
-{
-    await using var conn = await _dataSource.OpenConnectionAsync(ct);
-    await using var tx = await conn.BeginTransactionAsync(ct);
-
-    // 1. 嘗試插入收件箱記錄（message_id 為主鍵唯一鍵）
-    const string sql = """
-        INSERT INTO inbox_messages (message_id, handler_name, processed_at)
-        VALUES (@MessageId, 'OrderPaymentHandler', NOW())
-        ON CONFLICT (message_id) DO NOTHING;
-        """;
-
-    var affected = await conn.ExecuteAsync(new CommandDefinition(sql, new { messageId }, transaction: tx, cancellationToken: ct));
-
-    if (affected == 0)
-    {
-        // 該訊息已經成功處理過，直接回滾並視為成功（冪等安全！）
-        await tx.RollbackAsync(ct);
-        return false;
-    }
-
-    // 2. 執行核心業務（如扣款落庫）
-    await businessAction(tx);
-
-    // 3. 業務與 Inbox 同生共死提交
-    await tx.CommitAsync(ct);
-    return true;
-}
-```
-
----
-
-## 踩坑與避坑指南
-
-### 1. 毒訊息的無腦 requeue 懲罰
-- **鐵律**：在消費者 `catch` 例外區塊中，**除非是為了等待某個必定在數毫秒內恢復的內部記憶體狀態，否則永遠不要使用 `requeue: true`**！
-- 失敗時應優先發送 `requeue: false`（觸發死信轉發）或主動發送至專屬的延遲重試隊列。
-
-### 2. 避免重複消費與 Ack 洩漏
-- 若 Consumer 在處理過程中拋出例外，必須確保一定會執行 `BasicNackAsync` 或 `BasicAckAsync`（透過 `finally` 區塊包裹）。
-- 若發生例外卻什麼都沒發送，該訊息會在 RabbitMQ 處於 `unacknowledged` 狀態卡死，直到該 Consumer 進程終止。
-
----
-
-## 線上排查指令
-
-### 1. 檢測死信佇列（DLQ）積壓
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-# 檢查死信佇列是否有堆積（代表有處理失敗的毒訊息！）
-rabbitmqctl list_queues name messages | grep "dead"
+# 依錯誤類型統計：大量相同的永久錯誤，通常是某次發布的資料格式問題
+kubectl logs -n shop -l app=notification-worker --since=1h | grep -o 'Exception: [A-Za-z]*' | sort | uniq -c
 ```
-若 `orders.dead` 訊息數大於 0，代表有需要人工介入排查修復的異常資料。
 
-### 2. 檢測 Quorum Queue 達到投遞上限被丟棄的訊息
+### 託管服務層
+
+#### GKE
 
 ```bash
-# 查看死信原因與 Reject 計數
-rabbitmq-queues quorum_status orders.quorum.work
+# 死信與重試佇列的訊息數
+kubectl exec -n messaging shop-mq-server-0 -- \
+  rabbitmqctl list_queues name messages | grep -E "dlq|retry"
+
+# 查看死信佇列中的訊息（不移除，取出後重新放回）
+kubectl exec -n messaging shop-mq-server-0 -- \
+  rabbitmqadmin get queue=notification.dlq count=5 ackmode=reject_requeue_true
 ```
 
-### 3. Prometheus / Grafana 監控指標
+#### EKS
 
-```text
-# 死信隊列產生速率（大於 0 需立即發出警告）
-rate(rabbitmq_queue_messages_published_total{queue="orders.dead"}[1m]) > 0
+CloudWatch `AWS/AmazonMQ` 中死信佇列的 `MessageCount`，為它設定「大於 0」的告警。檢視死信訊息內容可以使用 Amazon MQ 提供的 RabbitMQ 管理介面。
 
-# 訊息被拒絕（Nack without requeue）頻率
-rate(rabbitmq_queue_messages_rejected_total[1m]) > 0.1
-```
+### 應用程式層
+
+記錄每則失敗訊息的 MessageId、重試次數與錯誤類型。同一個 MessageId 反覆出現在日誌中、但從未進入死信佇列，代表程式在用 requeue 無限重試。

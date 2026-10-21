@@ -1,183 +1,128 @@
 ---
-title: "Exchange、Binding 與訊息路由"
-description: "理解 Direct、Fanout、Topic 與預設 Exchange，避免把 Queue 名稱與 Routing Key 混用。"
+title: "RabbitMQ 路由：Exchange、Binding 與 routing key，訊息會送到哪裡"
+description: "說明四種 Exchange 的分送規則、Topic 萬用字元的差別，以及訊息找不到佇列時會被默默丟棄，該如何用 mandatory 或備用 Exchange 接住。"
 articleId: "rabbitmq-routing"
 topic: "rabbitmq"
 category: "rabbitmq-basics"
 order: 2
-tags:
-  - "Exchange"
-  - "Direct"
-  - "Fanout"
-  - "Topic"
-  - "Routing Key"
-  - "Binding"
-  - "mandatory"
-  - "default exchange"
-difficulty: "advanced"
-prerequisites:
-  - "rabbitmq-getting-started"
-relatedArticles:
-  - "rabbitmq-dotnet-integration"
-  - "rabbitmq-acknowledgements"
-  - "rabbitmq-retries-idempotency"
-applicableVersions: "RabbitMQ 4.x／AMQP 0-9-1／RabbitMQ.Client 7.x／.NET 10。"
-lastReviewed: "2026-10-10"
-takeaway: "Producer 發布到 Exchange；哪些 Queue 收到訊息由 Binding 與路由規則決定。"
+tags: ["RabbitMQ", "Exchange", "Binding", "Routing Key", "Topic", "Alternate Exchange"]
+articleType: "deep-dive"
+difficulty: "beginner"
+prerequisites: ["rabbitmq-getting-started"]
+relatedArticles: ["rabbitmq-dotnet-integration", "rabbitmq-acknowledgements", "architecture-communication-boundaries"]
+applicableVersions: "RabbitMQ 4.x（AMQP 0-9-1）、RabbitMQ.Client 7.x、Amazon MQ for RabbitMQ。"
+lastReviewed: "2026-10-21"
+takeaway: "Producer 只決定送到哪個 Exchange、帶什麼 routing key；哪些佇列收到，由 Binding 決定。沒有任何佇列符合的訊息預設會被丟棄，要用 mandatory 或備用 Exchange 接住。"
 sources:
-  - title: "RabbitMQ：AMQP 0-9-1 Model"
-    url: "https://www.rabbitmq.com/tutorials/amqp-concepts"
-  - title: "RabbitMQ：Publishers"
-    url: "https://www.rabbitmq.com/docs/publishers"
   - title: "RabbitMQ：Exchanges"
     url: "https://www.rabbitmq.com/docs/exchanges"
+  - title: "RabbitMQ：AMQP 0-9-1 Model Explained"
+    url: "https://www.rabbitmq.com/tutorials/amqp-concepts"
+  - title: "RabbitMQ：Alternate Exchanges"
+    url: "https://www.rabbitmq.com/docs/ae"
+  - title: "RabbitMQ：Publishers（mandatory 與 returned messages）"
+    url: "https://www.rabbitmq.com/docs/publishers"
+  - title: "Amazon MQ：Monitoring RabbitMQ brokers with CloudWatch"
+    url: "https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/security-logging-monitoring-cloudwatch.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-在分散式微服務架構中，如果對 AMQP 路由機制缺乏理解，很容易將發布/訂閱（Pub/Sub）模式退化成「強耦合的偽隊列呼叫」。
+訂單 API 發布一則「訂單已成立」的訊息，通知服務、倉儲服務、推薦服務都需要收到；「訂單已取消」只有倉儲和通知需要。這種「哪些訊息送給誰」的規則叫**路由**。
 
-典型反模式現場：**Producer 直接硬編碼目標 Queue 名稱**。
-剛上線時，訂單服務發布「訂單建立」事件，只有「庫存服務」需要處理，開發者偷懶使用預設交換機（Default Exchange，傳入空字串 `""`），將 Queue 名稱直接作為 Routing Key：
-```csharp
-// 致命反模式：Producer 直接向特定 Queue 寫入
-await channel.BasicPublishAsync(exchange: "", routingKey: "inventory-service-queue", body: payload);
-```
-三個月後，系統演進：
-- 行銷團隊需要接收該事件發送折扣通知，建立了 `marketing-queue`。
-- 大數據團隊需要接收該事件進行即時分析，建立了 `analytics-queue`。
-- 財務團隊需要接收該事件開發票，建立了 `invoice-queue`。
+在 RabbitMQ 裡，Producer 不知道有哪些佇列。它只把訊息送到一個 **Exchange**，並附上一個 **routing key**（例如 `order.placed`）。每個佇列透過 **Binding** 告訴 Exchange「我要哪些訊息」。新增一個訂閱的服務，只要新增一個佇列與 Binding，Producer 的程式不需要修改。
 
-結果：**訂單服務的 Producer 代碼被迫修改了三次！** 發布端代碼充斥著四個連續的 `BasicPublishAsync`，每次下游服務有增減，發布端就必須重新編譯部署。一旦某個下游 Queue 名稱改動，發布端立刻發生異常。
+## 運作原理
 
-更可怕的事故是**「無路由訊息靜默丟失」**：
-某次 Producer 的 Routing Key 打錯了一個字母（例如將 `orders.created` 誤打成 `order.created`）。在 RabbitMQ 預設行為中，若訊息發送至 Exchange 後**沒有任何 Queue 與之匹配綁定，RabbitMQ 會默不作聲地直接將該訊息丟棄（Black-holed）**！發布端顯示成功，下游卻永遠等不到訊息，造成嚴重的幽靈事故。
-
----
-
-## 反模式與正確解法
-
-### 1. 四大核心 Exchange 類型特徵與路由矩陣
-
-AMQP 的核心鐵律是：**Producer 只需要關心發布的「事件語意（Routing Key）」，完全不需要知道世界上有哪些 Queue 存在！**
-
-| 交換機類型 (Type) | 路由比對規則 | 典型使用場景 | 複雜度 |
-| :--- | :--- | :--- | :--- |
-| **`Direct`** | **精確相等匹配**（Routing Key 完全一致才轉發）。 | 點對點任務、單一特定路由、嚴重性日誌（`error`, `info`）。 | 低 |
-| **`Fanout`** | **無條件全量廣播**（完全忽略 Routing Key，轉發給所有綁定的 Queue）。 | 全域通知、即時配置刷新（Cache Invalidation）、狀態廣播。 | 極低（最高吞吐）|
-| **`Topic`** | **萬用字元階層匹配**（支援 `*` 單詞與 `#` 多詞比對）。 | **微服務整合事件的最佳首選！** 支援靈活依條件訂閱。 | 中 |
-| **`Headers`** | **依據訊息屬性 Header** 的鍵值匹配（忽略 Routing Key）。 | 多維度屬性篩選（實務中較罕用）。 | 較高 |
-
----
-
-### 正確解法一：採用 Topic Exchange 實現微服務優雅解耦
-
-在領域事件中，建議統一使用 **`Topic Exchange`**，以清晰的命名空間定義 Routing Key（例如：`<業務領域>.<實體>.<動作>`）：
-
-```csharp
-// 1. 宣告拓撲（可在 Consumer 端或 CI/CD 自動化腳本中宣告）
-public async Task SetupTopologyAsync(IChannel channel, CancellationToken ct)
-{
-    // 宣告可持久化的 Topic 交換機
-    await channel.ExchangeDeclareAsync("ecommerce.events", ExchangeType.Topic, durable: true, cancellationToken: ct);
-
-    // 宣告庫存服務的專屬 Queue
-    await channel.QueueDeclareAsync("inventory.orders", durable: true, exclusive: false, autoDelete: false, cancellationToken: ct);
-
-    // 庫存服務只訂閱「所有地區的訂單建立事件」（orders.*.created）
-    await channel.QueueBindAsync("inventory.orders", "ecommerce.events", "orders.*.created", cancellationToken: ct);
-
-    // 大數據分析服務的 Queue 訂閱「所有訂單的一切事件」（orders.#）
-    await channel.QueueDeclareAsync("analytics.orders", durable: true, exclusive: false, autoDelete: false, cancellationToken: ct);
-    await channel.QueueBindAsync("analytics.orders", "ecommerce.events", "orders.#", cancellationToken: ct);
-}
+```mermaid
+flowchart LR
+    P["訂單 API"] -->|"routing key：order.placed"| X["Topic Exchange：shop.events"]
+    X -->|"Binding：order.*"| Q1["notification 佇列"]
+    X -->|"Binding：order.placed"| Q2["recommendation 佇列"]
+    X -->|"Binding：order.#"| Q3["warehouse 佇列"]
+    X -. "沒有任何 Binding 符合" .-> Drop["預設：訊息被丟棄"]
 ```
 
-發布端只需專注於單一事件語意，**一次發布，全網自動按規則路由**：
-```csharp
-// 2. Producer 端極致乾淨：只發布到 Exchange，零下游 Queue 耦合！
-public async Task PublishOrderCreatedAsync(IChannel channel, OrderPlaced order, CancellationToken ct)
-{
-    var routingKey = "orders.tw.created"; // 訂單-台灣區-建立
-    var body = JsonSerializer.SerializeToUtf8Bytes(order);
+四種 Exchange：
 
-    var properties = new BasicProperties
-    {
-        ContentType = "application/json",
-        DeliveryMode = DeliveryModes.Persistent,
-        MessageId = order.MessageId.ToString()
-    };
+| 類型 | 分送規則 | 用途 |
+| --- | --- | --- |
+| Direct | routing key 完全相等 | 依任務類型分派到特定佇列 |
+| Topic | routing key 符合萬用字元的樣式 | 事件依類別訂閱（本站主要使用） |
+| Fanout | 不看 routing key，全部送給所有綁定的佇列 | 廣播 |
+| Headers | 依訊息標頭比對 | 很少使用 |
 
-    // 僅此一次發布！庫存服務與分析服務會自動由 RabbitMQ 複製分發
-    await channel.BasicPublishAsync(
-        exchange: "ecommerce.events",
-        routingKey: routingKey,
-        mandatory: true, // 關鍵：開啟強制路由檢查！
-        basicProperties: properties,
-        body: body,
-        cancellationToken: ct);
-}
-```
+Topic 的 routing key 以 `.` 分段，萬用字元有兩種：`*` 代表**剛好一段**，`#` 代表**零或多段**。所以 `order.*` 符合 `order.placed`，但不符合 `order.payment.failed`；`order.#` 兩者都符合。
 
----
+## 常見錯誤與正確寫法
 
-### 正確解法二：啟用 mandatory 標記與監聽 BasicReturn 防止黑洞丟失
+### 1. Producer 直接指定要送到哪些佇列
 
-當發布訊息時設定 `mandatory: true`，若該訊息在 Exchange 找不到任何符合的 Queue，RabbitMQ 會透過通道向發布端**退回（Return）**該訊息，絕不默默丟棄：
+訂單 API 為了通知三個服務，自己對三個佇列各發一次。每新增一個訂閱者，就得修改 API。改成發布一次到 Topic Exchange，由各服務自己綁定：
 
 ```csharp
-// 監聽未路由被退回的訊息事件
-channel.BasicReturnAsync += (sender, args) =>
-{
-    var returnedMessageId = args.BasicProperties.MessageId;
-    var routingKey = args.RoutingKey;
-    _logger.LogError("嚴重告警：訊息 {MessageId} 發送至 {Exchange} 時因 RoutingKey {RoutingKey} 無匹配 Queue 被退回！",
-        returnedMessageId, args.Exchange, routingKey);
-
-    return Task.CompletedTask;
-};
+// 啟動時宣告拓撲（冪等：已存在且參數相同時不會出錯）
+await channel.ExchangeDeclareAsync("shop.events", ExchangeType.Topic, durable: true, cancellationToken: ct);
+await channel.QueueDeclareAsync("notification", durable: true, exclusive: false, autoDelete: false,
+    arguments: new Dictionary<string, object?> { ["x-queue-type"] = "quorum" }, cancellationToken: ct);
+await channel.QueueBindAsync("notification", "shop.events", routingKey: "order.*", cancellationToken: ct);
 ```
 
----
+### 2. routing key 打錯，訊息默默消失
 
-## 踩坑與避坑指南
+Exchange 找不到任何符合的佇列時，預設會直接丟棄訊息，Producer 不會收到任何錯誤。有兩種方式接住：
 
-### 1. Topic 萬用字元 `*` 與 `#` 的語意差異
-- **`*`（星號）**：剛好匹配**單一個單詞**（以句號 `.` 切隔）。
-  - 例如 `orders.*.created` 能匹配 `orders.tw.created`，但**無法**匹配 `orders.tw.taipei.created`。
-- **`#`（井號）**：匹配**零個或多個單詞**。
-  - 例如 `orders.#` 能匹配 `orders`、`orders.tw`、`orders.tw.taipei.created`。
-
-### 2. 備用交換機（Alternate Exchange）兜底策略
-- 若不想在客戶端處理 `BasicReturn`，可在宣告 Exchange 時透過引數指定 `alternate-exchange: "unrouted.events"`。
-- 任何無法路由的孤兒訊息，會自動被 RabbitMQ 轉發至備用交換機儲存於專屬 Queue，供後續日誌排查與重播。
-
----
-
-## 線上排查指令
-
-### 1. 檢視當前所有 Binding 綁定關係
-
-使用 `rabbitmqadmin`（或管理後台 HTTP API）檢查路由綁定是否正確生效：
-```bash
-rabbitmqadmin list bindings source destination destination_type routing_key
-```
-確認你的 Queue 是否已正確綁定至目標 Topic Exchange 與 Routing Key。
-
-### 2. 命令行發布測試訊息驗證路由
+- **mandatory 旗標**：發布時設定 `mandatory: true`，無法路由的訊息會退回給 Producer。RabbitMQ.Client 7 開啟發布確認追蹤後，退回會讓 `BasicPublishAsync` 丟出例外，見 [Ack 與 Publisher Confirm](/infrastructure/rabbitmq/acknowledgements/)。
+- **備用 Exchange（Alternate Exchange）**：在 Exchange 上設定 `alternate-exchange`，無法路由的訊息改送到備用 Exchange，再綁到一個「無法路由」佇列，供事後檢查。建議用 policy 設定，不必改程式。
 
 ```bash
-# 透過 rabbitmqadmin 模擬發布一則測試訊息
-rabbitmqadmin publish exchange="ecommerce.events" routing_key="orders.tw.created" payload="{\"test\":true}"
+# 對 shop.events 設定備用 Exchange（policy 由維運管理）
+rabbitmqctl set_policy AE '^shop\.events$' '{"alternate-exchange":"shop.unroutable"}' --apply-to exchanges
 ```
-隨後檢查目標 Queue 的 `messages` 計數是否由 0 變為 1。
 
-### 3. Prometheus / Grafana 監控指標
+### 3. 用 `*` 卻期待它符合多段
 
-```text
-# 訊息未路由被丟棄/退回率（Unrouted Drop Rate，大於 0 代表存在孤兒訊息！）
-rate(rabbitmq_exchange_messages_unrouted_total[1m]) > 0
+`order.*` 不會收到 `order.payment.failed`。routing key 的命名要事先定好規則（例如固定 `領域.事件`），並在新增事件時確認現有的 Binding 是否需要調整。
 
-# 各 Exchange 每秒發布吞吐量
-rate(rabbitmq_exchange_messages_published_total{exchange="ecommerce.events"}[1m])
+## 使用邊界
+
+- routing key 是 Producer 和訂閱者之間的契約，修改時要像修改 API 一樣考慮相容性。
+- Binding 太多、太複雜的路由會讓「這則訊息會到哪裡」難以追蹤；路由規則保持簡單，並把拓撲集中管理。
+- 同一則訊息被送到多個佇列，每個佇列各有一份，各自確認與重試；一個 Consumer 失敗不影響其他佇列。
+
+## 雲端排查
+
+### 叢集層（GKE 與 EKS 相同）
+
+```bash
+# 發布端日誌中，被退回（無法路由）的訊息
+kubectl logs -n shop -l app=order-api --since=1h | grep -i "unroutable\|returned"
 ```
+
+### 託管服務層
+
+#### GKE
+
+在自建的 RabbitMQ 上列出 Binding，並確認備用佇列有沒有累積訊息：
+
+```bash
+kubectl exec -n messaging shop-mq-server-0 -- \
+  rabbitmqctl list_bindings source_name destination_name routing_key
+kubectl exec -n messaging shop-mq-server-0 -- \
+  rabbitmqctl list_queues name messages | grep unroutable
+```
+
+#### EKS
+
+Amazon MQ 透過 RabbitMQ 管理介面（HTTPS）查詢 Binding：
+
+```bash
+curl -s -u "$MQ_USER:$MQ_PASSWORD" \
+  "https://<broker-id>.mq.<region>.amazonaws.com/api/exchanges/%2F/shop.events/bindings/source"
+```
+
+CloudWatch `AWS/AmazonMQ` 中「無法路由」佇列的 `MessageCount` 大於 0，代表有訊息沒有被任何訂閱者接收。
+
+### 應用程式層
+
+在發布時記錄 routing key 與訊息 ID；某個訂閱者回報「沒收到」時，先確認發布的 routing key，再對照該佇列的 Binding，通常就能找到不符合的那一段。

@@ -1,190 +1,148 @@
 ---
-title: "Redis 持久化、記憶體與故障處理"
-description: "理解 RDB、AOF、淘汰與高可用性的不同責任，建立有界的快取降級與觀測。"
+title: "Redis 可靠性：記憶體滿了、節點重啟或主從切換時會發生什麼事"
+description: "說明 Redis 記憶體上限與淘汰策略、持久化（RDB、AOF）各自保護什麼、主從切換時可能遺失的資料，以及 Redis 不可用時應用程式如何有限度地降級。"
 articleId: "redis-reliability"
 topic: "redis"
 category: "redis-reliability"
 order: 6
-tags:
-  - "RDB"
-  - "AOF"
-  - "appendfsync"
-  - "maxmemory"
-  - "eviction"
-  - "Sentinel"
-  - "Cluster"
-  - "故障降級"
-  - "命中率"
+tags: ["Redis", "maxmemory", "淘汰策略", "持久化", "容錯移轉", "降級"]
+articleType: "deep-dive"
 difficulty: "advanced"
-prerequisites:
-  - "redis-cache-aside"
-relatedArticles:
-  - "redis-concurrency"
-  - "engineering-cache-messaging-tests"
-  - "engineering-metrics-tracing"
-applicableVersions: "Redis 8.x／StackExchange.Redis 3.x／.NET 10。"
-lastReviewed: "2026-10-10"
-takeaway: "持久化、備份、複寫與降級各自處理不同故障；快取應始終容許資料遺失與重新載入。"
+prerequisites: ["redis-cache-aside"]
+relatedArticles: ["redis-getting-started", "gke-data-services", "eks-data-services"]
+applicableVersions: "Redis 7.2／8.x、Memorystore、ElastiCache（Redis／Valkey 相容）。"
+lastReviewed: "2026-10-21"
+takeaway: "快取一定會遺失資料：記憶體滿了會淘汰、切換時可能丟失最近的寫入；設定合適的淘汰策略，並讓應用程式在 Redis 不可用時有上限地回到資料庫。"
 sources:
-  - title: "Redis：Persistence"
-    url: "https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/"
   - title: "Redis：Key eviction"
     url: "https://redis.io/docs/latest/develop/reference/eviction/"
+  - title: "Redis：Persistence"
+    url: "https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/"
   - title: "Redis：Replication"
     url: "https://redis.io/docs/latest/operate/oss_and_stack/management/replication/"
+  - title: "Memorystore for Redis：High availability"
+    url: "https://cloud.google.com/memorystore/docs/redis/high-availability-for-memorystore-for-redis"
+  - title: "Memorystore for Redis：Monitoring instances"
+    url: "https://cloud.google.com/memorystore/docs/redis/monitor-instances"
+  - title: "Amazon ElastiCache：Metrics for Valkey and Redis OSS"
+    url: "https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/CacheMetrics.Redis.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-在生產環境中，Redis 通常被視為「極速、穩定」的代名詞。然而，當容量達到硬體極限或遭遇節點故障時，缺乏可靠性規劃的系統會瞬間演變成全站崩潰的骨牌效應。
+Redis 把資料放在記憶體裡，速度很快，但記憶體有限、伺服器會重啟、主節點會故障。這篇回答三個問題：
 
-典型災難現場一：**記憶體用盡引發全站寫入癱瘓**。
-系統配置了 8GB 的 Redis 實體，但工程師在 `redis.conf` 中**未設定 `maxmemory-policy` 淘汰策略**（預設為 `noeviction`）。當促銷流量激增、資料寫滿 8GB 時，所有後續嘗試寫入快取或會話的請求，全部拋出硬性報錯：
-```text
-StackExchange.Redis.RedisServerException: OOM command not allowed when used memory > 'maxmemory'.
+- **記憶體滿了怎麼辦？** 依**淘汰策略**刪掉一些 key，或拒絕新的寫入。
+- **重啟後資料還在嗎？** 取決於**持久化**的設定。
+- **主節點故障時呢？** 副本會被提升為新的主節點，但最近幾毫秒到幾秒的寫入可能沒來得及複製過去。
+
+對快取來說，答案都可以接受，因為資料能從資料庫重建。真正的風險是：應用程式沒想過這些情況，Redis 一出狀況，整個服務就跟著出錯。
+
+## 運作原理
+
+```mermaid
+flowchart TD
+    Write["寫入新的 key"] --> Full{"已用記憶體 ≥ maxmemory？"}
+    Full -->|否| OK["寫入成功"]
+    Full -->|是| Policy{"淘汰策略"}
+    Policy -->|"allkeys-lru"| Evict1["淘汰最久沒用的 key"]
+    Policy -->|"volatile-lru"| Evict2["只淘汰有 TTL 的 key"]
+    Policy -->|"noeviction"| Reject["拒絕寫入，回傳錯誤"]
 ```
-由於應用程式在登入、結帳等關鍵路徑中未捕捉此例外，全站 API 集體噴出 500 錯誤。
 
-典型災難現場二：**BGSAVE 記憶體翻倍觸發 Linux OOM Killer**。
-在配置了 RDB 快照持久化的 Redis 主機上，主機實體記憶體為 16GB，Redis 當前佔用了 12GB。當背景觸發 `BGSAVE` 執行快照時，Redis 呼叫作業系統的 `fork()` 產生子進程。此時若正好碰上大量寫入流量，Linux 的寫入時複製（Copy-On-Write）機制需要額外分配數 GB 記憶體。主機記憶體瞬間見底，Linux OOM Killer 直接出手砍死 Redis 主進程，導致資料庫突遭數萬 QPS 穿透，系統瞬間雪崩。
+**淘汰策略**決定記憶體滿時刪誰：
 
----
+| 策略 | 行為 | 適合 |
+| --- | --- | --- |
+| `allkeys-lru` | 從所有 key 中淘汰最久沒被使用的 | 純快取 |
+| `volatile-lru` | 只淘汰設了 TTL 的 key | 快取與少量不能淘汰的資料混用 |
+| `noeviction` | 不淘汰，寫入直接失敗 | 不能遺失資料的用途（但 Redis 不是這類資料的好選擇） |
 
-## 反模式與正確解法
+**持久化**有兩種：**RDB** 定期把整個資料存成快照，重啟後載入，會遺失最後一次快照之後的寫入；**AOF** 把每個寫入命令記下來，可以設定每秒同步一次，最多遺失約一秒。純快取用途通常不需要持久化，重啟後從資料庫重新載入即可。
 
-### 1. Redis 記憶體淘汰策略（Eviction Policies）對照
+**主從切換**：寫入先到主節點，再非同步複製到副本。主節點突然故障，已經回應「成功」但還沒複製的寫入就遺失了。
 
-當記憶體達到 `maxmemory` 上限時，Redis 必須知道該「犧牲」誰：
+## 常見錯誤與正確寫法
 
-| 淘汰策略 | 運作機制 | 適用場景 |
-| :--- | :--- | :--- |
-| **`noeviction`** | **不淘汰任何資料，新寫入直接報錯 OOM！**（預設值） | 絕對禁止資料遺失的場景（但純快取環境切勿使用！）。 |
-| **`volatile-lru`** | 針對**有設定過期時間（TTL）的 Key**，優先淘汰最近最少使用（LRU）的鍵。 | **純快取業務的最佳首選！** 保護沒有 TTL 的系統全域配置。 |
-| **`allkeys-lru`** | 對**所有 Key（無論有無 TTL）**，淘汰最近最少使用的鍵。 | 所有資料均為可隨時重建之快取的情境。 |
-| **`volatile-lfu`** | 針對有 TTL 的 Key，淘汰存取頻率最低（LFU）的鍵。 | 解決 LRU 在偶發偶爾突發遍歷時將熱點快取擠出的缺點。 |
+### 1. 純快取卻用了不會淘汰的策略
 
----
+`noeviction` 下記憶體滿了，所有寫入都會失敗，應用程式開始出錯。純快取用途使用 `allkeys-lru` 或 `allkeys-lfu`（淘汰最少被使用的）。託管服務的預設策略不一定是你要的，建立執行個體時確認。
 
-### 反模式一：未設定淘汰策略或忽視有界降級
+### 2. Redis 不可用時直接回錯誤
 
-任由 Redis 記憶體無限制膨脹，且在應用層將 Redis 的呼叫視為「必定成功」，一旦連線逾時或拋出 OOM，就讓整個 HTTP 請求失敗。
-
-### 正確解法一：配置 volatile-lru 與應用層 Fallback 容錯
-
-1. 在 `redis.conf` 強制指定安全上限與淘汰策略：
-   ```text
-   maxmemory 8gb
-   maxmemory-policy volatile-lru
-   ```
-2. 應用層實作「**快取故障優雅降級（Graceful Fallback）**」：當 Redis 出現連線逾時、網路斷開或 OOM 例外時，捕獲例外、記錄 Warning 日誌，並自動回源至權威資料庫，維持全站基本服務可用：
+快取讀取失敗時，改從資料庫讀；但要限制同時回源的數量，否則所有原本命中快取的流量一起打到資料庫，資料庫也跟著倒：
 
 ```csharp
-// 正確解法：抗 Redis 故障的容錯快取讀取器
-public async Task<ProductDto?> GetProductWithFallbackAsync(long id, CancellationToken ct)
-{
-    var cacheKey = $"ecommerce:product:{id}";
+private static readonly SemaphoreSlim FallbackGate = new(initialCount: 32); // 同時最多 32 個回源
 
+public async Task<ProductDto?> GetAsync(int id, CancellationToken ct)
+{
     try
     {
-        // 1. 嘗試從 Redis 讀取
-        var cached = await _redis.StringGetAsync(cacheKey);
-        if (cached.HasValue)
-        {
-            return JsonSerializer.Deserialize<ProductDto>(cached.ToString());
-        }
+        var cached = await _redis.StringGetAsync($"catalog:product:{id}");
+        if (cached.HasValue) return JsonSerializer.Deserialize<ProductDto>(cached.ToString());
     }
-    catch (Exception ex) when (ex is RedisException or TimeoutException or SocketException)
+    catch (RedisException ex)
     {
-        // 關鍵防護：Redis 故障絕不能擊垮業務！記錄警告並優雅降級回源
-        _logger.LogWarning(ex, "Redis 服務異常，降級直接回源資料庫讀取商品 {Id}", id);
+        _logger.LogWarning(ex, "Redis 不可用，改由資料庫讀取商品 {ProductId}", id);
     }
 
-    // 2. 降級回源資料庫
-    var product = await _db.Products
-        .AsNoTracking()
-        .Where(p => p.Id == id)
-        .Select(p => new ProductDto(p.Id, p.Name, p.Price))
-        .FirstOrDefaultAsync(ct);
-
-    // 3. 嘗試非同步寫回（即使失敗也不影響回傳）
-    if (product is not null)
-    {
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await _redis.StringSetAsync(cacheKey, JsonSerializer.Serialize(product), TimeSpan.FromMinutes(10));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "寫回快取失敗（已忽略）");
-            }
-        }, CancellationToken.None);
-    }
-
-    return product;
+    if (!await FallbackGate.WaitAsync(TimeSpan.FromMilliseconds(200), ct))
+        throw new ServiceBusyException(); // 回源也滿了：快速失敗，回 503
+    try { return await _db.LoadProductAsync(id, ct); }
+    finally { FallbackGate.Release(); }
 }
 ```
 
----
+讀取失敗時，也要能辨識「快取裡的資料損壞」（例如反序列化失敗）的情況，刪掉那個 key 並回源，而不是把錯誤的資料回給使用者。
 
-### 反模式二：在純快取場景無端開啟最高等級持久化（AOF always）
+### 3. 用 Redis 存不能遺失的狀態
 
-將 `appendfsync always` 設為每次寫入都強制作業系統刷盤至磁碟，這會將 Redis 的記憶體寫入吞吐量從每秒 10 萬次驟降至數千次，抹煞了引入快取的初衷。
+把「付款成功」只寫在 Redis 等背景程序處理，主從切換時這筆紀錄可能遺失。不能遺失的狀態寫進資料庫，Redis 只當作加速的副本。
 
-### 正確解法二：持久化權衡（AOF everysec 與 RDB 快照）
+## 使用邊界
 
-- **純快取定位**：若所有資料在 DB 中均有備份，**直接關閉持久化（`save ""`）**，可消除 Fork 記憶體暴增與磁碟 I/O 爭用。
-- **需要重啟快速恢復時**：採用 `appendfsync everysec`（每秒在背景非同步刷盤一次），兼顧極致效能與最多僅遺失 1 秒資料的可靠性平衡。
+- 開啟高可用（副本與自動容錯移轉）可以縮短 Redis 的停機時間，但不能保證零資料遺失。
+- 持久化與備份主要用於「重啟後不想冷啟動」的大型快取；冷啟動時資料庫是否承受得住，要事先測試。
+- 自己在 Kubernetes 上架 Redis 時，記憶體上限、持久化磁碟、Pod 被驅逐都要自己處理；託管服務（Memorystore、ElastiCache）代為處理節點與複寫。
 
----
+## 雲端排查
 
-## 踩坑與避坑指南
-
-### 1. Linux 記憶體過度分配參數（vm.overcommit_memory = 1）
-- **現象**：在 Linux 主機中，明明實體記憶體還有剩餘，但 Redis 執行 `BGSAVE` 或 AOF 重寫時卻失敗報錯：`Can't save in background: fork: Cannot allocate memory`。
-- **根本原因**：Linux 預設的核心策略（`vm.overcommit_memory = 0`）會嚴格檢查進程申請的虛擬記憶體大小。當 Redis 進程申請 Fork 時，核心認定可能會超過實體容量而拒絕。
-- **生產環境鐵律**：在主機的 `/etc/sysctl.conf` 必須配置：
-  ```bash
-  vm.overcommit_memory = 1
-  ```
-  讓作業系統無條件允許進程超額分配記憶體，發揮 Copy-On-Write 的真正威力。
-
-### 2. 主從切換時的非同步複製遺失（Replication Lag）
-- Redis 的主從複製（Master-Replica）是**非同步的**。當 Master 節點突然 Crash，Sentinel 或 Cluster 將 Replica 提升為新 Master 時，尚未同步至從節點的最新寫入資料會永久遺失。
-- **避坑規則**：**切勿將關鍵的唯一交易狀態僅放在 Redis 主從結構中！** 所有關鍵狀態落庫仍應以具備 Write-Ahead-Log 的 ACID 關聯式資料庫為準。
-
----
-
-## 線上排查指令
-
-### 1. 深度分析 Redis 記憶體使用分佈
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-redis-cli INFO memory
+# 降級（回源）發生的次數與時間
+kubectl logs -n shop -l app=catalog-api --since=1h | grep -c "Redis 不可用"
 ```
-關鍵欄位解讀：
-- `used_memory_human`：Redis 分配的實際資料記憶體。
-- `used_memory_rss_human`：作業系統實際分配給 Redis 進程的實體記憶體（包含記憶體碎片）。
-- `mem_fragmentation_ratio`：記憶體碎片率（$\text{used\_memory\_rss} / \text{used\_memory}$）。若大於 1.5，代表存在嚴重記憶體碎片，可開啟 `activedefrag yes` 自動清理。
-- `evicted_keys`：因達到 `maxmemory` 而被強制淘汰的 Key 累積總數。若此數值持續暴增，代表快取容量嚴重不足！
 
-### 2. 檢測主從複製延遲與健康狀態
+### 託管服務層
 
-```bash
-redis-cli INFO replication
-```
-檢查：
-- `role: master`
-- `connected_slaves: 1`
-- `master_repl_offset` 與 `slave_repl_offset` 的差距（差距過大代表主從網路延遲嚴重）。
-
-### 3. Prometheus / Grafana 監控告警指標
+#### 兩邊相同：記憶體、淘汰與複寫
 
 ```text
-# Redis 記憶體淘汰發生率告警（代表快取正在被強制踢出）
-rate(redis_evicted_keys_total[1m]) > 10
-
-# Redis 連線失敗率（觸發 Fallback 降級次數）
-rate(redis_connection_errors_total[1m]) > 0
+INFO memory        # used_memory、maxmemory、maxmemory_policy、mem_fragmentation_ratio
+INFO stats         # evicted_keys：持續增加代表記憶體不夠，有用的資料正在被淘汰
+INFO replication   # role、connected_slaves、各副本的 offset 與延遲
 ```
+
+#### GKE
+
+Memorystore 的 `redis.googleapis.com/stats/memory/usage_ratio` 接近 1 時，`redis.googleapis.com/stats/evicted_keys` 會開始增加。執行個體資訊與維護時段：
+
+```bash
+gcloud redis instances describe shop-cache --region=asia-east1 \
+  --format='value(tier,memorySizeGb,redisConfigs,maintenancePolicy)'
+```
+
+#### EKS
+
+ElastiCache 的 `DatabaseMemoryUsagePercentage`、`Evictions` 與 `ReplicationLag`。事件紀錄可以看到容錯移轉的時間：
+
+```bash
+aws elasticache describe-events --source-type replication-group \
+  --source-identifier shop-cache --duration 1440
+```
+
+### 應用程式層
+
+把容錯移轉事件的時間和應用程式的 Redis 錯誤、回源次數、資料庫負載放在同一張圖上，就能看出這次切換對使用者實際造成了多大的影響，以及回源上限是否設得恰當。

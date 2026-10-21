@@ -1,231 +1,154 @@
 ---
-title: ".NET 整合 Redis 與連線生命週期"
-description: "比較 IDistributedCache 與 StackExchange.Redis，管理共享連線、序列化、逾時與取消。"
+title: ".NET 整合 Redis：一個連線就夠，逾時與執行緒池才是重點"
+description: "說明 StackExchange.Redis 的 ConnectionMultiplexer 為什麼要全程共用、IDistributedCache 與 HybridCache 的關係，以及逾時設定與執行緒池不足造成的 RedisTimeoutException。"
 articleId: "redis-dotnet-integration"
 topic: "redis"
 category: "redis-caching"
 order: 3
-tags:
-  - "IDistributedCache"
-  - "StackExchange.Redis"
-  - "ConnectionMultiplexer"
-  - "DI"
-  - "序列化"
-  - "timeout"
-difficulty: "advanced"
-prerequisites:
-  - "redis-data-types-ttl"
-  - "aspnet-core-dependency-injection"
-  - "csharp-cancellation-disposable"
-relatedArticles:
-  - "redis-cache-aside"
-  - "data-access-pools-locks"
-  - "redis-reliability"
-applicableVersions: ".NET 10／Microsoft.Extensions.Caching.StackExchangeRedis 10.x／StackExchange.Redis 3.x／Redis 8.x。"
-lastReviewed: "2026-10-10"
-takeaway: "IDistributedCache 提供快取抽象，原生 client 提供 Redis 操作；連線由應用程式生命週期管理。"
+tags: ["StackExchange.Redis", "ConnectionMultiplexer", "IDistributedCache", "HybridCache", "RedisTimeoutException"]
+articleType: "deep-dive"
+difficulty: "beginner"
+prerequisites: ["redis-data-types-ttl", "aspnet-core-dependency-injection"]
+relatedArticles: ["redis-cache-aside", "dotnet-threadpool", "redis-reliability"]
+applicableVersions: ".NET 8～10、StackExchange.Redis 2.8 以上、Microsoft.Extensions.Caching.StackExchangeRedis 與 Microsoft.Extensions.Caching.Hybrid 9 以上。"
+lastReviewed: "2026-10-21"
+takeaway: "整個應用程式共用一個 ConnectionMultiplexer；設定較短的逾時與 abortConnect=false；RedisTimeoutException 先看錯誤訊息裡的執行緒池與佇列資訊。"
 sources:
-  - title: "Microsoft Learn：分散式快取"
-    url: "https://learn.microsoft.com/en-us/aspnet/core/performance/caching/distributed?view=aspnetcore-10.0"
   - title: "StackExchange.Redis：Basic Usage"
-    url: "https://seredis.dev/Basics"
-  - title: "Redis：.NET 用戶端"
-    url: "https://redis.io/docs/latest/develop/clients/dotnet/"
+    url: "https://stackexchange.github.io/StackExchange.Redis/Basics"
+  - title: "StackExchange.Redis：Configuration"
+    url: "https://stackexchange.github.io/StackExchange.Redis/Configuration"
+  - title: "StackExchange.Redis：Timeouts"
+    url: "https://stackexchange.github.io/StackExchange.Redis/Timeouts"
+  - title: "Microsoft Learn：HybridCache 程式庫"
+    url: "https://learn.microsoft.com/aspnet/core/performance/caching/hybrid"
+  - title: "Memorystore for Redis：Monitoring instances"
+    url: "https://cloud.google.com/memorystore/docs/redis/monitor-instances"
+  - title: "Amazon ElastiCache：Metrics for Valkey and Redis OSS"
+    url: "https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/CacheMetrics.Redis.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-在 .NET 專案中引入 Redis 時，最容易出現的架構事故是**「連線生命週期誤用引發的 Socket 耗盡與連線風暴」**。
+.NET 連 Redis 最常用的是 **StackExchange.Redis**。它的核心是 `ConnectionMultiplexer`：一個物件管理對 Redis 的連線，讓整個應用程式的所有請求共用。
 
-許多初次使用 `StackExchange.Redis` 的開發者，習慣了 ADO.NET「用完即關（Open/Close）」的思維，在每次 HTTP 請求中這樣寫：
-```csharp
-// 致命反模式：在每次請求中手動建立連線
-public async Task<string?> GetValueAsync(string key)
-{
-    using var redis = await ConnectionMultiplexer.ConnectAsync("redis.internal:6379");
-    var db = redis.GetDatabase();
-    return await db.StringGetAsync(key);
-}
-```
-上線後，當並行流量衝上每秒 1,000 次時：
-1. **Socket 耗盡（Socket Exhaustion）**：作業系統的 Ephemeral Ports 在數秒內被借光，處於 `TIME_WAIT` 狀態的連線高達數萬條，伺服器開始丟出 `SocketException: Only one usage of each socket address is normally permitted`。
-2. **Redis 端連線打滿**：Redis 伺服器回報 `ERR max number of clients reached`，直接拒絕新連線。
-3. **執行緒池飢餓（ThreadPool Starvation）**：反覆建立 TCP 連線與 TLS 握手極度消耗 CPU，導致 Task 排隊，所有正常 API 響應時間暴衝至 5 秒以上。
+在它之上，微軟提供兩層抽象：
 
-另一種常見災難是**容器啟動期崩潰（CrashLoopBackOff）**：
-由於連線設定中保留了預設的 `abortConnect=true`，當 Redis 服務短暫處於重啟或網路抖動時，Kubernetes 中的 API Pod 在啟動的第一秒直接拋出例外退出，導致整組服務陷入無限重啟的死迴圈。
+- **`IDistributedCache`**：最基本的分散式快取介面，只有存取位元組陣列與期限，適合簡單的快取需求。
+- **`HybridCache`**（.NET 9 起）：結合程序內快取與分散式快取，並在多個請求同時查同一個 key 時，只讓一個去載入資料。
 
----
+需要 Redis 特有的資料結構（Hash、Sorted Set）或原子操作時，直接使用 `IConnectionMultiplexer`。
 
-## 反模式與正確解法
+## 運作原理
 
-### 1. StackExchange.Redis 的連線多工（Multiplexing）本質
-
-`ConnectionMultiplexer` 的設計理念與 ADO.NET 完全相反：
-**它是執行緒安全的長連線多工器（Connection Multiplexer）**。它在底層只維持少數極少量的實體 TCP Socket（通常為 1~2 條），透過單一連線同時並行管線化（Pipelining）發送成千上萬個並行執行緒的請求。
-
-因此：**`ConnectionMultiplexer` 必須在整個應用程式生命週期中作為 Singleton 唯一執行個體共享！**
-
----
-
-### 反模式一：混用 IDistributedCache 與原生客戶端時反覆建立底層連線
-
-在同一個應用程式中，一部分模組注入 `IDistributedCache`，另一部分直接連線 `ConnectionMultiplexer`，若各自獨立初始化，會造成重複維護兩套長連線。
-
-### 正確解法一：透過工廠將 Singleton 連線注入 IDistributedCache
-
-透過 `ConnectionMultiplexerFactory` 讓 `IDistributedCache` 共享同一個全域 `ConnectionMultiplexer`：
-
-~~~csharp
-var registrations = new ServiceCollection();
-registrations.AddStackExchangeRedisCache(options =>
-{
-    options.InstanceName = prefix;
-    options.ConnectionMultiplexerFactory = () => Task.FromResult<IConnectionMultiplexer>(redis);
-});
-using var services = registrations.BuildServiceProvider();
-IDistributedCache cache = services.GetRequiredService<IDistributedCache>();
-await cache.SetStringAsync("product:1", "商品快取", new DistributedCacheEntryOptions
-{
-    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30)
-});
-Console.WriteLine("IDistributedCache: " + await cache.GetStringAsync("product:1"));
-~~~
-
----
-
-### 正確解法二：生產級 ConfigurationOptions 與抗網路抖動設定
-
-在 `Program.cs` 註冊 Singleton Redis 服務時，必須精確配置超時、重連與 DNS 探測參數：
-
-```csharp
-// Program.cs: 現代 .NET 生產級 Redis 連線設定最佳實踐
-var builder = WebApplication.CreateBuilder(args);
-
-var redisConfig = new ConfigurationOptions
-{
-    EndPoints = { { "redis-primary.internal", 6379 } },
-    Password = builder.Configuration["RedisPassword"],
-    Ssl = false, // 雲端環境若啟用 TLS 則設為 true
-
-    // 關鍵 1: 防止啟動時因 Redis 短暫離線而導致 Pod CrashLoop
-    AbortOnConnectFail = false,
-
-    // 關鍵 2: 縮短命令同步超時（預設 5000ms 太長，在高併發下會卡死執行緒）
-    SyncTimeout = 1000,       // 1 秒超時立即快速失敗
-    AsyncTimeout = 1000,
-    ConnectTimeout = 3000,    // 連線握手最多等 3 秒
-
-    // 關鍵 3: 心跳與連線自我癒合
-    KeepAlive = 30,           // 每 30 秒發送 Ping 保活
-    ConnectRetry = 3,
-
-    // 連線佇列深度防護
-    ResponseTimeout = 1000
-};
-
-var multiplexer = await ConnectionMultiplexer.ConnectAsync(redisConfig);
-builder.Services.AddSingleton<IConnectionMultiplexer>(multiplexer);
-builder.Services.AddSingleton(sp => sp.GetRequiredService<IConnectionMultiplexer>().GetDatabase());
+```mermaid
+flowchart LR
+    R1["請求 A"] --> Mux["ConnectionMultiplexer<br/>（Singleton）"]
+    R2["請求 B"] --> Mux
+    R3["請求 C"] --> Mux
+    Mux -->|"同一條 TCP 連線上<br/>依序送出多個命令"| Redis[("Redis")]
+    Redis -->|"依序回傳"| Mux
+    Mux -->|"在執行緒池上完成各自的 Task"| R1
 ```
 
----
+`ConnectionMultiplexer` 用很少的連線服務所有請求：多個命令在同一條連線上依序送出（多工），回應回來後，在執行緒池上完成對應的 `Task`。
 
-### 正確解法三：採用 .NET 9/10 HybridCache 取代手動雙層快取
+這帶來兩個重點：
 
-在過去，為了兼顧微秒級讀取與多 Pod 一致性，團隊得自己手寫 `IMemoryCache` 包裹 `IDistributedCache`。
-在 .NET 9 與 .NET 10 中，官方推出了全新的 **`HybridCache`**：
-1. **L1（本機記憶體）+ L2（Redis 分散式）自動串聯**。
-2. **原生防快取擊穿（Built-in Stampede Protection / Single-flight）**：若多個並行請求同時未命中，同一 Pod 內部只有一個請求會打到資料庫，其餘請求自動等待共享結果！
+- **建立 `ConnectionMultiplexer` 很貴**（連線、握手、取得拓撲），整個應用程式只建一次。
+- **它依賴執行緒池處理回應。** 執行緒池被其他程式碼卡住時（例如 `.Result` 造成的耗盡），Redis 的回應已經到了，卻沒有執行緒去完成它，就會出現逾時，看起來像 Redis 很慢。
+
+## 常見錯誤與正確寫法
+
+### 1. 每次使用都建立新的連線
 
 ```csharp
-// 註冊原生 HybridCache
-builder.Services.AddHybridCache(options =>
+// 錯：每次都建立 ConnectionMultiplexer，耗費連線與時間，還可能洩漏連線
+using var mux = await ConnectionMultiplexer.ConnectAsync(configuration);
+```
+
+註冊成 Singleton，`IDistributedCache` 與原生操作共用同一個：
+
+```csharp
+// 套件：StackExchange.Redis、Microsoft.Extensions.Caching.StackExchangeRedis、Microsoft.Extensions.Caching.Hybrid
+var options = ConfigurationOptions.Parse(builder.Configuration.GetConnectionString("Redis")!);
+options.AbortOnConnectFail = false; // 啟動時 Redis 暫時不可用，也能先啟動並在背景重連
+options.ConnectTimeout = 3000;
+options.SyncTimeout = 1000;         // 同步呼叫逾時（毫秒）
+options.AsyncTimeout = 1000;        // 非同步呼叫逾時（毫秒），預設值比快取能接受的等待時間長
+
+var mux = await ConnectionMultiplexer.ConnectAsync(options);
+builder.Services.AddSingleton<IConnectionMultiplexer>(mux);
+builder.Services.AddStackExchangeRedisCache(o => o.ConnectionMultiplexerFactory = () => Task.FromResult<IConnectionMultiplexer>(mux));
+builder.Services.AddHybridCache(); // 程序內 + Redis 兩層
+```
+
+快取讀取等 1 秒還沒結果，通常寧可直接回資料庫，也不要讓請求一直等。
+
+### 2. 自己手寫兩層快取與防止重複載入
+
+先查 `IMemoryCache`、再查 Redis、再查資料庫、寫回兩層、還要處理多個請求同時未命中，這些 `HybridCache` 已經做好了：
+
+```csharp
+public sealed class ProductReader(HybridCache cache, ShopDbContext db)
 {
-    options.MaximumPayloadBytes = 1024 * 1024; // 單一物件最大 1MB
-    options.DefaultEntryOptions = new HybridCacheEntryOptions
-    {
-        Expiration = TimeSpan.FromMinutes(10),       // Redis (L2) 過期時間
-        LocalCacheExpiration = TimeSpan.FromMinutes(2) // 本機 (L1) 過期時間
-    };
-});
-
-// 在業務中使用極致簡潔的 GetOrCreateAsync
-public class CatalogService
-{
-    private readonly HybridCache _cache;
-    private readonly AppDbContext _db;
-
-    public CatalogService(HybridCache cache, AppDbContext db)
-    {
-        _cache = cache;
-        _db = db;
-    }
-
-    public async Task<ProductDto?> GetProductAsync(long id, CancellationToken ct)
-    {
-        // 自動先查 L1 記憶體 ➔ 若無再查 L2 Redis ➔ 若無自動防擊穿回源 DB 並同時回填 L1/L2！
-        return await _cache.GetOrCreateAsync(
-            $"product:{id}",
-            async token => await _db.Products
-                .AsNoTracking()
-                .Where(p => p.Id == id)
-                .Select(p => new ProductDto(p.Id, p.Name, p.Price))
-                .FirstOrDefaultAsync(token),
+    public ValueTask<ProductDto?> GetAsync(int id, CancellationToken ct) =>
+        cache.GetOrCreateAsync(
+            $"catalog:product:{id}",
+            async token => await db.Products.AsNoTracking()
+                .Where(p => p.Id == id).Select(p => new ProductDto(p.Id, p.Name, p.Price))
+                .SingleOrDefaultAsync(token),
+            new HybridCacheEntryOptions
+            {
+                Expiration = TimeSpan.FromMinutes(5),          // Redis 中的期限
+                LocalCacheExpiration = TimeSpan.FromSeconds(30) // 程序內快取較短，減少各 Pod 間的不一致
+            },
             cancellationToken: ct);
-    }
 }
 ```
 
----
+### 3. 把 RedisTimeoutException 當成 Redis 很慢
 
-## 踩坑與避坑指南
+StackExchange.Redis 的逾時錯誤訊息裡會帶出很多資訊，例如佇列中還有多少命令、執行緒池的忙碌與最小執行緒數。先讀錯誤訊息：
 
-### 1. SyncTimeout 預設過長引發執行緒池雪崩
-- **踩坑點**：`StackExchange.Redis` 預設的 `SyncTimeout = 5000ms`。若 Redis 突然出現慢查詢，上百個同步呼叫（如 `StringGet`）會各自卡死 5 秒。這會迅速耗盡 .NET ThreadPool 的工作執行緒，導致整個 Web 伺服器連健康檢查（Health Check）都無法處理。
-- **規則**：生產環境必須將 `SyncTimeout` 與 `AsyncTimeout` 調降至 **1,000ms 或更低**。
+- 執行緒池的忙碌數（`Busy`）大於最小值（`Min`）：問題在應用程式的執行緒池，不在 Redis，見 [ThreadPool 耗盡](/platforms/dotnet/threadpool/)。
+- 佇列中等待送出的命令很多：可能有大 key 或慢命令卡住連線，或頻寬不足。
 
-### 2. ThreadPool 最小執行緒數調優（MinThreads）
-- .NET ThreadPool 在面對突波請求時，其預設的擴展算法極為保守（每秒僅注入 1~2 個新執行緒）。當併發突增時，大量任務會排隊等待 Worker Thread，進而觸發 StackExchange.Redis 的 `TimeoutException (qs: ..., in: ..., mgr: ...)`。
-- **解法**：在高併發服務的 `Program.cs` 啟動時主動調高最小執行緒數：
-  ```csharp
-  ThreadPool.SetMinThreads(200, 200);
-  ```
+## 使用邊界
 
----
+- 多數快取需求用 `HybridCache` 即可；需要排行榜、計數、原子操作時才直接使用 `IDatabase`。
+- 程序內快取讓各 Pod 的資料可能不一致；`LocalCacheExpiration` 設短，或在資料更新時以標籤或 key 移除，見 [Cache-Aside](/infrastructure/redis/cache-aside/)。
+- 在 Kubernetes 上，Redis 的端點用服務提供的主要端點或設定端點，容錯移轉後才會自動指向新的主節點。
 
-## 線上排查指令
+## 雲端排查
 
-### 1. 查詢 Redis 伺服器當前連線數與來源客戶端
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-# 檢查當前連線總數與歷史連線峰值
-redis-cli INFO clients
-```
-重點關注：
-- `connected_clients`：當前連線數。若遠大於 `Pod數量 × 2`，通常代表存在短命連線洩漏！
-- `blocked_clients`：正在等待 BLPOP 等阻塞指令的客戶端數量。
-
-```bash
-# 查看所有已連線客戶端的詳細資訊（來源 IP、空閒秒數）
-redis-cli CLIENT LIST | head -n 10
+# Redis 逾時錯誤的次數與時間分布
+kubectl logs -n shop -l app=catalog-api --since=30m | grep -c "RedisTimeoutException"
 ```
 
-### 2. 即時觀測 .NET 應用端執行緒池佇列積壓
+### 託管服務層
 
-當 Redis 出現 Timeout 報錯時，使用 `dotnet-counters` 驗證是否為本地 ThreadPool 飢餓：
-```bash
-dotnet-counters monitor -p $(pgrep -f "Ecommerce.Api.dll") \
-  --counters System.Runtime
-```
-關注 `threadpool-queue-length` 是否大於 0。若佇列持續積壓，代表是本機執行緒池阻塞而非 Redis 伺服器問題。
-
-### 3. Prometheus / Grafana 監控指標
+#### 兩邊相同：連線數與慢命令
 
 ```text
-# Redis 連線數佔比超過上限 75%
-(redis_connected_clients / redis_config_maxclients) > 0.75
-
-# .NET Redis 操作逾時報錯計數
-rate(redis_timeouts_total[1m]) > 0
+INFO clients        # connected_clients：異常多代表有用戶端沒有共用連線
+SLOWLOG GET 10      # 最近執行最久的 10 個命令
+CLIENT LIST         # 每條連線的來源位址與最後執行的命令
 ```
+
+`connected_clients` 遠大於「Pod 數 × 少數幾條」，代表有程式在重複建立 `ConnectionMultiplexer`。
+
+#### GKE
+
+Memorystore 的 `redis.googleapis.com/clients/connected`（連線數）與 `redis.googleapis.com/stats/cpu_utilization`；連線數隨部署次數一路增加，通常是連線洩漏。
+
+#### EKS
+
+ElastiCache 的 `CurrConnections` 與 `NewConnections`。`NewConnections` 持續很高，代表用戶端不斷建立新連線，而不是重複使用。
+
+### 應用程式層
+
+逾時錯誤和執行緒池指標一起看：`dotnet-counters monitor --process-id 1 --counters System.Runtime` 中的 `dotnet.thread_pool.queue.length` 同時升高，問題在執行緒池；佇列長度正常而 Redis 的 `SLOWLOG` 有慢命令，問題在 Redis 端。

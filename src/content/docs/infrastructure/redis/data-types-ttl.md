@@ -1,189 +1,138 @@
 ---
-title: "Redis 資料型別、Key 與 TTL"
-description: "依讀寫行為選資料結構，理解過期時間、覆寫、命名與原子操作的界線。"
+title: "Redis 資料型別、Key 與 TTL：選對結構，別讓資料永遠不過期"
+description: "說明 String、Hash、List、Set、Sorted Set 的用途，Key 的命名規則，覆寫資料時 TTL 會消失的陷阱，以及 KEYS 與大型 key 對 Redis 的傷害。"
 articleId: "redis-data-types-ttl"
 topic: "redis"
 category: "redis-basics"
 order: 2
-tags:
-  - "String"
-  - "Hash"
-  - "List"
-  - "Set"
-  - "Sorted Set"
-  - "TTL"
-  - "EXPIRE"
-  - "SET"
-  - "Key"
+tags: ["Redis", "Hash", "Sorted Set", "TTL", "KEEPTTL", "SCAN", "UNLINK"]
+articleType: "deep-dive"
 difficulty: "beginner"
-prerequisites:
-  - "redis-getting-started"
-relatedArticles:
-  - "redis-dotnet-integration"
-  - "redis-concurrency"
-  - "redis-reliability"
-applicableVersions: "Redis 8.x／StackExchange.Redis 3.x／.NET 10。"
-lastReviewed: "2026-10-10"
-takeaway: "Key、資料結構與 TTL 是同一份資料契約；單一命令的原子性不會自動延伸到一串命令。"
+prerequisites: ["redis-getting-started"]
+relatedArticles: ["redis-dotnet-integration", "redis-concurrency", "redis-reliability"]
+applicableVersions: "Redis 7.2／8.x、Memorystore、ElastiCache（Redis／Valkey 相容）。"
+lastReviewed: "2026-10-21"
+takeaway: "依操作方式選資料結構；每個 key 都要有 TTL，覆寫時用 KEEPTTL 或重新指定；線上不要用 KEYS，刪除大型 key 用 UNLINK。"
 sources:
-  - title: "Redis：資料型別"
+  - title: "Redis：Data types"
     url: "https://redis.io/docs/latest/develop/data-types/"
-  - title: "Redis：SET"
+  - title: "Redis：SET（EX、KEEPTTL）"
     url: "https://redis.io/docs/latest/commands/set/"
-  - title: "Redis：TTL"
-    url: "https://redis.io/docs/latest/commands/ttl/"
-  - title: "Redis：INCR"
-    url: "https://redis.io/docs/latest/commands/incr/"
+  - title: "Redis：SCAN"
+    url: "https://redis.io/docs/latest/commands/scan/"
+  - title: "Redis：UNLINK"
+    url: "https://redis.io/docs/latest/commands/unlink/"
+  - title: "Memorystore for Redis：Monitoring instances"
+    url: "https://cloud.google.com/memorystore/docs/redis/monitor-instances"
+  - title: "Amazon ElastiCache：Metrics for Valkey and Redis OSS"
+    url: "https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/CacheMetrics.Redis.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-在許多 Redis 故障覆盤報告中，最常見的元凶往往不是 Redis 引擎本身，而是開發團隊對**資料型別與鍵（Key）生命週期**的隨意使用。
+Redis 不只能存字串。它提供好幾種資料結構，每一種都有對應的原子操作：
 
-典型災難現場一：**BigKey 塞爆頻寬與阻塞單執行緒**。
-在電商商品頁面中，工程師將包含商品基礎資訊、50 種規格 SKU、幾百張圖片連結以及最新評論的龐大資料結構（體積高達 600KB），一股腦序列化為單一 JSON 字串，以 `String` 型別存入 Redis。
-當有併發請求需要「扣減其中某個規格的庫存 1 件」時，代碼寫成了經典的「讀出 600KB ➔ 記憶體反序列化 ➔ 修改數字 ➔ 序列化為 600KB ➔ 寫回 Redis」。
-在促銷高峰期：
-1. **網路頻寬耗盡（NIC Saturation）**：每秒 1,000 次存取直接消耗 600MB/s 頻寬，瞬間打滿雲端伺服器的網卡上限。
-2. **更新丟失（Lost Update）**：兩個執行緒同時讀取 600KB，分別扣減不同的規格，後寫回的物件直接覆蓋了先寫回的更新，引發嚴重的庫存錯亂。
+| 型別 | 是什麼 | 電商例子 |
+| --- | --- | --- |
+| String | 一個值（字串、數字、序列化後的 JSON） | 商品快取、計數器 |
+| Hash | 一組欄位與值，像一個小物件 | 購物車（商品 ID → 數量） |
+| List | 有順序的清單，兩端可以推入或取出 | 最近瀏覽的商品 |
+| Set | 不重複的集合 | 已領取優惠券的買家 |
+| Sorted Set | 每個元素帶一個分數，依分數排序 | 熱銷排行榜 |
 
-典型災難現場二：**永久 Key 導致記憶體無情膨脹（OOM）**。
-開發者在記錄使用者瀏覽記錄或防刷驗證碼時，使用 `SET verify_code:13800000000 123456`，**卻忘了加上過期時間（TTL）**。幾個月下來，累積了上千萬個無用的過期驗證碼。Redis 記憶體被撐滿達到 `maxmemory`，觸發了記憶體淘汰機制，導致原本重要的全域使用者 Session 快取被強制清除，全站使用者集體被迫登出！
+**Key** 是資料的名字，**TTL** 是它的存活時間，到期後 Redis 自動刪除。這三者（key 的命名、資料結構、TTL）一起構成一份快取資料的「契約」。
 
----
+## 運作原理
 
-## 反模式與正確解法
+```mermaid
+flowchart LR
+    Cmd1["HINCRBY cart:buyer:42 sku:1001 1"] --> R["Redis 單執行緒依序執行命令"]
+    Cmd2["HINCRBY cart:buyer:42 sku:1001 1"] --> R
+    R --> Result["兩個命令各自原子完成：數量 +2"]
+    R -.-> Note["但「HGET 再 HSET」是兩個命令，<br/>中間可能被別人插隊"]
+```
 
-### 1. Redis 五大核心型別選型指南
+Redis 依序執行命令，每一個命令本身是原子的：`HINCRBY`（把 Hash 裡的某個欄位加一）不會被其他命令打斷。但「先讀出來、在程式裡算好、再寫回去」是兩個命令，中間可能被其他用戶端插入，就會有競爭問題。所以能用單一原子命令完成的事，就不要拆成「讀、改、寫」。
 
-| 資料型別 | 最佳使用情境 | 典型操作命令 | 避免場景 |
-| :--- | :--- | :--- | :--- |
-| **`String`** | 小型物件快取、原子計數器、分散式鎖 | `GET`, `SET`, `INCRBY` | 儲存大於 50KB 的巨型巢狀 JSON |
-| **`Hash`** | 包含多個屬性的結構化實體（如商品、用戶設定） | `HGET`, `HSET`, `HINCRBY` | 整個物件所有欄位總是一起讀寫且極小（此時用 String 更單純） |
-| **`List`** | 有界日誌、輕量佇列、時間軸最新消息 | `LPUSH`, `RPOP`, `LTRIM` | 隨機按索引讀取大集合（$O(N)$ 效能差） |
-| **`Set`** | 唯一值去重、共同好友、抽獎去重池 | `SADD`, `SISMEMBER`, `SINTER` | 需要保證元素排序順序 |
-| **`Sorted Set (ZSet)`**| 熱搜排行榜、分頁評分、延時任務佇列 | `ZADD`, `ZRANGEBYSCORE` | 元素頻繁大量修改且不需任何排序 |
+TTL 是 key 的屬性，不是值的屬性。用 `SET` 覆寫一個 key 時，如果沒有再指定期限，原本的 TTL 會被清除，這個 key 就永遠不會過期。
 
----
+## 常見錯誤與正確寫法
 
-### 反模式一：單純依賴 String 儲存複雜實體並手動比對
+### 1. 整個物件存成 JSON 字串，改一個欄位就要整份重寫
 
-將整個大實體存成 String，每次局部修改都需要拉回全量資料，浪費 I/O 且無法達成原子更新。
-
-### 正確解法一：利用 Hash 與原子 HINCRBY 進行局部更新
-
-將商品結構分解為 Redis `Hash`，不僅利用底層 `listpack`（或 `ziplist`）達成極高記憶體壓縮比，還能在 Redis 端直接對單一欄位進行原子計算：
+購物車存成一個 JSON 字串，每次加一件商品都要讀出整份、反序列化、修改、序列化、寫回。兩個裝置同時加商品，後寫入的會蓋掉先寫入的。改用 Hash，每個商品是一個欄位：
 
 ```csharp
-// 正確解法：利用 Hash 與 HINCRBY 進行欄位級原子扣減
-public async Task<bool> DeductStockFieldAsync(
-    long productId, 
-    string skuCode, 
-    int quantity, 
-    CancellationToken ct)
-{
-    var hashKey = $"ecommerce:product:stock:{productId}";
-    var db = _redis.GetDatabase();
-
-    // 在 Redis 內部直接對特定 SKU 欄位執行原子遞減（避免網路傳輸整包物件！）
-    var remainingStock = await db.HashDecrementAsync(hashKey, skuCode, quantity);
-
-    if (remainingStock < 0)
-    {
-        // 若扣成負數，立即原子補回並回報失敗
-        await db.HashIncrementAsync(hashKey, skuCode, quantity);
-        return false;
-    }
-
-    return true;
-}
+// 套件：StackExchange.Redis
+var key = $"cart:buyer:{buyerId}";
+await redis.HashIncrementAsync(key, $"sku:{sku}", quantity); // 原子地增加數量
+await redis.KeyExpireAsync(key, TimeSpan.FromDays(7));       // 每次活動都延長期限
 ```
 
----
-
-### 反模式二：覆寫 Key 時意外丟失原有的 TTL
-
-工程師在一個已經設定過過期時間（TTL = 300 秒）的 Key 上，執行常規的 `SET key value`。
-**在 Redis 協議中，常規的 `SET` 會預設將該 Key 的過期時間徹底清除，使其變為永久保存（TTL = -1）！**
-
-### 正確解法二：使用 KEEPTTL 參數或在同一指令顯式指定過期時間
-
-現代 Redis 支援在更新值時保留原先的過期時間倒數（`KEEPTTL`）：
-
-```csharp
-// 正確解法：更新值的同時保留原有剩餘的過期時間（KEEPTTL）
-public async Task UpdateValueKeepTtlAsync(string key, string newValue)
-{
-    var db = _redis.GetDatabase();
-
-    // 透過 keepTtl: true，確保不會把原本的過期倒數抹煞成永久 Key！
-    await db.StringSetAsync(key, newValue, keepTtl: true);
-}
-```
-
----
-
-### 正確解法三：規範化的 Key 命名空間與強制預設 TTL
-
-團隊必須訂立統一的 Key 命名規範：`{系統}:{領域模組}:{實體ID}:{屬性}`。
-任何寫入 Redis 的代碼，**必須強制傳入 `TimeSpan expiration`**：
-
-```csharp
-// 命名範例：層次清晰且利於監控統計
-string productKey = $"ecommerce:catalog:product:{id}";
-string rateLimitKey = $"ecommerce:security:ratelimit:{ip}";
-
-// 寫入時強制指定 TTL，杜絕孤兒永久 Key
-await db.StringSetAsync(productKey, json, TimeSpan.FromMinutes(15));
-```
-
----
-
-## 踩坑與避坑指南
-
-### 1. 嚴禁在線上執行 KEYS * 指令
-- **踩坑點**：`KEYS *` 指令的時間複雜度為 $O(N)$，它會暴力遍歷記憶體中的所有百萬個 Key。由於 Redis 是單執行緒模型（Single-threaded Engine），在遍歷的 3~5 秒內，Redis 完全無法響應任何其他客戶端請求，導致全站雪崩！
-- **線上鐵律**：生產環境必須使用 **`SCAN` 游標遍歷**，分批漸進式掃描。
-
-### 2. 刪除巨型 BigKey 時使用 UNLINK 取代 DEL
-- 若一個包含 100 萬個元素的 Hash 或 ZSet 需要被刪除，直接執行 `DEL key` 會在主執行緒同步釋放這數十萬個記憶體節點，阻塞 Redis 達數百毫秒。
-- **規則**：使用 **`UNLINK key`**。Redis 會將該 Key 立即從鍵空間摘除，並在背景獨立執行緒非同步釋放記憶體。
-
----
-
-## 線上排查指令
-
-### 1. 檢測生產環境中的 BigKeys 分佈
-
-在終端機執行 Redis 內建工具（不會阻塞線上服務）：
-```bash
-redis-cli -h redis-host -p 6379 -a "password" --bigkeys
-```
-此指令會透過 `SCAN` 漸進掃描並回報每種資料型別（String, Hash, List, Set, ZSet）中佔用記憶體最大、元素最多的 Top 1 巨型鍵。
-
-### 2. 使用 SCAN 安全遍歷特定前綴的 Key
-
-```bash
-# 安全漸進式掃描前綴，每次讀取 100 筆，不卡死 Redis
-redis-cli --scan --pattern "ecommerce:catalog:*" | head -n 20
-```
-
-### 3. 檢查特定 Key 的剩餘存活秒數（TTL）
-
-```bash
-redis-cli TTL "ecommerce:catalog:product:101"
-```
-回傳值意涵：
-- 正整數：剩餘存活秒數。
-- `-1`：該 Key 為永久保存（無過期時間，若為快取即屬異味！）。
-- `-2`：該 Key 不存在或已過期刪除。
-
-### 4. Prometheus / Grafana 監控指標
+### 2. 覆寫時把 TTL 弄丟了
 
 ```text
-# 永久 Key（無 TTL）佔比告警
-(redis_db_keys_total - redis_db_expires_keys_total) / redis_db_keys_total > 0.3
-
-# 記憶體使用率佔 maxmemory 比例超過 80%
-(redis_memory_used_bytes / redis_memory_max_bytes) > 0.8
+SET product:1001 "{...}" EX 300     # 有 5 分鐘期限
+SET product:1001 "{...新內容...}"    # 錯：沒指定期限，這個 key 從此不會過期
 ```
+
+覆寫時一併指定期限；只想改值、保留原本剩餘的期限，就加 `KEEPTTL`：
+
+```text
+SET product:1001 "{...新內容...}" EX 300
+SET product:1001 "{...新內容...}" KEEPTTL
+```
+
+用 StackExchange.Redis 時，`StringSetAsync(key, value, expiry)` 一定要帶上 `expiry`。沒有期限的 key 會一直累積，最後讓記憶體滿到開始淘汰其他有用的資料。
+
+### 3. Key 沒有命名規則
+
+用一致的命名空間，例如 `{服務}:{用途}:{ID}`：`catalog:product:1001`、`cart:buyer:42`。好處是一眼看出 key 屬於誰，也能用 SCAN 依前綴找出某一類 key；資料格式改版時，在名稱裡加版本號（`catalog:product:v2:1001`），新舊格式就不會互相讀錯。
+
+### 4. 線上執行 KEYS，或刪除巨大的 key
+
+`KEYS catalog:*` 會一次掃描所有 key。Redis 是單執行緒，這個命令執行期間，其他所有請求都要等。用 `SCAN` 分批遍歷：
+
+```text
+SCAN 0 MATCH catalog:product:* COUNT 500
+```
+
+刪除一個有幾百萬個元素的 Set 或 Hash，`DEL` 也會阻塞。用 `UNLINK`，Redis 會立即移除 key 的名字，在背景釋放記憶體。
+
+## 使用邊界
+
+- 單一 key 不要太大（例如超過幾 MB，或元素數超過數萬）。大 key 讀寫都慢、在叢集模式下無法分散，也讓複寫與刪除變得困難。
+- 需要多個命令一起原子執行，用 Lua 腳本或交易（`MULTI`／`EXEC`），見 [併發控制](/infrastructure/redis/concurrency/)。
+- 快取一致性的完整流程見 [Cache-Aside](/infrastructure/redis/cache-aside/)。
+
+## 雲端排查
+
+### 叢集層（GKE 與 EKS 相同）
+
+連線方式同 [Redis 入門](/infrastructure/redis/getting-started/)的雲端排查，從叢集內的暫時 Pod 執行 `redis-cli`。
+
+### 託管服務層
+
+#### 兩邊相同：找大 key 與沒有期限的 key
+
+```bash
+# 以 SCAN 為基礎找出各型別中最大的 key（不會像 KEYS 一樣阻塞）
+redis-cli -h <快取端點> --tls --insecure --bigkeys
+
+# 某個 key 剩餘的存活秒數：-1 代表沒有設定期限，-2 代表不存在
+redis-cli -h <快取端點> --tls --insecure TTL catalog:product:1001
+```
+
+`INFO keyspace` 中 `keys` 與 `expires` 差距很大，代表有很多 key 沒有設定期限。
+
+#### GKE
+
+Memorystore 的 `redis.googleapis.com/keyspace/keys` 顯示 key 數量；持續上升沒有回落，通常是有程式寫入了沒有期限的 key。記憶體用量看 `redis.googleapis.com/stats/memory/usage_ratio`。
+
+#### EKS
+
+ElastiCache 的 `CurrItems`（key 數量）與 `DatabaseMemoryUsagePercentage`。`EngineCPUUtilization` 出現尖峰，對照當時是否有人執行了 `KEYS` 或刪除大 key。
+
+### 應用程式層
+
+在寫入快取的共用方法裡強制要求傳入期限，例如包一層只接受 `TimeSpan expiry` 的方法，從程式結構上避免寫出沒有 TTL 的 key。
