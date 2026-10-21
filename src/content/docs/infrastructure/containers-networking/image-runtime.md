@@ -2,8 +2,8 @@
 title: "映像、容器與 .NET 程序"
 description: "從建置產物到執行中的程序，理解映像分層、設定、權限與停止訊號。"
 articleId: "containers-image-runtime"
-topic: "containers"
-category: "container-basics"
+topic: "containers-networking"
+category: "containers"
 order: 1
 tags:
   - "映像、容器與 .NET 程序"

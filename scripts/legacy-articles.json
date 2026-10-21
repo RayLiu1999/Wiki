@@ -35,7 +35,6 @@
   "engineering/recovery-cost.md",
   "engineering/slo-alerts.md",
   "frameworks/aspnet-core/api-styles-aot.md",
-  "frameworks/aspnet-core/authentication.md",
   "frameworks/aspnet-core/dapr.md",
   "frameworks/aspnet-core/dependency-injection.md",
   "frameworks/aspnet-core/filters.md",
@@ -47,9 +46,9 @@
   "frameworks/aspnet-core/model-binding.md",
   "frameworks/aspnet-core/options.md",
   "frameworks/aspnet-core/routing.md",
-  "infrastructure/containers/compose.md",
-  "infrastructure/containers/image-runtime.md",
-  "infrastructure/networking/request-path.md",
+  "infrastructure/containers-networking/compose.md",
+  "infrastructure/containers-networking/image-runtime.md",
+  "infrastructure/containers-networking/request-path.md",
   "infrastructure/rabbitmq/acknowledgements.md",
   "infrastructure/rabbitmq/dotnet-integration.md",
   "infrastructure/rabbitmq/getting-started.md",
@@ -89,5 +88,6 @@
   "platforms/kubernetes/probes-resources.md",
   "platforms/kubernetes/services-gateway.md",
   "platforms/kubernetes/storage.md",
-  "platforms/kubernetes/workloads.md"
+  "platforms/kubernetes/workloads.md",
+  "security/authentication.md"
 ]

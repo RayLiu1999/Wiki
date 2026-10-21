@@ -2,8 +2,8 @@
 title: "ASP.NET Core 驗證與授權實戰：JWT Bearer 陷阱與 Policy-based 授權"
 description: "深入剖析 401 與 403 職責邊界、JWT ClockSkew 時鐘漂移陷阱、垂直越權漏洞防範，以及 Policy-based 授權策略實戰。"
 articleId: "aspnet-core-authentication"
-topic: "aspnet-core"
-category: "services"
+topic: "security"
+category: "identity-access"
 order: 5
 tags: ["ASP.NET Core", "JWT", "Authentication", "Authorization", "ClockSkew", "RBAC", "資安防護"]
 articleType: "deep-dive"

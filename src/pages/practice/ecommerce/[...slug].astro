@@ -1,5 +1,5 @@
 ---
-import SiteLayout from '../../../layouts/SiteLayout.astro';
+import MovedPage from '../../../components/MovedPage.astro';
 // 實作指南已移除（見 docs/adr/0001），舊網址逐一轉到內容最接近的電商章節。
 export function getStaticPaths() {
   const moved = {
@@ -14,13 +14,5 @@ export function getStaticPaths() {
   };
   return Object.entries(moved).map(([slug, target]) => ({ params: { slug: slug === 'overview' ? undefined : slug }, props: { target } }));
 }
-const { target } = Astro.props;
 ---
-<SiteLayout title="頁面已移動">
-  <Fragment slot="head">
-    <meta http-equiv="refresh" content={'0; url=' + target.url} />
-    <meta name="robots" content="noindex" />
-    <link rel="canonical" href={target.url} />
-  </Fragment>
-  <section class="not-found"><h1>這一頁已經移動</h1><p>實作指南已經整併進電商章節。請改讀<a href={target.url}>{target.title}</a>。</p></section>
-</SiteLayout>
+<MovedPage target={Astro.props.target} reason="實作指南已經整併進電商章節。" />

@@ -3,7 +3,7 @@ title: "C# 集合實務：LINQ 延遲求值陷阱、容量預估與 Span 零拷�
 description: "直擊電商後端常見的 LINQ 多次列舉災難、List 擴容隱形代價，以及運用 ReadOnlySpan 達成零配置字串解析。"
 articleId: "csharp-collections-linq"
 topic: "csharp"
-category: "collections-memory"
+category: "syntax-runtime"
 order: 1
 tags: ["C#", "LINQ", "Span", "集合", "效能優化", "記憶體"]
 articleType: "deep-dive"

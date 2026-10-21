@@ -2,8 +2,8 @@
 title: "Compose 與本機服務邊界"
 description: "分清主機程序、容器網路、port 映射、volume 和服務就緒。"
 articleId: "containers-compose"
-topic: "containers"
-category: "container-environments"
+topic: "containers-networking"
+category: "containers"
 order: 2
 tags:
   - "Compose 與本機服務邊界"

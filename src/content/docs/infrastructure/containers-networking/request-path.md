@@ -2,8 +2,8 @@
 title: "從 DNS 到商品 API：網路請求路徑"
 description: "用一筆商品查詢分清 DNS、TCP、TLS、HTTP、負載平衡與應用認證。"
 articleId: "networking-request-path"
-topic: "networking"
-category: "network-foundations"
+topic: "containers-networking"
+category: "networking"
 order: 1
 tags:
   - "從 DNS 到商品 API：網路請求路徑"

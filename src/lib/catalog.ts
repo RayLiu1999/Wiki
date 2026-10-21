@@ -1,6 +1,6 @@
 import { getCollection, type CollectionEntry } from 'astro:content';
 import { topicFor, type TopicId } from './taxonomy';
-export { categories, categoryFor, topics, topicFor, topicUrl } from './taxonomy';
+export { csharpCategories, categoryFor, topics, topicFor, topicUrl } from './taxonomy';
 
 export type Article = CollectionEntry<'docs'>;
 export type HandbookEntry = CollectionEntry<'handbook'>;

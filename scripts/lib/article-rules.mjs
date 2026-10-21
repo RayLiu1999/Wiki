@@ -4,7 +4,7 @@ import { parse } from 'yaml';
 export const requiredSections = ['這是什麼', '運作原理', '常見錯誤與正確寫法', '使用邊界'];
 export const cloudSection = '雲端排查';
 export const cloudTopics = new Set([
-  'data-access', 'redis', 'rabbitmq', 'containers', 'networking', 'kubernetes', 'gke', 'dotnet', 'engineering',
+  'data-access', 'redis', 'rabbitmq', 'containers-networking', 'kubernetes', 'gke', 'eks', 'dotnet', 'engineering',
 ]);
 // 「這是什麼」是每篇的入口，不能省略。
 const unomittable = new Set(['這是什麼']);
