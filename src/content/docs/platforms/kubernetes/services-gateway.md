@@ -1,181 +1,155 @@
 ---
-title: "Service、Gateway 與流量路由"
-description: "從不固定的 Pod IP 走到穩定服務入口，分清 Service 與 HTTP 路由。"
+title: "Service 與 Gateway：Pod 的 IP 一直變，流量怎麼找到它"
+description: "說明 Service 如何提供穩定的入口、port 與 targetPort 的差別、EndpointSlice 如何追蹤可用的 Pod、Gateway API 如何管理 HTTP 路由，以及 DNS 解析與長連線負載不均的問題。"
 articleId: "kubernetes-services-gateway"
 topic: "kubernetes"
 category: "k8s-workloads"
 order: 2
-tags: ["Service、Gateway 與流量路由", "kubernetes"]
-difficulty: "advanced"
+tags: ["Kubernetes", "Service", "EndpointSlice", "Gateway API", "HTTPRoute", "CoreDNS"]
+articleType: "deep-dive"
+difficulty: "beginner"
 prerequisites: ["kubernetes-workloads", "networking-request-path"]
-relatedArticles: ["kubernetes-workloads", "kubernetes-probes-resources"]
-applicableVersions: "以 Kubernetes 現行核心 API 與 Docker 容器模型說明；GKE 限制另見平台文章。"
-lastReviewed: "2026-10-10"
-takeaway: "從不固定的 Pod IP 走到穩定服務入口，分清 Service 與 HTTP 路由。"
-sources: [{"title": "Services", "url": "https://kubernetes.io/docs/concepts/services-networking/service/"}, {"title": "Ingress", "url": "https://kubernetes.io/docs/concepts/services-networking/ingress/"}, {"title": "Gateway API", "url": "https://gateway-api.sigs.k8s.io/concepts/api-overview/"}]
+relatedArticles: ["gke-gateway-networking", "eks-load-balancing", "aspnet-core-grpc"]
+applicableVersions: "Kubernetes 1.29 以上、Gateway API v1；GKE 與 EKS 現行支援版本。"
+lastReviewed: "2026-10-21"
+takeaway: "Service 提供不變的名稱與 IP，背後依 label 找到 Ready 的 Pod；對外的 HTTP 路由用 Gateway API 分開管理；長連線協定（gRPC）經過 Service 時會集中到少數 Pod。"
+sources:
+  - title: "Kubernetes：Service"
+    url: "https://kubernetes.io/docs/concepts/services-networking/service/"
+  - title: "Kubernetes：EndpointSlices"
+    url: "https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/"
+  - title: "Kubernetes：DNS for Services and Pods"
+    url: "https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/"
+  - title: "Gateway API"
+    url: "https://gateway-api.sigs.k8s.io/"
+  - title: "GKE：Gateway API 概觀"
+    url: "https://cloud.google.com/kubernetes-engine/docs/concepts/gateway-api"
+  - title: "AWS Load Balancer Controller：Ingress annotations"
+    url: "https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/guide/ingress/annotations/"
 ---
 
-在 Kubernetes 動態排程環境中，Pod 隨時可能因為擴縮容、節點故障或版本部署而銷毀重建，其內部 IP 位址具備高度揮發性。為了解決後端微服務之間的連線定址，以及外部使用者造訪叢集內部應用的需求，Kubernetes 提供了四層（L4）的 Service 抽象與七層（L7）的 Gateway API 路由體系。
+## 這是什麼
 
-## 案發現場
+Pod 會被替換，每次替換 IP 都會變。如果訂單服務寫死庫存服務某個 Pod 的 IP，那個 Pod 一重建，呼叫就失敗了。
 
-某電商平台的購物車服務在呼叫商品目錄 API 時，尖峰期間頻繁拋出 `HttpRequestException: Connection refused` 與 HTTP 502 Bad Gateway 錯誤，同時安全風控團隊回報所有外部訂單請求的來源 IP 全數變成叢集 Node 節點的內部私有 IP，導致防刷單機制徹底失效：
+**Service** 為一組 Pod 提供一個不變的名稱與虛擬 IP。訂單服務只要呼叫 `http://inventory.shop.svc`，Kubernetes 就會把請求送到目前可用的某個庫存 Pod。
 
-1. **標籤選擇器拼寫錯誤**：發布新版商品 API 後，Service 的 `spec.selector` 遺漏了環境標籤，導致 Service 底下的 `EndpointSlice` 為空（0 endpoints），內部流量直接丟失。
-2. **連接埠配置混淆**：將 Service 的 `port` 與容器監聽的 `targetPort` 搞混，呼叫端連線到 80 連接埠，但封包轉發至尚未監聽該埠的 Pod，引發連線被拒。
-3. **客戶端真實 IP 遺失**：對外暴露的 Service 採用預設的 `externalTrafficPolicy: Cluster`，外部封包經過節點 SNAT（來源網路位址轉換），致使 ASP.NET Core 取得的 `HttpContext.Connection.RemoteIpAddress` 全為節點內網 IP。
-4. **Ingress 單體規則失控**：所有微服務共用單一 Ingress 巨大設定檔，業務團隊為了調整金絲雀分流權重，意外改壞了全站 TLS 憑證路徑，導致購物車與付款入口全面癱瘓。
+對外的 HTTP 流量（買家從網際網路進來）還需要依網址路徑、主機名稱分流到不同服務，並處理 TLS。這由 **Gateway API**（或較早的 Ingress）負責。
+
+## 運作原理
 
 ```mermaid
-flowchart TD
-    Client["外部使用者 (Client)"] --> LB["雲端負載平衡器 / Gateway"]
-    LB -->|保留真實 IP| Node["K8s Node (kube-proxy / NEG)"]
-    Node --> Service["ClusterIP Service (L4 虛擬 IP)"]
-    Service -->|標籤選擇器匹配| EPS["EndpointSlice (可用 Pod 清單)"]
-    EPS --> Pod1["Order API Pod 1 (:8080)"]
-    EPS --> Pod2["Order API Pod 2 (:8080)"]
+flowchart LR
+    Client["訂單 Pod"] -->|"inventory.shop.svc:80"| Svc["Service：inventory<br/>selector app=inventory"]
+    Svc --> ES["EndpointSlice<br/>只列 Ready 的 Pod IP:8080"]
+    ES --> P1["inventory Pod A"]
+    ES --> P2["inventory Pod B"]
+    Ext["買家"] --> GW["Gateway（雲端負載平衡器）"]
+    GW -->|"HTTPRoute：/products → product-api"| Svc2["Service：product-api"]
 ```
 
-## 反模式與正確解法
+**selector 與 EndpointSlice**：Service 用 label 選擇 Pod（例如 `app: inventory`），Kubernetes 把符合條件、而且 readiness 通過的 Pod IP 記在 EndpointSlice 裡。Pod 還沒準備好、或正在停止，就會從清單中移除。
 
-### 反模式一：直連 Pod IP 或混淆 Service Port 與 TargetPort
+**port 與 targetPort**：`port` 是 Service 對外的 port（例如 80），`targetPort` 是 Pod 裡容器實際監聽的 port（.NET 官方映像預設 8080）。
 
-開發者在微服務連線字串中寫死 Pod IP，或誤以為 Service 是一個實體代理程序，任意配置 port。當 Pod 重啟換 IP 時服務斷線；或將 Service 的 `port: 80` 轉向錯誤的容器連接埠，導致封包撞牆。
+**Service 的負載平衡在連線層**：新連線建立時選一個 Pod。HTTP/1.1 用戶端通常會開多條連線，流量自然分散；gRPC 只開一條長連線，所有請求都會集中到那一個 Pod，見 [gRPC](/frameworks/aspnet-core/grpc/)。
 
-#### 正確解法：明確定義 ClusterIP 與正確映射埠號
+**Gateway API** 把責任分開：平台團隊管理 `Gateway`（入口、TLS、負載平衡器），各服務團隊用 `HTTPRoute` 宣告自己的路由規則，不用大家共同編輯同一份巨大的 Ingress。
 
-Service 在 Kubernetes 內部本質上是一組虛擬 IP（VIP）與 iptables / IPVS 轉發規則。叢集內部呼叫一律使用穩定 DNS 名稱，並明確區分 Service Port（呼叫端所見）與 Container targetPort（Kestrel 監聽埠）：
+## 常見錯誤與正確寫法
+
+### 1. port 與 targetPort 對不上
 
 ```yaml
 apiVersion: v1
 kind: Service
 metadata:
-  name: catalog-service
-  namespace: ecommerce-prod
-  labels:
-    app.kubernetes.io/name: catalog-service
+  name: product-api
+  namespace: shop
 spec:
-  type: ClusterIP
   selector:
-    app.kubernetes.io/name: catalog-api # 必須與 Pod template labels 精確匹配
+    app: product-api      # 必須和 Pod 的 label 完全一致
   ports:
-  - name: http
-    port: 80             # 內部微服務呼叫端存取的連接埠
-    targetPort: 8080     # ASP.NET Core 容器內部 Kestrel 監聽的連接埠
-    protocol: TCP
+    - name: http
+      port: 80            # 其他服務呼叫 http://product-api.shop.svc（預設 80）
+      targetPort: 8080    # 容器實際監聽的 port
 ```
 
-內部微服務呼叫端（如購物車服務）只需使用標準的 CoreDNS 名稱：
-`http://catalog-service.ecommerce-prod.svc.cluster.local/api/products`
+selector 打錯或 targetPort 錯誤時，Service 存在但 EndpointSlice 是空的，呼叫會連線失敗。
 
-### 反模式二：使用巨大的單體 Ingress 管理全站七層路由
+### 2. 所有對外路由擠在一份 Ingress
 
-舊式 Ingress API 將主機名稱、TLS 憑證、基礎設施負載平衡器型態、路徑轉發規則與外掛註解（Annotations）全部塞在單一資源中。在跨團隊協作時，平台團隊與業務團隊職責邊界模糊，極易因單一欄位誤動引發全站雪崩，且缺乏原生的百分比金絲雀權重支援。
-
-#### 正確解法：採用 Gateway API 實踐角色解耦與精準分流
-
-Gateway API（已晉升為正式標準）將入口架構拆解為三個核心角色：
-1. **GatewayClass**：基礎設施提供者（如 GKE, Envoy, Cilium）定義控制器實作。
-2. **Gateway**：平台維運團隊負責管理入口監聽埠（Port 80/443）、TLS 憑證與網域名稱綁定。
-3. **HTTPRoute**：各業務微服務團隊自主維護路徑匹配、標頭改寫與金絲雀流量切換。
+改用 Gateway API，每個服務管理自己的 HTTPRoute：
 
 ```yaml
-# 1. 平台團隊維護的入口 Gateway
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: ecommerce-gateway
-  namespace: ecommerce-infra
-spec:
-  gatewayClassName: gke-l7-global-external-managed
-  listeners:
-  - name: https
-    protocol: HTTPS
-    port: 443
-    hostname: "api.eshop.example.com"
-    tls:
-      mode: Terminate
-      certificateRefs:
-      - name: eshop-tls-cert
-    allowedRoutes:
-      namespaces:
-        from: All
----
-# 2. 訂單團隊自主維護的 HTTPRoute（支援金絲雀 90:10 流量切分）
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: order-route
-  namespace: ecommerce-prod
+  name: product-api
+  namespace: shop
 spec:
   parentRefs:
-  - name: ecommerce-gateway
-    namespace: ecommerce-infra
-  hostnames:
-  - "api.eshop.example.com"
+    - name: shop-gateway        # 平台團隊建立的 Gateway
+      namespace: gateway-infra
+  hostnames: ["shop.example.com"]
   rules:
-  - matches:
-    - path:
-        type: PathPrefix
-        value: /api/orders
-    backendRefs:
-    - name: order-service-v1
-      port: 80
-      weight: 90
-    - name: order-service-v2
-      port: 80
-      weight: 10
+    - matches:
+        - path: { type: PathPrefix, value: /products }
+      backendRefs:
+        - name: product-api
+          port: 80
 ```
 
-### 反模式三：忽略 gRPC 與 HTTP/2 在 L4 Service 下的長連線負載不均
+GKE 原生支援 Gateway API；EKS 上常用 AWS Load Balancer Controller 以 Ingress 建立 ALB，細節見 [GKE Gateway](/platforms/gke/gateway-networking/)與 [EKS 對外流量](/platforms/eks/load-balancing/)。
 
-Service 預設的 ClusterIP 是基於 L4（TCP 層級）的 iptables/IPVS 連線分派。當微服務之間改用 gRPC（基於 HTTP/2 多工長連線）進行高頻通訊時，客戶端只會建立一次 TCP 連線，後續數萬個 RPC 請求全部灌入同一台 Pod，導致單一 Pod CPU 100% 爆滿，而其餘 Pod 閒置。
+### 3. Pod 停止時，請求還被送過去
 
-#### 正確解法：引入 Headless Service 或 L7 Service Mesh 負載平衡
+Pod 被刪除時，「從 EndpointSlice 移除」和「送 SIGTERM 給容器」是同時開始的；負載平衡器與其他節點要一點時間才會停止送流量。程式立刻結束，最後幾個請求就會失敗。用 `preStop` 先等幾秒再開始停止，見 [探針與安全停止](/platforms/kubernetes/probes-resources/)。
 
-若使用 gRPC，可透過 `clusterIP: None` 定義 Headless Service，使 CoreDNS 直接回傳所有可用 Pod 的 IP 清單，配合 gRPC 客戶端的 Client-side Load Balancing（Round Robin）；或透過 Envoy / Linkerd 等 L7 代理在請求層級進行逐呼叫負載平衡。
+## 使用邊界
 
-## 踩坑與避坑指南
+- **叢集內的服務名稱用完整的名稱**，例如 `product-api.shop.svc.cluster.local.`（最後加點）或至少 `product-api.shop.svc`。Pod 的 DNS 設定 `ndots:5` 會讓短名稱先嘗試好幾個搜尋網域，外部網域（例如 `api.payment.com`）也會多查好幾次。
+- `externalTrafficPolicy: Local` 可以保留用戶端的來源 IP，但流量只會送到有 Pod 的節點，可能不平均。
+- Service 只處理叢集內的連線分配；跨服務的重試、逾時、斷路由應用程式或服務網格處理。
 
-### 1. CoreDNS ndots:5 解析放大問題
-Linux 容器預設 `/etc/resolv.conf` 中帶有 `options ndots:5`。當 C# 應用發送外部 HTTP 請求（例如呼叫 Stripe 支付 API `api.stripe.com`）時，由於點的數量少於 5 個，系統會優先向 CoreDNS 查詢：
-1. `api.stripe.com.ecommerce-prod.svc.cluster.local` (NXDOMAIN)
-2. `api.stripe.com.svc.cluster.local` (NXDOMAIN)
-3. `api.stripe.com.cluster.local` (NXDOMAIN)
-4. 最後才查詢公網 DNS。
-這會導致外部 API 呼叫延遲大幅增加，並對 CoreDNS 造成數倍的查詢風暴。
-- **避坑建議**：對外呼叫使用完整網域名稱（FQDN，結尾補點 `api.stripe.com.`），或在 Pod Spec 的 `dnsConfig` 中將 `ndots` 調降為 2。
+## 雲端排查
 
-### 2. Pod 下線時的 EndpointSlice 移除競態（Race Condition）
-當 Pod 準備下線時，Kubernetes 控制平面從 API Server 標記終止、更新 EndpointSlice，到各 Node 節點的 kube-proxy 刷新 iptables 規則，需要數百毫秒至 2 秒的非同步延遲。如果 ASP.NET Core 容器一收到 `SIGTERM` 就立即拒絕連線，此時尚未更新規則的負載平衡器仍可能把新請求派發過來，產生 502/504 錯誤。
-- **避坑建議**：在 Pod 的 `container` 中配置 `lifecycle.preStop` 執行 `sleep 10`，先讓 EndpointSlice 順利移除並停止接收新流量，再讓應用程式優雅停機。
-
-### 3. externalTrafficPolicy: Local vs Cluster 的取捨
-- `Cluster`（預設）：流量可跨節點轉發，負載均衡良好，但經過 SNAT 會丟失客戶端原始 IP。
-- `Local`：強制只轉發給接收節點上的在地 Pod，完整保留客戶端真實 IP 且無額外網路躍點（Hop），但若某些節點上沒有該 Pod 副本，外部負載平衡器必須具備節點健康檢查能力以避免黑洞。
-
-## 線上排查指令
-
-針對服務定址失敗、流量分發不均與 Gateway 路由異常，使用下列指令排查：
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-# 1. 檢查 Service 與 EndpointSlice 是否成功關聯 Pod
-kubectl get svc,endpointslices -n ecommerce-prod -l app.kubernetes.io/name=catalog-service
+# Service 背後有哪些 Pod（空的就是 selector 或 readiness 的問題）
+kubectl get endpointslices -n shop -l kubernetes.io/service-name=product-api
 
-# 2. 深入檢視 EndpointSlice 細部端點清單（確認 Ready 與 Serving 狀態）
-kubectl describe endpointslices -n ecommerce-prod -l kubernetes.io/service-name=catalog-service
+# Pod 的 label 是否和 selector 一致
+kubectl get pods -n shop --show-labels | grep product-api
 
-# 3. 進入 Pod 內部排查 CoreDNS 服務解析與連線
-kubectl exec -it deploy/order-api -n ecommerce-prod -- nslookup catalog-service.ecommerce-prod.svc.cluster.local
-kubectl exec -it deploy/order-api -n ecommerce-prod -- curl -v http://catalog-service.ecommerce-prod:80/healthz
+# 從叢集內測試 DNS 與連線
+kubectl run net -n shop --rm -it --image=busybox -- sh -c \
+  'nslookup product-api.shop.svc.cluster.local && wget -qO- -T 3 http://product-api.shop.svc/health/ready'
 
-# 4. 本機直接轉發 Service 流量進行快速驗證
-kubectl port-forward svc/catalog-service 8080:80 -n ecommerce-prod
-
-# 5. 檢視 Gateway API 資源狀態與條件（Conditions: Programmed, Accepted）
-kubectl get gateway,httproute -n ecommerce-prod -o wide
-kubectl describe httproute order-route -n ecommerce-prod
-
-# 6. 監控 CoreDNS 日誌以排查 DNS 解析風暴與異常
-kubectl logs -n kube-system -l k8s-app=kube-dns --tail=100 -f
+# Gateway 與 HTTPRoute 是否被接受（看 status.conditions）
+kubectl describe httproute product-api -n shop
 ```
+
+### 託管服務層
+
+#### GKE
+
+GKE 的 Gateway 會建立 Google Cloud 負載平衡器，以 NEG（網路端點群組）直接把流量送到 Pod。後端是否健康：
+
+```bash
+gcloud compute backend-services list --filter="name~shop"
+gcloud compute backend-services get-health <backend-service-name> --global
+```
+
+#### EKS
+
+AWS Load Balancer Controller 以 target-type ip 把 Pod IP 註冊到 ALB 的目標群組：
+
+```bash
+aws elbv2 describe-target-health --target-group-arn <target-group-arn>
+```
+
+### 應用程式層
+
+在呼叫端記錄目標服務的回應時間與錯誤；某個服務的錯誤只發生在部署期間，通常是 Pod 停止時的時間差；只發生在特定 Pod，則看那個 Pod 的資源與日誌。
