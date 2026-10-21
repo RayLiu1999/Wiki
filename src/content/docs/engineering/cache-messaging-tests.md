@@ -1,173 +1,136 @@
 ---
-title: "快取與訊息系統的測試及故障診斷"
-description: "用真實容器與可觀察結果，驗證商品快取、Outbox、重試、重送及模擬通知的恢復。"
+title: "快取與訊息的故障測試：Redis 停了、訊息重送了，結果還對嗎"
+description: "說明如何用真實的 Redis 與 RabbitMQ 測試故障情境：快取不可用時的降級、交易回滾時 outbox 一起回滾、Ack 前斷線的重送，以及在雲端環境做故障演練。"
 articleId: "engineering-cache-messaging-tests"
 topic: "engineering"
 category: "testing"
 order: 3
-tags: ["整合測試", "Redis", "RabbitMQ", "PostgreSQL", "Outbox", "故障演練", "OpenTelemetry", "traceparent", "metrics", "DLQ"]
+tags: ["故障測試", "Testcontainers", "Redis", "RabbitMQ", "Outbox", "故障演練"]
+articleType: "deep-dive"
 difficulty: "advanced"
-prerequisites: ["engineering-business-tests", "engineering-metrics-tracing", "architecture-outbox-inbox", "redis-reliability"]
-relatedArticles: ["rabbitmq-retries-idempotency", "rabbitmq-queues-ordering", "redis-cache-aside"]
-applicableVersions: "以 .NET 10、Redis 8.2.10、RabbitMQ 4.3.6、PostgreSQL 18.6 的教學案例說明。"
-lastReviewed: "2026-10-10"
-takeaway: "測試應確認使用者需要的資料與結果；重送、回滾、服務停止與重啟要用真實邊界驗證。"
-sources: [{"title": "Microsoft Learn：測試策略", "url": "https://learn.microsoft.com/en-us/ef/core/testing/choosing-a-testing-strategy"}, {"title": "RabbitMQ：Reliability", "url": "https://www.rabbitmq.com/docs/reliability"}, {"title": "Redis：Persistence", "url": "https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/"}, {"title": "Microsoft Learn：分散式追蹤", "url": "https://learn.microsoft.com/en-us/dotnet/core/diagnostics/distributed-tracing-instrumentation-walkthroughs"}, {"title": "OpenTelemetry：.NET Instrumentation", "url": "https://opentelemetry.io/docs/languages/dotnet/instrumentation/"}]
+prerequisites: ["engineering-integration-tests", "architecture-outbox-inbox"]
+relatedArticles: ["redis-reliability", "rabbitmq-retries-idempotency", "engineering-metrics-tracing"]
+applicableVersions: ".NET 8～10、Testcontainers for .NET 4.x、Redis 7.2／8.x、RabbitMQ 4.x。"
+lastReviewed: "2026-10-21"
+takeaway: "故障測試要驗證的是使用者看到的結果：Redis 停了商品仍查得到、訂單與事件一起回滾、重送後通知只有一份；這些都要用真實的服務才測得出來。"
+sources:
+  - title: "Testcontainers for .NET：Redis module"
+    url: "https://dotnet.testcontainers.org/modules/redis/"
+  - title: "Testcontainers for .NET：RabbitMQ module"
+    url: "https://dotnet.testcontainers.org/modules/rabbitmq/"
+  - title: "RabbitMQ：Reliability Guide"
+    url: "https://www.rabbitmq.com/docs/reliability"
+  - title: "Kubernetes：kubectl scale"
+    url: "https://kubernetes.io/docs/reference/kubectl/generated/kubectl_scale/"
+  - title: "Memorystore for Redis：Simulate a failover"
+    url: "https://cloud.google.com/memorystore/docs/redis/manual-failover"
+  - title: "Amazon ElastiCache：Testing automatic failover"
+    url: "https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/AutoFailover.html"
 ---
 
-在電商微服務架構中，Redis 快取與 RabbitMQ 訊息佇列承載了高併發流量削峰與最終一致性保障。然而，涉及網路斷線、訊息確認（ACK/NACK）、佇列積壓與死信處理（DLQ）的異常邊界，純記憶體單元測試或 Mock 框架根本無能為力。我們必須藉助真實的容器化基礎設施與混沌故障演練（Failure Drills），以可觀察的業務結果驗證系統的自我修復與韌性。
+## 這是什麼
 
-## 案發現場
+快取和訊息系統最重要的行為，都發生在「出錯的時候」：Redis 連不上時商品頁還能不能顯示、訂單交易失敗時事件會不會被誤發、Worker 在 Ack 前當掉時通知會不會寄兩次。
 
-某電商在促銷活動開跑首日，因底層雲端機房網路短暫抖動 5 秒鐘，引發了一連串毀滅性的連鎖故障：
+這些行為用 Mock 測不出來：Mock 的 Redis 不會斷線，Mock 的 RabbitMQ 不會重送。要用真的服務，並且在測試中**主動製造故障**。
 
-1. **快取斷線引發業務直接拋錯（降級機制失效）**：當 Redis 主節點進行容錯移轉時，商品查詢 API 內部拋出 `RedisTimeoutException`。由於程式碼中未正確捕獲快取異常並回源資料庫，前端買家瀏覽商品目錄時直接遭遇 HTTP 500，購物車流量瞬間腰斬。
-2. **訊息無預警丟失（缺少 Publisher Confirm）**：訂單服務在建立訂單後，將事件發送到 RabbitMQ。然而在網路中斷瞬間，發布者未開啟 Publisher Confirm 機制，程式以為訊息已送達而將交易完成，實際上 Broker 根本未持久化該筆訊息，導致數十筆訂單從未觸發扣款與出貨通知。
-3. **未 Ack 訊息被 Requeue 引發重複請款**：背景 Worker 在處理扣款非同步事件時，連線因長查詢逾時中斷。RabbitMQ 偵測到 Consumer 離線，將尚未收到 ACK 的訊息重新放回佇列（Requeue）。新接手的 Worker 重新消費該訊息，而系統缺乏消費端冪等（Idempotent Consumer）保護，導致同一筆訂單向消費者信用卡連續請款兩次。
-4. **毒訊息癱瘓整個訊息通道（Poison Message Storm）**：一筆格式損壞的 JSON 訂單訊息進入佇列，Worker 每次還原序列化失敗就拋出未處理例外並自動 Nack Requeue。這筆「毒訊息」在隊首以每秒上千次的頻率被無限重試，造成 Worker CPU 100% 飆滿，後續正常的數萬筆訂單全數被堵死。
+## 運作原理
 
 ```mermaid
-flowchart TD
-    subgraph TestEnvironment["Testcontainers 整合測試邊界"]
-        API["ASP.NET Core API / Worker (被測目標)"]
-        
-        API -->|"1. 寫入訂單與 Outbox (同一交易)"| PG[("真實 PostgreSQL 容器")]
-        API -->|2. 讀取快取 / 模擬故障降級| Redis[("真實 Redis 容器 (可動態 Stop)")]
-        API -->|3. 發布與確認事件| RMQ[("真實 RabbitMQ 容器 (Publisher Confirm)")]
-        
-        RMQ -->|"4. 派發至 Consumer (Inbox 冪等去重)"| Consumer["背景消費 Worker"]
-        Consumer -->|5. 毒訊息達重試上限| DLQ["Dead Letter Queue (死信佇列)"]
-    end
+flowchart LR
+    Normal["正常流程<br/>查詢、下單、通知"] --> Fault["製造故障<br/>停止 Redis、讓交易失敗、<br/>Ack 前斷線、重啟 broker"]
+    Fault --> Verify["驗證業務結果<br/>商品仍正確、沒有孤兒事件、<br/>通知只有一份"]
+    Verify --> Recover["恢復服務<br/>確認系統回到正常"]
 ```
 
-## 反模式與正確解法
+每個故障情境都要回答「使用者看到什麼」：
 
-### 反模式一：使用 Mock 偽造 Redis 與 RabbitMQ，掩蓋真實網路語意
+| 故障 | 要驗證的結果 |
+| --- | --- |
+| Redis 停止 | 商品查詢改回資料庫，結果正確；回源數量有上限 |
+| 快取資料損壞 | 辨識出損壞、刪除後回源，不把錯誤資料回給使用者 |
+| 寫入 outbox 失敗 | 訂單也沒有建立（一起回滾） |
+| broker 暫時無法交付 | 事件留在 outbox，恢復後繼續發布 |
+| Consumer 在 Ack 前斷線 | 訊息重新交付，通知仍只有一份 |
+| 持續失敗的訊息 | 有限次重試後進入死信佇列 |
 
-許多團隊在測試訊息佇列時，使用 NSubstitute 替換 `IConnection` 與 `IModel`，或者用 In-Memory Queue 模擬 RabbitMQ。這種測試完全無法驗證 AMQP 連線重試、TCP 心跳逾時、Prefetch Count 流量控制、未確認訊息重回佇列（Unacked Requeue），以及 Redis 跨分區連線池阻塞等核心問題。
+## 常見錯誤與正確寫法
 
-#### 正確解法：採用 Testcontainers.NET 啟動真實容器進行整合驗證
+### 1. 用 Mock 模擬 Redis 與 RabbitMQ
 
-利用 `Testcontainers.PostgreSql`、`Testcontainers.Redis` 與 `Testcontainers.RabbitMq` 在測試生命週期中動態建立完全隔離的真實中介軟體容器：
-
-```csharp
-public sealed class OrderMessagingIntegrationTests : IAsyncLifetime
-{
-    private readonly PostgreSqlContainer _pgContainer = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
-        .Build();
-
-    private readonly RabbitMqContainer _rmqContainer = new RabbitMqBuilder()
-        .WithImage("rabbitmq:3.13-alpine")
-        .Build();
-
-    public async Task InitializeAsync()
-    {
-        await Task.WhenAll(_pgContainer.StartAsync(), _rmqContainer.StartAsync());
-    }
-
-    public async Task DisposeAsync()
-    {
-        await Task.WhenAll(_pgContainer.DisposeAsync().AsTask(), _rmqContainer.DisposeAsync().AsTask());
-    }
-
-    [Fact]
-    public async Task DuplicateMessage_WhenConsumedTwice_ShouldProcessOnlyOnceViaInbox()
-    {
-        // Arrange：透過真實 RabbitMQ 建立消費者
-        var eventId = Guid.NewGuid();
-        var message = new OrderCreatedEvent(eventId, OrderId.New(), CustomerId.New(), 100m);
-
-        var consumer = new IdempotentOrderConsumer(
-            _pgContainer.GetConnectionString(), 
-            _rmqContainer.GetConnectionString());
-
-        // Act：模擬因網路中斷導致同一筆訊息重複投遞兩次
-        await consumer.ProcessMessageAsync(message);
-        await consumer.ProcessMessageAsync(message); // 第二次投遞
-
-        // Assert：斷言真實資料庫中的處理紀錄與通知次數僅有 1 筆！
-        var processedCount = await consumer.GetInboxRecordCountAsync(eventId);
-        Assert.Equal(1, processedCount);
-    }
-}
-```
-
-### 反模式二：快取連線失敗時拋出例外阻斷請求，未驗證優雅降級
-
-快取本質是效能優化層，絕對不能成為單點故障（SPOF）。當 Redis 叢集發生維護、網路分割或重啟時，系統必須能安全降級至資料庫回源，保證核心業務可用。
-
-#### 正確解法：混沌故障演練（Chaos Fault Injection）驗證降級
-
-在整合測試中主動暫停 Redis 容器（`await _redisContainer.StopAsync()`），驗證 API 是否能捕捉例外、記錄 Warning 日誌、無縫回源查詢 PostgreSQL，並在 Redis 恢復後自動重新建立連線池：
+Mock 只能模擬「回傳錯誤」，模擬不了逾時、半斷線、重新交付。用 Testcontainers 啟動真的服務，再在測試中停止它：
 
 ```csharp
+// 套件：Testcontainers.Redis、Testcontainers.PostgreSql
 [Fact]
-public async Task GetProduct_WhenRedisGoesDown_ShouldFallbackToDatabaseGracefully()
+public async Task Redis停止時商品查詢仍回傳正確資料()
 {
-    // Arrange：先預熱資料庫
-    var service = new ProductCatalogService(_dbConn, _redisConn);
+    var client = _factory.CreateClient();
+    var before = await client.GetFromJsonAsync<ProductDto>("/products/1", TestContext.Current.CancellationToken);
 
-    // Act 1：正常狀態下讀取，快取應生效
-    var product1 = await service.GetProductAsync(42);
-    Assert.True(product1.IsServedFromCache);
+    await _redis.StopAsync(TestContext.Current.CancellationToken); // 製造故障
 
-    // 模擬中介軟體故障：強制停止 Redis 容器！
-    await _redisContainer.StopAsync();
+    var during = await client.GetFromJsonAsync<ProductDto>("/products/1", TestContext.Current.CancellationToken);
+    Assert.Equal(before!.Price, during!.Price); // 降級後結果仍正確
 
-    // Act 2：Redis 停機時再次請求，驗證是否自動降級回源資料庫且不拋出 500！
-    var product2 = await service.GetProductAsync(42);
-    Assert.NotNull(product2);
-    Assert.False(product2.IsServedFromCache); // 證明成功降級至資料庫
-
-    // 恢復 Redis 容器
-    await _redisContainer.StartAsync();
+    await _redis.StartAsync(TestContext.Current.CancellationToken); // 恢復，避免影響其他測試
 }
 ```
 
-### 反模式三：未處理毒訊息，導致佇列無限重試死循環
+### 2. 只測成功路徑，沒測回滾
 
-當訊息內容損壞或遇到不可恢復的邏輯錯誤時，若 Consumer 盲目回傳 `BasicNack(requeue: true)`，訊息會立刻回到隊首被同一 Consumer 或其他 Consumer 再次拾起，造成整個叢集 CPU 跑滿且堵塞正常訊息。
+讓 outbox 的寫入失敗（例如在測試中對 outbox 表加上一個會被違反的約束，或替換成會丟例外的實作），然後確認訂單表裡也沒有資料。這個測試保護的是「訂單和事件一起成功或一起失敗」，見 [Outbox 與 Inbox](/architecture/outbox-inbox/)。
 
-#### 正確解法：指數退避重試與死信佇列（Dead Letter Exchange, DLX）
+### 3. 沒有測重送
 
-- **重試計數**：在訊息標頭中維護重試次數（例如 `x-retry-count`），透過延遲佇列（Delay Exchange）或 Polly 進行有限重試（如最多 3 次）。
-- **轉移死信（DLQ）**：超過最大重試次數後，執行 `BasicNack(requeue: false)`，讓 RabbitMQ 依據宣告的 `x-dead-letter-exchange` 自動將毒訊息路由至專用的死信佇列（DLQ），並觸發告警供維運人員人工介入分析。
+讓 Consumer 處理完、提交交易，但在 Ack 之前關閉 Channel，RabbitMQ 會重新交付這則訊息。驗證通知表中這張訂單的通知仍然只有一筆。這個測試保護的是 Inbox 與業務唯一條件。
 
-## 踩坑與避坑指南
+### 4. 宣告參數不一致讓測試環境就失敗
 
-### 1. RabbitMQ 宣告參數不相容引發 PRECONDITION_FAILED
-在測試或生產環境中，若試圖以不同的參數（例如修改了 `x-dead-letter-exchange` 或 `x-message-ttl`）重新宣告同一個既有佇列，RabbitMQ 會直接關閉 Channel 並拋出 `406 PRECONDITION_FAILED`。
-- **避坑建議**：佇列與交換機的定義必須在專案中統一代碼管理；在整合測試中，為每次測試案例使用唯一的佇列名稱（如 `test-queue-{Guid.NewGuid()}`）以避免衝突。
+測試中宣告佇列的參數（例如 `x-queue-type: quorum`）和正式程式不同，RabbitMQ 會以 `PRECONDITION_FAILED` 關閉 Channel。測試與正式程式使用同一份拓撲宣告程式碼。
 
-### 2. Outbox 資料表與商務邏輯的同一交易原子性
-若在 API 中先執行了 `await _dbContext.SaveChangesAsync()`，接著在交易外才將 Outbox 記錄寫入資料庫，一旦應用程式在兩者之間崩潰，將造成「訂單已建立但事件未寫入 Outbox」的永久不一致。
-- **避坑建議**：訂單實體與 Outbox 訊息必須使用**同一個 DbContext 交易實例**在單次 `SaveChangesAsync` 中完成提交。
+## 使用邊界
 
-### 3. Testcontainers 在 CI 伺服器上的 Docker-in-Docker 權限
-在 GitHub Actions 或 GitLab CI 中執行 Testcontainers 時，CI 容器必須具備存取 Docker Daemon 的權限（掛載 `/var/run/docker.sock`），且需允許 Ryuk 資源清理守護程序啟動。
-- **避坑建議**：在 CI 配置中設定 `TESTCONTAINERS_RYUK_DISABLED=false`，確保測試崩潰時測試容器與磁碟能被自動徹底銷毀，避免 CI 主機磁碟爆滿。
+- 單節點容器的重啟，只能驗證最基本的恢復；broker 叢集、Redis 高可用的容錯移轉、跨區故障，要在雲端的測試環境做故障演練。
+- 故障測試要在結束時恢復服務，或每個測試類別使用獨立的容器，避免影響其他測試。
+- 測試的名稱與報告要寫清楚驗證的範圍；「通過了故障測試」不等於「能承受所有故障」。
 
-## 線上排查指令
+## 雲端排查
 
-針對 RabbitMQ 佇列積壓、Unacked 訊息卡死與 Redis 快取故障，使用下列指令排查：
+故障演練在雲端的測試環境進行：主動製造故障，觀察系統的反應是否符合預期。
+
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-# 1. 查詢 RabbitMQ 所有佇列狀態（重點觀察 Ready 與 Unacknowledged 訊息數）
-rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
+# 停止所有通知 Worker：訊息應該在佇列中累積，而不是遺失
+kubectl scale deployment notification-worker -n shop-staging --replicas=0
 
-# 2. 檢視死信佇列（DLQ）中的堆積訊息數量
-rabbitmqctl list_queues name messages | grep "dead-letter"
-
-# 3. 測試 Redis 連線延遲與即時統計數據
-redis-cli -h 127.0.0.1 -p 6379 ping
-redis-cli -h 127.0.0.1 -p 6379 info stats | grep -E "total_commands_processed|keyspace_hits|keyspace_misses"
-
-# 4. 監控 Redis 即時慢查詢紀錄（排查是否有人執行高耗時 KEYS 或 FLUSH 指令）
-redis-cli -h 127.0.0.1 -p 6379 slowlog get 10
-
-# 5. 執行整合測試並指定單一失敗用例深入除錯
-dotnet test tests/DevWiki.Ecommerce.IntegrationTests/ \
-    --filter "FullyQualifiedName~GetProduct_WhenRedisGoesDown" \
-    --logger "console;verbosity=detailed"
+# 下幾張測試訂單後恢復，確認累積的訊息被處理、且通知沒有重複
+kubectl scale deployment notification-worker -n shop-staging --replicas=2
 ```
+
+### 託管服務層
+
+#### GKE
+
+觸發 Memorystore 的手動容錯移轉，觀察商品查詢的錯誤率與回源次數：
+
+```bash
+gcloud redis instances failover shop-cache-staging --region=asia-east1
+```
+
+自建的 RabbitMQ 可以刪除一個節點的 Pod，確認 quorum 佇列仍可運作：`kubectl delete pod -n messaging shop-mq-server-1`。
+
+#### EKS
+
+觸發 ElastiCache 的容錯移轉測試（只在測試環境）：
+
+```bash
+aws elasticache test-failover --replication-group-id shop-cache-staging --node-group-id 0001
+```
+
+Amazon MQ 的叢集部署可以透過重新啟動 broker 觀察 Consumer 的重新連線：`aws mq reboot-broker --broker-id <broker-id>`。
+
+### 應用程式層
+
+每次演練都記錄：故障開始與結束的時間、錯誤率、回源次數、佇列累積量、恢復所需時間，以及業務結果的核對（訂單數、通知數）。這些數字是改善降級策略與 SLO 的依據，見 [SLO 與告警](/engineering/slo-alerts/)。

@@ -1,11 +1,4 @@
 [
-  "engineering/business-tests.md",
-  "engineering/cache-messaging-tests.md",
-  "engineering/ci-cd.md",
-  "engineering/iac.md",
-  "engineering/metrics-tracing.md",
-  "engineering/recovery-cost.md",
-  "engineering/slo-alerts.md",
   "infrastructure/containers-networking/compose.md",
   "infrastructure/containers-networking/image-runtime.md",
   "infrastructure/containers-networking/request-path.md",

@@ -1,168 +1,133 @@
 ---
-title: "xUnit、NSubstitute 與商業行為測試"
-description: "從可觀察的商業結果選測試層級，保留基礎設施整合驗證，避免只檢查 mock 呼叫。"
+title: "商業行為測試：測「結果對不對」，不要測「呼叫了誰」"
+description: "說明測試要保護的是業務規則與結果、Mock 用在哪裡才合適、為什麼不要用 EF Core InMemory 測資料存取，以及時間與平行執行的處理。"
 articleId: "engineering-business-tests"
 topic: "engineering"
 category: "testing"
 order: 1
-tags: ["xUnit", "Fact", "Theory", "NSubstitute", "interface", "單元測試", "整合測試", "商業邏輯", "Infrastructure"]
-difficulty: "advanced"
-prerequisites: ["architecture-domain-modeling", "architecture-application-patterns"]
-relatedArticles: ["data-access-transactions", "dotnet-time-zones", "engineering-metrics-tracing", "engineering-cache-messaging-tests"]
-applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-lastReviewed: "2026-10-10"
-takeaway: "測試保護規則與結果；替身用於必要邊界，真實資料庫行為仍需要整合測試。"
-sources: [{"title": "xUnit.net：Getting started", "url": "https://xunit.net/docs/getting-started/v3/getting-started"}, {"title": "NSubstitute：Getting started", "url": "https://nsubstitute.github.io/help/getting-started/"}, {"title": "Microsoft Learn：EF Core 測試策略", "url": "https://learn.microsoft.com/en-us/ef/core/testing/choosing-a-testing-strategy"}]
+tags: ["xUnit", "NSubstitute", "單元測試", "TimeProvider", "測試替身"]
+articleType: "deep-dive"
+difficulty: "beginner"
+prerequisites: ["architecture-domain-modeling"]
+relatedArticles: ["engineering-integration-tests", "architecture-creation-patterns", "dotnet-time-zones"]
+applicableVersions: ".NET 8～10、xUnit v3、NSubstitute 5.x。"
+lastReviewed: "2026-10-21"
+takeaway: "斷言業務結果，而不是內部呼叫了幾次；只在真正的系統邊界（付款閘道、時間、外部 API）使用替身；資料庫行為用真實的資料庫測。"
+omitSections:
+  - section: "雲端排查"
+    reason: "商業行為測試在開發與 CI 中執行，不在 GKE／EKS 部署環境；整合測試與故障演練的雲端面向見其他工程實務文章。"
+sources:
+  - title: "Microsoft Learn：.NET 單元測試最佳做法"
+    url: "https://learn.microsoft.com/dotnet/core/testing/unit-testing-best-practices"
+  - title: "Microsoft Learn：TimeProvider 與 FakeTimeProvider"
+    url: "https://learn.microsoft.com/dotnet/standard/datetime/timeprovider-overview"
+  - title: "Microsoft Learn：選擇 EF Core 測試策略（不建議使用 InMemory）"
+    url: "https://learn.microsoft.com/ef/core/testing/choosing-a-testing-strategy"
+  - title: "xUnit：Running tests in parallel"
+    url: "https://xunit.net/docs/running-tests-in-parallel"
+  - title: "NSubstitute：Getting started"
+    url: "https://nsubstitute.github.io/help/getting-started/"
 ---
 
-在電商軟體開發中，自動化測試是保障高頻交付與系統正確性的關鍵安全網。然而，許多團隊常陷入「測試覆蓋率高達 90%，線上發布依然頻繁故障」的困境。問題的核心在於：測試是否真正聚焦於「可驗證的商業行為不變量（Domain Invariants）」，抑或僅是在機械式地模擬內部實作細節。
+## 這是什麼
 
-## 案發現場
+測試的目的，是讓你改程式時有信心不會弄壞既有的功能。最有價值的測試，保護的是**業務規則**：「待付款的訂單可以付款」「已出貨的訂單不能取消」「滿千免運」。這些規則在重構時不該改變，所以測試也不該因為重構而失敗。
 
-某電商核心訂單服務在一次大促前夕發布了新版結帳與折扣計算模組。CI 流水線中 850 個單元測試在 30 秒內全數以綠燈通過，然而上線短短 15 分鐘內，維運團隊即接獲客服回報重大災情：
+**商業行為測試**指的是：給定一個情境，執行一個業務動作，檢查結果是否符合規則。它不關心內部用了哪些類別、呼叫了幾次哪個方法。
 
-1. **負數金額訂單成功建立**：系統出現數十筆結帳金額為 `-150` 元的異常訂單，財務系統甚至自動向消費者派發退款。排查發現，開發者為訂單計算寫了單元測試，但測試中使用 NSubstitute 將所有折扣服務全部 Mock 成回傳固定值，完全沒有針對「折抵上限不得大於訂單總額」等邊界狀態進行斷言。
-2. **重構即雪崩（脆弱測試 Brittle Tests）**：技術團隊為了效能優化，將原本在 Handler 中呼叫的 `_orderRepo.UpdateAsync()` 與 `_eventPublisher.PublishAsync()` 合併為一次資料庫交易 Outbox 提交。結果一改動內部方法呼叫順序，全專案有 300 多個單元測試瞬間爆紅，原因是測試程式碼寫滿了 `_orderRepo.Received(1).UpdateAsync(...)` 的呼叫次數驗證，測試與實作細節強烈耦合。
-3. **EF Core InMemory 假性成功陷阱**：在測試資料庫持久化時，工程師使用了 `UseInMemoryDatabase`。測試順利通過，但上線執行在 PostgreSQL 上時，卻因缺少必填欄位的外鍵約束而拋出 `PostgresException: 23502 null value in column violates not-null constraint`，交易全數失敗。
-4. **隨機閃爍測試（Flaky Tests）延誤部署**：CI 伺服器在平行執行 xUnit 測試時，部分訂單超時測試時好時壞。排查發現測試中依賴了 `Thread.Sleep(500)` 與共用的靜態記憶體時鐘，受到 CI 節點 CPU 負載波動影響而產生隨機失敗。
+## 運作原理
 
 ```mermaid
-flowchart TD
-    subgraph TestPyramid["測試金字塔分層與職責"]
-        Domain["純領域行為測試 (xUnit Fact/Theory)<br/>聚焦領域不變量、狀態轉換、邊界計算<br/>零 Mock，毫秒級執行"]
-        App["應用服務測試 (xUnit + NSubstitute)<br/>聚焦案例協調 (Orchestration)<br/>僅 Mock 外部非受控邊界 (如第三方金流)"]
-        Integration["整合測試 (Testcontainers + 真實 DB)<br/>聚焦 SQL 翻譯、外鍵約束、交易與併發鎖<br/>拒絕 InMemory 偽資料庫"]
+flowchart LR
+    subgraph Good["測結果：重構後仍然有效"]
+        G1["給定：待付款、兩件商品的訂單"] --> G2["執行：MarkAsPaid()"] --> G3["驗證：狀態為已付款"]
+    end
+    subgraph Bad["測實作：一重構就壞"]
+        B1["Mock Repository、Calculator、Validator"] --> B2["執行"] --> B3["驗證：Calculator 被呼叫 1 次"]
     end
 ```
 
-## 反模式與正確解法
+測試大致分三層，越往下越接近真實、也越慢：
 
-### 反模式一：過度 Mock 內部實作，驗證呼叫次數而非業務結果
+| 層級 | 測什麼 | 依賴 |
+| --- | --- | --- |
+| 領域測試 | 實體與值物件的規則 | 純記憶體，不需要替身 |
+| 用例測試 | 一個用例的流程與結果 | 只替換系統邊界（付款閘道、時間） |
+| 整合測試 | 和資料庫、Redis、RabbitMQ 一起運作的結果 | 真實的服務（容器），見 [整合測試](/engineering/integration-tests/) |
 
-開發者為求「隔離」，把系統內所有相依介面（甚至領域物件本身）全部替換成 Mock，並在測試結尾大量使用 `substitute.Received(1).SomePrivateStep()`。這種測試只驗證了「程式碼每一行怎麼寫」，一旦重構演算法或重構內部結構，測試立即破裂；更糟的是，若 Mock 假造了錯誤的資料（例如回傳負數金額），被測程式碼就會在錯誤的假設下跑出假綠燈。
+**測試替身**（Mock、Stub、Fake）用來取代你無法控制或不想真的呼叫的東西。適合替換的是系統邊界：外部付款 API、寄信服務、目前時間。不適合替換的是你自己的領域物件與資料庫。
 
-#### 正確解法：純領域邏輯完全不依賴 Mock，針對狀態與例外斷言
+## 常見錯誤與正確寫法
 
-領域實體（Domain Entity）與值物件（Value Object）應該是完全純粹的 C# 類別。透過 xUnit 的 `[Fact]` 與 `[Theory]`，直接驗證在各種合法與邊界輸入下，領域狀態是否正確變更，或是否如期拋出強型別商業例外：
+### 1. 驗證呼叫次數，而不是結果
 
 ```csharp
-public sealed class OrderDomainTests
+// 錯：只要重構把計算移到別處，測試就失敗，即使結果完全正確
+calculator.Received(1).Calculate(Arg.Any<Order>());
+```
+
+直接驗證業務結果：
+
+```csharp
+public class OrderTests
 {
     [Fact]
-    public void CancelOrder_WhenAlreadyPaid_ShouldThrowDomainException()
+    public void 已付款訂單不能再加商品()
     {
-        // Arrange
-        var order = Order.Create(OrderId.New(), CustomerId.New());
-        order.MarkAsPaid(PaymentId.New(), paidAmount: 500m);
+        var order = new OrderBuilder().WithItem(price: 100, quantity: 1).Build();
+        order.MarkAsPaid();
 
-        // Act & Assert
-        var ex = Assert.Throws<InvalidOrderOperationException>(() =>
-        {
-            order.Cancel(reason: "買家主動取消");
-        });
+        var act = () => order.AddItem(Guid.NewGuid(), new Money(50, "TWD"), 1);
 
-        Assert.Equal("已付款之訂單不得直接取消，必須走退款申請流程。", ex.Message);
-        Assert.Equal(OrderStatus.Paid, order.Status); // 驗證狀態未被破壞
-    }
-
-    [Theory]
-    [InlineData(100, 150, 0)]  // 折扣大於總額時，應限制折抵後金額下限為 0
-    [InlineData(100, 30, 70)]   // 正常折扣
-    [InlineData(100, 0, 100)]   // 無折扣
-    public void ApplyDiscount_ShouldCalculateNetPayableCorrectly(
-        decimal subtotal, decimal discount, decimal expectedNet)
-    {
-        // Arrange
-        var order = Order.CreateWithSubtotal(OrderId.New(), subtotal);
-
-        // Act
-        order.ApplyCoupon(new Coupon(CouponCode.Create("PROMO"), discount));
-
-        // Assert
-        Assert.Equal(expectedNet, order.NetPayableAmount);
+        Assert.Throws<InvalidOperationException>(act);
+        Assert.Single(order.Lines); // 明細沒有被改變
     }
 }
 ```
 
-### 反模式二：在應用服務層全面開放 Class Mock，侵入領域設計
+`OrderBuilder` 提供合理的預設值，讓測試只寫它關心的部分，見 [Factory 與 Builder](/architecture/creation-patterns/)。
 
-為了配合測試框架 Mock 類別，強行將領域類別的所有方法標註為 `virtual`，甚至將建構子開放為 `public`，破壞了封裝性（Encapsulation）。
-
-#### 正確解法：NSubstitute 僅用於替換真正的外部不可控邊界（Out-of-Process Ports）
-
-在應用層（Application Layer）的 Use Case 測試中，NSubstitute 僅應作用於外部 I/O 抽象介面（如第三方支付閘道 `IPaymentGateway`、發票開立服務 `IInvoiceService`）。透過模擬外部異常或回傳值，驗證 Handler 在成功或失敗時的業務分支：
+### 2. 只在系統邊界使用替身
 
 ```csharp
-public sealed class CheckoutOrderHandlerTests
+[Fact]
+public async Task 付款閘道拒絕時訂單維持待付款()
 {
-    private readonly IPaymentGateway _paymentGateway = Substitute.For<IPaymentGateway>();
-    private readonly IOrderRepository _orderRepository = Substitute.For<IOrderRepository>();
-    private readonly TimeProvider _timeProvider = Substitute.For<TimeProvider>();
+    var gateway = Substitute.For<IPaymentGateway>(); // 外部系統：用替身
+    gateway.AuthorizeAsync(Arg.Any<PaymentRequest>(), Arg.Any<CancellationToken>())
+           .Returns(PaymentResult.Declined("卡片額度不足"));
 
-    [Fact]
-    public async Task Handle_WhenPaymentFails_ShouldMarkOrderAsPaymentFailed()
-    {
-        // Arrange
-        var orderId = OrderId.New();
-        var order = Order.Create(orderId, CustomerId.New());
-        _orderRepository.GetByIdAsync(orderId, Arg.Any<CancellationToken>())
-            .Returns(order);
+    var order = new OrderBuilder().Build();
+    var handler = new PayOrderHandler(gateway);
 
-        // 模擬外部第三方金流回傳拒絕
-        _paymentGateway.ChargeAsync(Arg.Any<PaymentRequest>(), Arg.Any<CancellationToken>())
-            .Returns(PaymentResult.Failed("餘額不足"));
+    var result = await handler.HandleAsync(order, TestContext.Current.CancellationToken);
 
-        var handler = new CheckoutOrderHandler(_orderRepository, _paymentGateway, _timeProvider);
-
-        // Act
-        var result = await handler.HandleAsync(new CheckoutCommand(orderId), CancellationToken.None);
-
-        // Assert：針對業務結果斷言，而非檢查呼叫細節
-        Assert.False(result.IsSuccess);
-        Assert.Equal("付款失敗：餘額不足", result.ErrorMessage);
-        Assert.Equal(OrderStatus.PaymentFailed, order.Status);
-    }
+    Assert.False(result.Succeeded);
+    Assert.Equal(OrderStatus.PendingPayment, order.Status); // 驗證的是業務結果
 }
 ```
 
-### 反模式三：使用 EF Core InMemory 取代真實資料庫進行儲存測試
+### 3. 用 EF Core InMemory 測資料存取
 
-EF Core InMemory 僅是在記憶體中用 Dictionary 儲存物件參考，它**不支援交易交易復原（Transaction Rollback）、不支援關聯外鍵約束、不支援原生 SQL 函式，更無法檢驗 SQL 語法翻譯正確性**。
+InMemory provider 不是關聯式資料庫：沒有交易、沒有唯一約束、LINQ 的翻譯行為也不同。用它測試，唯一約束擋重複下單、條件更新防超賣這些最重要的行為都測不到，還可能讓在真實資料庫會失敗的查詢通過。資料存取用真實的 PostgreSQL 或 MySQL 測，見 [整合測試](/engineering/integration-tests/)。
 
-#### 正確解法：使用 Testcontainers 執行真正的關聯式資料庫整合測試
+### 4. 測試依賴目前時間
 
-詳細資料庫交易與真實 SQL 測試應由整合測試負責（配合 Testcontainers 啟動暫時的 PostgreSQL 容器），單元測試則保持極速專注於純邏輯。
+「優惠券在午夜過期」的測試，只有在特定時間跑才會通過。程式注入 `TimeProvider`，測試用 `FakeTimeProvider` 控制時間：
 
-## 踩坑與避坑指南
+```csharp
+// 套件：Microsoft.Extensions.TimeProvider.Testing
+var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 31, 23, 59, 0, TimeSpan.FromHours(8)));
+var coupon = Coupon.Create(expiresAt: new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.FromHours(8)));
 
-### 1. 非同步測試方法的簽章陷阱：切勿使用 `async void`
-在撰寫 xUnit 測試時，非同步測試必須宣告為 `public async Task`。若誤寫為 `public async void`，xUnit runner 無法得知該 Task 何時完成，測試方法會被視為立即結束並顯示綠燈，而內部非同步拋出的斷言失敗會直接在線程池中變成未處理例外（Unhandled Exception），引發測試處理程序非預期崩潰。
-
-### 2. 時間相依性問題：善用 .NET 8+ 原生 `TimeProvider`
-避免在測試中呼叫 `DateTime.UtcNow` 或使用 `Thread.Sleep` 來等待時間經過。
-- **避坑建議**：全面注入 `TimeProvider`（或使用 `Microsoft.Extensions.Time.Testing` 套件中的 `FakeTimeProvider`），在測試中呼叫 `fakeTime.Advance(TimeSpan.FromMinutes(30))`，能在零延遲下精確模擬訂單 30 分鐘逾時未付款的自動取消邏輯。
-
-### 3. xUnit 測試平行化與靜態狀態共享
-xUnit 預設會跨不同測試類別（Test Classes）進行多執行緒平行執行。若被測程式碼或測試輔助類別中存有靜態變數（`static`）、未隔離的單例快取，會引發跨測試的隨機資料污染。
-- **避坑建議**：若有共用昂貴資源（例如整合測試資料庫），使用 `IClassFixture<T>` 或 `ICollectionFixture<T>` 進行生命週期管理，並為每個測試產生獨立的資料隔離標籤（如獨立的 TenantId 或 OrderId）。
-
-## 線上排查指令
-
-針對本機與 CI 環境中的測試執行失敗、逾時卡死與覆蓋率分析，使用下列指令排查：
-
-```bash
-# 1. 執行特定專案的所有單元測試並輸出詳細除錯資訊
-dotnet test tests/DevWiki.Ecommerce.UnitTests/ --logger "console;verbosity=normal"
-
-# 2. 針對特定測試類別或方法執行精確過濾
-dotnet test --filter "FullyQualifiedName~OrderDomainTests"
-
-# 3. 排查測試死鎖或卡死問題（啟用 Hang 逾時自動傾印轉儲）
-dotnet test --blame-hang --blame-hang-timeout 60s --logger "trx;LogFileName=test-results.trx"
-
-# 4. 收集程式碼覆蓋率報告（使用 coverlet 產出 Cobertura 格式）
-dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura /p:Threshold=80
-
-# 5. 排查 xUnit 平行化引發的隨機失敗（強制單執行緒依序執行驗證）
-dotnet test --no-build -- ParallelizeTestCollections=false
+Assert.True(coupon.IsValid(time.GetUtcNow()));
+time.Advance(TimeSpan.FromMinutes(2));
+Assert.False(coupon.IsValid(time.GetUtcNow()));
 ```
+
+## 使用邊界
+
+- 不要為了覆蓋率去測 getter、DTO 或框架本身的行為。測試寫在規則上。
+- xUnit 預設會平行執行不同的測試類別；測試之間共用靜態狀態或同一個資料庫時，會互相干擾。每個測試準備自己的資料，或把需要共用的放進同一個 collection。
+- `async` 測試方法回傳 `Task`，不要寫 `async void`，否則例外不會讓測試失敗。
+- 快取與訊息相關的故障情境（服務停止、重送）屬於整合層級，見 [快取與訊息的測試](/engineering/cache-messaging-tests/)。

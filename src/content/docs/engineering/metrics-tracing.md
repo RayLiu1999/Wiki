@@ -1,173 +1,155 @@
 ---
-title: "Runtime 指標、RPS 與分散式追蹤"
-description: "串起 .NET、HTTP、OpenTelemetry 與 W3C Trace Context，分清指標、trace 和本地 request id。"
+title: "指標與分散式追蹤：從「變慢了」找到「慢在哪裡」"
+description: "說明指標、追蹤與日誌各自回答什麼問題，.NET 內建的 Runtime 與 HTTP 指標、OpenTelemetry 的設定、高基數標籤的代價，以及把追蹤送到 GCP 與 AWS。"
 articleId: "engineering-metrics-tracing"
 topic: "engineering"
 category: "observability"
-order: 2
-tags: [".NET Runtime", "GC", "ThreadPool", "HTTP", "RPS", "OpenTelemetry", "Activity.Current", "traceparent", "tracestate", "W3C", "trace", "metrics"]
-difficulty: "advanced"
-prerequisites: ["csharp-async-await", "aspnet-core-middleware"]
-relatedArticles: ["aspnet-core-http-client-factory", "aspnet-core-grpc", "data-access-pools-locks", "redis-reliability", "rabbitmq-queues-ordering", "engineering-cache-messaging-tests"]
-applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-lastReviewed: "2026-10-10"
-takeaway: "指標告訴你整體趨勢，trace 串起單次工作；先統一量測範圍，再解讀數字。"
-sources: [{"title": "Microsoft Learn：內建 .NET 指標", "url": "https://learn.microsoft.com/en-us/dotnet/core/diagnostics/built-in-metrics"}, {"title": "Microsoft Learn：分散式追蹤 instrumentation", "url": "https://learn.microsoft.com/en-us/dotnet/core/diagnostics/distributed-tracing-instrumentation-walkthroughs"}, {"title": "OpenTelemetry：.NET Instrumentation", "url": "https://opentelemetry.io/docs/languages/dotnet/instrumentation/"}, {"title": "W3C：Trace Context", "url": "https://www.w3.org/TR/trace-context/"}]
+order: 4
+tags: ["OpenTelemetry", "Metrics", "Tracing", "W3C Trace Context", "Managed Service for Prometheus", "CloudWatch"]
+articleType: "deep-dive"
+difficulty: "beginner"
+prerequisites: ["aspnet-core-middleware"]
+relatedArticles: ["engineering-slo-alerts", "dotnet-profiling", "rabbitmq-acknowledgements"]
+applicableVersions: ".NET 8～10、OpenTelemetry .NET 1.x、OpenTelemetry Collector。"
+lastReviewed: "2026-10-21"
+takeaway: "指標看整體趨勢、追蹤看單一請求的路徑、日誌看細節；標籤只放有限種類的值，訂單 ID 這類值放在追蹤與日誌，不要放進指標。"
+sources:
+  - title: "Microsoft Learn：.NET 可觀察性與 OpenTelemetry"
+    url: "https://learn.microsoft.com/dotnet/core/diagnostics/observability-with-otel"
+  - title: "Microsoft Learn：ASP.NET Core 內建指標"
+    url: "https://learn.microsoft.com/aspnet/core/log-mon/metrics/built-in"
+  - title: "Microsoft Learn：.NET Runtime 內建指標"
+    url: "https://learn.microsoft.com/dotnet/core/diagnostics/built-in-metrics-runtime"
+  - title: "W3C Trace Context"
+    url: "https://www.w3.org/TR/trace-context/"
+  - title: "Google Cloud：Managed Service for Prometheus"
+    url: "https://cloud.google.com/stackdriver/docs/managed-prometheus"
+  - title: "Google Cloud：使用 OpenTelemetry 將追蹤傳送到 Cloud Trace"
+    url: "https://cloud.google.com/trace/docs/otlp"
+  - title: "AWS Distro for OpenTelemetry"
+    url: "https://aws-otel.github.io/docs/introduction"
+  - title: "Amazon CloudWatch：Application Signals"
+    url: "https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Application-Monitoring-Sections.html"
 ---
 
-在分散式電商架構中，單一筆結帳請求往往需要跨越邊緣閘道、Web API、庫存服務、PostgreSQL 資料庫、Redis 快取與 RabbitMQ 訊息佇列。當線上發生「API 延遲從 50ms 飆升至 5,000ms」的重大異常時，僅靠傳統單機日誌或「CPU 使用率」往往如同瞎子摸象。現代可觀測性（Observability）要求我們將**指標（Metrics）**、**分散式追蹤（Tracing）**與**結構化日誌（Logs）**深度串聯，形成立體的排查證據鏈。
+## 這是什麼
 
-## 案發現場
+買家說「結帳很慢」。要找出原因，你需要三種資料：
 
-某電商平台在特賣促銷期間，前端使用者紛紛反映結帳按鈕持續轉圈，最後跳出 HTTP 504 Gateway Timeout 錯誤。值班維運與後端工程師在緊急會議上面臨毫無線索的窘境：
+- **指標（metrics）**：數字的時間序列，例如每秒請求數、P99 延遲、錯誤率。回答「整體狀況如何、從什麼時候開始變差」。
+- **追蹤（traces）**：一個請求經過哪些服務、每一段花了多久。回答「這個請求慢在哪一段」。
+- **日誌（logs）**：事件的詳細紀錄。回答「那一段發生了什麼事」。
 
-1. **監控盲區（CPU 僅 20%，延遲卻破表）**：基礎設施監控面板顯示 Kubernetes 節點與 Pod 的 CPU、記憶體使用率均低於 30%，看似「毫無負載」。然而真實的使用者 P99 延遲已飆破 6 秒，根本無法得知瓶頸卡在資料庫連線池等待、Redis 網路阻塞、還是外部物流 API 逾時。
-2. **日誌汪洋中的孤島（缺乏關聯 TraceId）**：工程師試圖從日誌系統（Elasticsearch / Cloud Logging）查詢該筆失敗訂單，但各微服務使用的是各自獨立生成的隨機 GUID（如 `HttpContext.TraceIdentifier`）。在數十萬筆每秒的日誌中，完全無法將前台 Web 的請求與後台背景 Worker 的處理步驟串聯在一起。
-3. **高基數維度引爆監控時序資料庫（Cardinality Explosion）**：某位開發者在自定義 Prometheus 業務指標時，將 `order_id` 與 `user_id` 作為 Label 標籤注入。在大促流量湧入時，產生了超過數百萬個獨立時間序列（Time Series），瞬間將 Prometheus 伺服器記憶體擠爆 OOM 崩潰，全站即時監控徹底癱瘓。
-4. **多 Pod 聚合數值失真**：主管詢問「系統平均 P95 延遲是多少？」，工程師將 10 個 Pod 各自回報的 P95 數值直接取算術平均數，得出了完全錯誤的虛假結論（百分位數不可直接進行代數平均）。
+**OpenTelemetry** 是收集這三種資料的開放標準。.NET 內建產生指標（`System.Diagnostics.Metrics`）與追蹤（`System.Diagnostics.Activity`），OpenTelemetry SDK 負責把它們匯出到 GCP 或 AWS 的觀測服務。
+
+## 運作原理
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    actor User as 買家 (瀏覽器)
-    participant Gateway as API Gateway
-    participant OrderApi as 訂單 API (ASP.NET Core)
-    participant DB as PostgreSQL
-    participant RMQ as RabbitMQ
-    participant Worker as 背景 Worker
-
-    Note over User,Gateway: W3C Trace Context 注入<br/>traceparent: 00-4bf92f35...-00f067aa...-01
-    User->>Gateway: POST /api/orders/checkout
-    Gateway->>OrderApi: 轉發請求 (攜帶 traceparent)
-    Note over OrderApi: System.Diagnostics.Activity 啟動<br/>繼承 Parent TraceId
-    OrderApi->>DB: 寫入訂單與 Outbox (DB Span)
-    DB-->>OrderApi: 提交成功 (耗時 15ms)
-    OrderApi->>RMQ: 發布 OrderCreatedEvent (標頭注入 traceparent)
-    OrderApi-->>Gateway: 200 OK (總耗時 45ms)
-    Note over RMQ,Worker: 非同步消費 (Trace 跨進程接續)
-    RMQ->>Worker: 接收訊息並擷取 TraceContext
-    Worker->>Worker: 執行扣款與發票開立 (Child Span)
+    participant Buyer as 買家
+    participant API as 訂單 API
+    participant DB as 資料庫
+    participant MQ as RabbitMQ
+    participant W as 通知 Worker
+    Buyer->>API: POST /orders（產生 trace-id）
+    API->>DB: span：INSERT orders + outbox
+    API-->>Buyer: 201
+    Note over API,MQ: outbox 保存 traceparent
+    API->>MQ: span：publish（AMQP header 帶 traceparent）
+    MQ->>W: 交付
+    W->>W: span：處理通知（延續同一個 trace）
 ```
 
-## 反模式與正確解法
+**追蹤的傳遞**：每個請求有一個 trace ID，每一段工作是一個 span。呼叫下一個服務時，用 W3C Trace Context 標準的 `traceparent` 標頭把 trace ID 傳過去，對方就能接上同一條追蹤。HTTP 呼叫由 .NET 自動處理；透過訊息佇列時，要自己把 `traceparent` 放進訊息標頭（或 outbox 欄位）。
 
-### 反模式一：將高基數識別碼（High-Cardinality IDs）寫入 Metrics Labels
+**內建指標**：.NET 8 起，ASP.NET Core、HttpClient、Kestrel、Runtime 都會產生標準的指標，例如 `http.server.request.duration`（請求耗時）、`http.client.request.duration`、`dotnet.gc.collections`、`dotnet.thread_pool.queue.length`。
 
-部分開發者在度量訂單失敗率時，撰寫了類似 `order_failures_total{order_id="ORD-99182", customer_id="CUST-812"}` 的指標。Prometheus 與大多數時序資料庫（TSDB）會為每一組唯一的 Label 組合建立一條獨立的時間序列。當訂單數量達數百萬時，時序數量呈幾何級數暴增，導致 TSDB 記憶體耗盡。
+## 常見錯誤與正確寫法
 
-#### 正確解法：指標維持有界維度，高基數資料交由 Tracing 與 Logs 承載
-
-- **指標（Metrics）**：回答「有沒有問題？趨勢如何？」。標籤**必須是低基數且有界枚舉**（如 `http_method: POST`, `http_route: /api/orders`, `http_status_code: 500`）。
-- **分散式追蹤（Tracing）**：回答「具體哪一步變慢？」。`OrderId`、`CustomerId` 等高基數業務識別碼應寫入 Span 的 Attributes / Tags 中，提供精準追蹤：
+### 1. 沒有收集任何東西，出事才開始加
 
 ```csharp
-using System.Diagnostics;
-using System.Diagnostics.Metrics;
-
-public static class OrderTelemetry
-{
-    // 1. 定義 ActivitySource 用於分散式追蹤 (Tracing)
-    public static readonly ActivitySource ActivitySource = new("DevWiki.Ecommerce.Orders", "1.0.0");
-
-    // 2. 定義 Meter 用於有界聚合指標 (Metrics)
-    private static readonly Meter Meter = new("DevWiki.Ecommerce.Orders", "1.0.0");
-    public static readonly Counter<long> OrdersPlacedCounter = 
-        Meter.CreateCounter<long>("ecommerce_orders_placed_total", "orders", "成功建立的訂單總數");
-}
-
-public async Task<OrderResult> CheckoutAsync(OrderRequest request, CancellationToken ct)
-{
-    // 啟動一個新 Span (Activity)
-    using var activity = OrderTelemetry.ActivitySource.StartActivity(
-        "Order.Checkout", 
-        ActivityKind.Server);
-
-    // 高基數欄位寫入 Span Attributes (Tracing 允許高基數)
-    activity?.SetTag("ecommerce.order_id", request.OrderId.Value);
-    activity?.SetTag("ecommerce.customer_id", request.CustomerId.Value);
-
-    var result = await ProcessPaymentAndSaveAsync(request, ct);
-
-    // 指標僅記錄低基數有界標籤！
-    OrderTelemetry.OrdersPlacedCounter.Add(1, 
-        new KeyValuePair<string, object?>("payment_method", request.PaymentMethod),
-        new KeyValuePair<string, object?>("currency", "TWD"));
-
-    return result;
-}
-```
-
-### 反模式二：每層微服務自行生成隨機 RequestId，破壞追蹤鏈條
-
-許多系統在每個服務的入口中介軟體隨機生成一個 `Guid.NewGuid()` 作為 `X-Request-ID`，在跨服務 HTTP 呼叫或 RabbitMQ 訊息轉發時未將其傳遞給下游。這導致每一段調用鏈路完全割裂，無法還原跨服務的呼叫拓撲（Call Graph）。
-
-#### 正確解法：採用 W3C Trace Context 標準與 OpenTelemetry 自動傳播
-
-遵循 W3C Trace Context 標準，使用 `traceparent` HTTP 標頭在微服務與訊息佇列間傳播追蹤上下文：
-`traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`
-- `00`：版本號。
-- `4bf92f3577b34da6a3ce929d0e0e4736`：全局唯一 TraceId（整條呼叫鏈共用）。
-- `00f067aa0ba902b7`：當前 Span 的 ParentId。
-- `01`：追蹤旗標（01 代表已採樣）。
-
-.NET 的 `HttpClient` 與 ASP.NET Core 原生深度整合 `System.Diagnostics.Activity`，只要使用 `IHttpClientFactory` 發出呼叫，.NET 會全自動將當前的 `Activity.Current` 注入為 `traceparent` 標頭；在 RabbitMQ 訊息中，亦應將該標頭注入 AMQP BasicProperties 的 Headers 字典中，讓消費者接續追蹤。
-
-### 反模式三：忽略 .NET Runtime 核心指標，無法排查執行緒池與 GC 瓶頸
-
-當 CPU 負載很低但 API 響應極慢時，問題往往出在 **.NET 執行緒池飢餓（ThreadPool Starvation）** 或 **GC 暫停（Stop-The-World Pause）**。若僅採集 OS 層級的 CPU，將完全無法察覺應用程式內部的執行緒調度瓶頸。
-
-#### 正確解法：啟用 .NET 原生 Runtime Meters 並建立儀表板
-
-在 Program.cs 中配置 OpenTelemetry 採集官方內建的 Runtime 測量指標：
-
-```csharp
+// 套件：OpenTelemetry.Extensions.Hosting、OpenTelemetry.Instrumentation.AspNetCore、
+//      OpenTelemetry.Instrumentation.Http、OpenTelemetry.Instrumentation.Runtime、OpenTelemetry.Exporter.OpenTelemetryProtocol
 builder.Services.AddOpenTelemetry()
-    .WithMetrics(metrics => metrics
+    .ConfigureResource(r => r.AddService("order-api"))
+    .WithMetrics(m => m
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
-        .AddMeter("Microsoft.AspNetCore.Hosting")
-        .AddMeter("Microsoft.AspNetCore.Server.Kestrel")
-        .AddMeter("System.Runtime") // 收集 GC、記憶體分配、ThreadPool 指標
-        .AddOtlpExporter());
+        .AddRuntimeInstrumentation()
+        .AddMeter("Shop.Orders"))           // 自己的業務指標
+    .WithTracing(t => t
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddSource("Shop.Orders"))          // 自己的 ActivitySource
+    .UseOtlpExporter();                     // 送到 OpenTelemetry Collector，再由它轉送到 GCP 或 AWS
 ```
 
-關鍵觀測指標對照：
-- `dotnet.runtime.threadpool.queue.length`：線程池工作佇列長度。若該數值持續大於 0，代表發生執行緒池飢餓！
-- `dotnet.runtime.gc.pause.time`：GC 暫停總耗時。若 Gen 2 暫停時間頻繁過長，需排查大物件堆積（LOH）。
+應用程式只送到 Collector（以 OTLP 協定），由 Collector 決定送到哪個後端。換雲端時只改 Collector 的設定。
 
-## 踩坑與避坑指南
+### 2. 把訂單 ID 放進指標的標籤
 
-### 1. `Activity.Current` 在非同步上下文丟失（ExecutionContext 流動中斷）
-如果在非同步流程中使用了 `Task.Run`、`ThreadPool.UnsafeQueueUserWorkItem`，或者某些未正確流動 `ExecutionContext` 的自訂線程池，`Activity.Current` 可能變為 `null`，導致後續產生的子 Span 與 Parent 脫鉤，追蹤鏈路中斷。
-- **避坑建議**：盡量使用標準的 `async/await`，避免繞過 ExecutionContext 的低階線程呼叫。在啟動背景長任務時，顯式傳入父級 `ActivityContext`。
+```csharp
+// 錯：每張訂單產生一條新的時間序列，指標系統的成本與查詢時間爆炸
+OrdersPlaced.Add(1, new KeyValuePair<string, object?>("order_id", order.Id));
+```
 
-### 2. 百分位數（P95 / P99）統計不可直接算術平均
-在 Prometheus / Grafana 中，絕對不能對各個 Pod 的 P95 數值執行 `avg()` 運算。因為各個 Pod 的請求量權重不同，直接平均會嚴重低估長尾延遲。
-- **避坑建議**：必須先採集 Histogram 直方圖 buckets（例如 `http_server_request_duration_seconds_bucket`），然後在 Prometheus 中使用 `histogram_quantile(0.95, sum(rate(...)) by (le))` 計算全系統真正的全局百分位數。
+指標的標籤（維度）只放**有限種類**的值，例如付款方式、結果（成功／失敗）、區域。訂單 ID、使用者 ID 這類無限種類的值，放在追蹤的屬性或日誌裡：
 
-### 3. 生產環境全量採樣的網路與儲存成本
-如果每秒有 20,000 個請求，100% 記錄每一個 Span 會產生龐大的網路頻寬消耗與儲存費用。
-- **避坑建議**：生產環境採用動態採樣策略（例如使用 OpenTelemetry Collector 實施 Tail-based Sampling，針對 HTTP 5xx 錯誤與延遲大於 1 秒的請求 100% 保留，其餘健康請求僅採樣 1%~5%）。
+```csharp
+private static readonly Meter Meter = new("Shop.Orders");
+private static readonly Counter<long> OrdersPlaced = Meter.CreateCounter<long>("shop.orders.placed");
 
-## 線上排查指令
+OrdersPlaced.Add(1, new KeyValuePair<string, object?>("payment_method", "credit_card"));
+Activity.Current?.SetTag("shop.order_id", order.Id); // 追蹤可以帶具體的 ID
+```
 
-針對可觀測性鏈條異常、延遲排查與 .NET Runtime 效能診斷，使用下列指令排查：
+### 3. 每個服務自己產生 RequestId
+
+各服務各自產生不同的 ID，日誌無法串在一起。統一使用 trace ID：日誌記錄 `Activity.Current?.TraceId`，錯誤回應帶上 `traceId`（見 [HTTP 契約](/frameworks/aspnet-core/http-contracts/)），買家回報問題時，一個 ID 就能找到整條路徑。
+
+## 使用邊界
+
+- **百分位數不能平均。** 把各 Pod 的 P99 取平均，不是整體的 P99。用直方圖（histogram）指標，在後端彙總後再計算百分位數。
+- **追蹤要取樣。** 每個請求都完整記錄，在高流量時成本很高。常見做法是依比例取樣，並保留所有錯誤與慢請求的追蹤（在 Collector 做尾端取樣）。
+- 日誌與追蹤可能包含個資，收集前決定哪些欄位要遮罩、保存多久。
+- 依指標定義服務品質與告警，見 [SLO 與告警](/engineering/slo-alerts/)。
+
+## 雲端排查
+
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-# 1. 使用 dotnet-counters 即時監控運行中 Pod 的 .NET 核心 Runtime 狀態
-dotnet-counters monitor --process-id 1 System.Runtime Microsoft.AspNetCore.Hosting
-
-# 2. 模擬外部發起攜帶 W3C traceparent 的請求以驗證追蹤鏈路
-curl -v -H "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" \
-    http://localhost:8080/api/orders/1001
-
-# 3. 在日誌系統中依據 TraceId 檢索端到端跨服務所有呼叫紀錄
-kubectl logs -l app=order-api -n ecommerce-prod --tail=200 | grep "4bf92f3577b34da6a3ce929d0e0e4736"
-
-# 4. Prometheus 查詢全系統 P95 延遲範例（確保使用直方圖聚合計算）
-# histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le))
-
-# 5. 檢視 Pod 內部線程池佇列深度（排查 ThreadPool 飢餓問題）
-dotnet-dump collect -p 1
-dotnet-dump analyze core_dump -c "threads"
+# Collector 是否正常接收與匯出（匯出失敗會寫在日誌）
+kubectl logs -n observability deployment/otel-collector --tail=50 | grep -i -E "error|dropped|refused"
 ```
+
+### 託管服務層
+
+#### GKE
+
+指標可以用 Google Cloud Managed Service for Prometheus 收集（以 `PodMonitoring` 抓取應用程式的 Prometheus 端點，或由 Collector 匯出），在 Cloud Monitoring 中以 PromQL 查詢；追蹤由 Collector 以 OTLP 送到 Cloud Trace。
+
+```bash
+# 確認 PodMonitoring 設定存在並指向正確的 Pod
+kubectl get podmonitoring -n shop
+```
+
+#### EKS
+
+使用 AWS Distro for OpenTelemetry（ADOT）Collector，把指標送到 CloudWatch、追蹤送到 X-Ray；或啟用 CloudWatch Application Signals，自動產生服務的延遲、錯誤率與服務地圖。
+
+```bash
+# EKS add-on 形式安裝的 ADOT 狀態
+aws eks describe-addon --cluster-name shop --addon-name adot --query 'addon.status'
+```
+
+### 應用程式層
+
+在 Pod 內不經過任何後端，直接看程序的即時指標：
+
+```bash
+dotnet-counters monitor --process-id 1 --counters Microsoft.AspNetCore.Hosting,System.Runtime
+```
+
+`http.server.active_requests` 持續上升而每秒完成數沒有增加，代表請求在某處卡住；接著看追蹤中耗時最長的 span 在哪一段。
