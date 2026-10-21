@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["dotnet-gc-memory"]
 relatedArticles: ["dotnet-threadpool", "dotnet-reflection"]
 applicableVersions: ".NET 8 / .NET 10、Linux / macOS / Windows"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "即時監控看 dotnet-counters；CPU 瓶頸取樣用 dotnet-trace；記憶體分析優先選輕量 dotnet-gcdump，死鎖才採集完整 dotnet-dump。"
 sources:

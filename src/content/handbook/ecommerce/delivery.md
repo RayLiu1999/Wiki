@@ -3,8 +3,6 @@ title: "16 CI/CD、映像與資料變更"
 description: "建立可追溯的交付流程，讓新舊程序與 schema 安全共存。"
 group: "ecommerce"
 order: 16
-environment: "reading"
-verification: "電商設計案例；具體的跟做環境與已驗證範圍見實作指南。"
 linkedArticles: ["engineering-ci-cd", "engineering-iac", "data-access-migrations", "dotnet-sdk-packages", "data-access-bulk-retention"]
 prerequisites: ["ecommerce/scaling"]
 sources: [{"title": "EF production migrations", "url": "https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/applying"}, {"title": "Deployment pipeline federation", "url": "https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines"}]
@@ -29,10 +27,6 @@ CI 使用有明確來源條件的 OIDC 身分聯邦，分別取得建置、Regis
 程序 rollback 只改變部署產物，不自動回滾已寫入資料。記錄舊映像是否仍兼容新 schema、哪些情況需要向前修復，以及無法回退時如何維持服務。
 
 rollout 完成後檢查商品查詢、合法訂單提交、背景結果、錯誤率與延遲。部署前與部署後各自有完成條件。
-
-## 本站目前的交付範圍
-
-現有 CI 檢查 Wiki、C#範例和快取／訊息實驗。GKE 電商 pipeline 是本章設計目標，沒有自動發布或建立雲端基礎設施。[CI/CD 技術篇](/engineering/ci-cd/)和[IaC 技術篇](/engineering/iac/)說明工具責任與 review 依據。
 
 ## 資料庫延伸
 

@@ -10,7 +10,7 @@ articleType: "reference"
 prerequisites: ["aspnet-core-model-binding"]
 relatedArticles: ["aspnet-core-api-styles-aot", "architecture-communication-boundaries"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "嚴禁 Fake 200 回傳業務錯誤；全面採用 RFC 7807 ProblemDetails 規範回傳錯誤；以標準 HTTP 狀態碼對齊監控與重試。"
 sources:

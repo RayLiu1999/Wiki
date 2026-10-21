@@ -8,8 +8,7 @@ order: 7
 tags:
   - "Clean Architecture、模組與相依方向"
   - "architecture"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "architecture-domain-modeling"
   - "architecture-application-patterns"
@@ -17,7 +16,6 @@ relatedArticles:
   - "architecture-outbox-inbox"
   - "engineering-business-tests"
 applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
-verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"
 lastReviewed: "2026-10-10"
 takeaway: "從建立訂單說明領域、用例、基礎設施與入口的責任，以及分層的成本。"
 sources:

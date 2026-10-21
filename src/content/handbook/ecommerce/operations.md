@@ -3,8 +3,6 @@ title: "17 SLO、還原與成本管理"
 description: "把買家結果、事件年齡、還原演練和資源費用轉成日常工作。"
 group: "ecommerce"
 order: 17
-environment: "reading"
-verification: "電商設計案例；具體的跟做環境與已驗證範圍見實作指南。"
 linkedArticles: ["engineering-slo-alerts", "engineering-recovery-cost", "engineering-metrics-tracing", "kubernetes-autoscaling", "data-access-replication-recovery", "data-access-load-validation"]
 prerequisites: ["ecommerce/delivery"]
 sources: [{"title": "SRE objectives", "url": "https://sre.google/sre-book/service-level-objectives/"}, {"title": "Cloud recovery planning", "url": "https://docs.cloud.google.com/architecture/dr-scenarios-planning-guide"}, {"title": "Budgets", "url": "https://docs.cloud.google.com/billing/docs/how-to/budgets"}]
@@ -36,4 +34,4 @@ sources: [{"title": "SRE objectives", "url": "https://sre.google/sre-book/servic
 
 ## 資料庫延伸
 
-資料庫的讀副本延遲、未知提交與時間點恢復，延伸至[讀副本與復原](/data-access/replication-recovery/)；容量和長期維護結果依[驗證指南](/practice/ecommerce/database-validation/)保存證據。
+資料庫的讀副本延遲、未知提交與時間點恢復，延伸至[讀副本與復原](/data-access/replication-recovery/)；容量與長期維護的證據怎麼記錄，見[資料庫專題](/projects/ecommerce/database-capacity/)。

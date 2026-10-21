@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["data-access-ef-core", "dotnet-sdk-packages"]
 relatedArticles: ["data-access-pools-locks", "kubernetes-workloads"]
 applicableVersions: "EF Core 8 / 10、.NET 8 / 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "生產環境嚴禁在 Pod 啟動時自動 Migrate；架構變更一律遵循 Expand/Contract 模式；透過 CI/CD 或 InitContainer 執行冪等 SQL 腳本。"
 sources:

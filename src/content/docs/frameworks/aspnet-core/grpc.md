@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["aspnet-core-http-client-factory", "csharp-async-await"]
 relatedArticles: ["aspnet-core-dapr", "engineering-metrics-tracing"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "內部微服務高頻通訊首選 gRPC；Kestrel 必須正確啟用 HTTP/2；跨 Pod 呼叫務必搭配 L7 代理或 Client-side 負載平衡。"
 sources:

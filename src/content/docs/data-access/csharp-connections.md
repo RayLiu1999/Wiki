@@ -13,8 +13,7 @@ tags:
   - "DbContext"
   - "Dapper"
   - "ADO.NET"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "csharp-cancellation-disposable"
   - "aspnet-core-dependency-injection"
@@ -23,7 +22,6 @@ relatedArticles:
   - "data-access-postgresql-dotnet"
   - "data-access-pool-capacity"
 applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "分清 driver、ORM、連線池與交易，建立可控制、可診斷的資料存取邊界。"
 sources:

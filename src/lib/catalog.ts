@@ -7,7 +7,6 @@ export type HandbookEntry = CollectionEntry<'handbook'>;
 export const handbookGroups = {
   start: { title: '開始閱讀', path: '/start/' },
   ecommerce: { title: '電商專題', path: '/projects/ecommerce/' },
-  practice: { title: '實作指南', path: '/practice/ecommerce/' },
 };
 export const handbookUrl = (entry: HandbookEntry) => {
   const slug = entry.id.split('/').slice(1).join('/');
@@ -27,6 +26,8 @@ export async function getHandbook(group?: HandbookEntry['data']['group']) {
 export const articleUrl = (article: Article) => '/' + article.id.replace(/\/$/, '') + '/';
 export const articleTypeLabels = { 'deep-dive': '深度解析', troubleshooting: '問題排查', reference: '參考速查' } as const;
 export const articleTypeLabel = (type: keyof typeof articleTypeLabels) => articleTypeLabels[type];
+export const difficultyLabels = { beginner: '入門', advanced: '進階' } as const;
+export const difficultyLabel = (difficulty: keyof typeof difficultyLabels) => difficultyLabels[difficulty];
 export async function getArticles(topic?: TopicId) {
   const articles = (await getCollection('docs', (entry) => !entry.data.draft))
     .sort((a, b) => a.data.order - b.data.order);

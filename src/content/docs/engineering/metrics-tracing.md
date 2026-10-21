@@ -6,16 +6,13 @@ topic: "engineering"
 category: "observability"
 order: 2
 tags: [".NET Runtime", "GC", "ThreadPool", "HTTP", "RPS", "OpenTelemetry", "Activity.Current", "traceparent", "tracestate", "W3C", "trace", "metrics"]
-difficulty: "intermediate"
+difficulty: "advanced"
 prerequisites: ["csharp-async-await", "aspnet-core-middleware"]
 relatedArticles: ["aspnet-core-http-client-factory", "aspnet-core-grpc", "data-access-pools-locks", "redis-reliability", "rabbitmq-queues-ordering", "engineering-cache-messaging-tests"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "指標告訴你整體趨勢，trace 串起單次工作；先統一量測範圍，再解讀數字。"
-noteDates: ["2026-07-17", "2026-10-06", "2026-10-10"]
 sources: [{"title": "Microsoft Learn：內建 .NET 指標", "url": "https://learn.microsoft.com/en-us/dotnet/core/diagnostics/built-in-metrics"}, {"title": "Microsoft Learn：分散式追蹤 instrumentation", "url": "https://learn.microsoft.com/en-us/dotnet/core/diagnostics/distributed-tracing-instrumentation-walkthroughs"}, {"title": "OpenTelemetry：.NET Instrumentation", "url": "https://opentelemetry.io/docs/languages/dotnet/instrumentation/"}, {"title": "W3C：Trace Context", "url": "https://www.w3.org/TR/trace-context/"}]
-learningDepth: "deep"
 ---
 
 在分散式電商架構中，單一筆結帳請求往往需要跨越邊緣閘道、Web API、庫存服務、PostgreSQL 資料庫、Redis 快取與 RabbitMQ 訊息佇列。當線上發生「API 延遲從 50ms 飆升至 5,000ms」的重大異常時，僅靠傳統單機日誌或「CPU 使用率」往往如同瞎子摸象。現代可觀測性（Observability）要求我們將**指標（Metrics）**、**分散式追蹤（Tracing）**與**結構化日誌（Logs）**深度串聯，形成立體的排查證據鏈。

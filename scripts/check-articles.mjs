@@ -3,7 +3,7 @@ import path from 'node:path';
 import { checkArticle, splitFrontmatter } from './lib/article-rules.mjs';
 
 const root = 'src/content/docs';
-// 尚未重寫的舊文章：暫時豁免新規則。每個主題重寫完成後，從清單移除。
+// 尚未改寫成新章節結構的舊文章：暫時豁免新規則。每個主題改寫完成後，從清單移除。
 const legacy = new Set(JSON.parse(await readFile('scripts/legacy-articles.json', 'utf8')));
 
 async function markdownFiles(directory) {

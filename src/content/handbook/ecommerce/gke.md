@@ -3,8 +3,6 @@ title: "14 進入 GKE 與外部資料服務"
 description: "把本機模型接到 GCP 身分、Registry、網路、Gateway 與資料端點。"
 group: "ecommerce"
 order: 14
-environment: "reading"
-verification: "電商設計案例；具體的跟做環境與已驗證範圍見實作指南。"
 linkedArticles: ["gke-platform-modes", "gke-workload-identity", "gke-gateway-networking", "gke-data-services"]
 prerequisites: ["ecommerce/configuration"]
 sources: [{"title": "GKE modes", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/choose-cluster-mode"}, {"title": "Cloud SQL with GKE", "url": "https://docs.cloud.google.com/sql/docs/postgres/connect-kubernetes-engine"}]
@@ -30,4 +28,4 @@ readiness 與雲端負載平衡健康是兩層檢查。如果 API 使用`/health
 
 ## 可檢驗的結果
 
-記錄 Project、region、cluster、context 與映像 digest；驗證 Pod 就緒、商品回應、入口路由、權限與相依服務停止時的行為。本站沒有建立 GCP 資源或完成雲端端到端驗證；[GKE 指南](/practice/ecommerce/gke/)提供既有學習叢集的部署前提和指令模板。
+記錄 Project、region、cluster、context 與映像 digest；驗證 Pod 就緒、商品回應、入口路由、權限與相依服務停止時的行為。

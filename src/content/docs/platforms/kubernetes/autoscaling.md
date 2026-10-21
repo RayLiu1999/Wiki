@@ -6,15 +6,12 @@ topic: "kubernetes"
 category: "k8s-reliability"
 order: 6
 tags: ["HPA、佇列容量與多副本限制", "kubernetes"]
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["kubernetes-probes-resources", "architecture-outbox-inbox"]
 relatedArticles: ["data-access-pools-locks", "rabbitmq-retries-idempotency", "data-access-pool-capacity", "data-access-load-validation"]
 applicableVersions: "以 Kubernetes 現行核心 API 與 Docker 容器模型說明；GKE 限制另見平台文章。"
-verifiedWith: "已核對 Kubernetes／Docker 官方概念；叢集操作與環境驗證狀態見獨立實作指南。"
 lastReviewed: "2026-10-10"
 takeaway: "分清 Pod 擴縮、Node 容量、訊息並行與資料庫連線壓力。"
-noteDates: []
 sources: [{"title": "HPA", "url": "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/"}, {"title": "KEDA concepts", "url": "https://keda.sh/docs/latest/concepts/"}, {"title": "GKE cluster autoscaler", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/cluster-autoscaler"}]
 ---
 

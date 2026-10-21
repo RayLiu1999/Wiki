@@ -14,8 +14,7 @@ tags:
   - "Binding"
   - "mandatory"
   - "default exchange"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "rabbitmq-getting-started"
 relatedArticles:
@@ -23,7 +22,6 @@ relatedArticles:
   - "rabbitmq-acknowledgements"
   - "rabbitmq-retries-idempotency"
 applicableVersions: "RabbitMQ 4.x／AMQP 0-9-1／RabbitMQ.Client 7.x／.NET 10。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "Producer 發布到 Exchange；哪些 Queue 收到訊息由 Binding 與路由規則決定。"
 sources:

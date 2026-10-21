@@ -12,8 +12,7 @@ tags:
   - "庫存"
   - "交易"
   - "死鎖"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "data-access-concurrency"
   - "architecture-outbox-inbox"
@@ -22,7 +21,6 @@ relatedArticles:
   - "data-access-pool-capacity"
   - "data-access-bulk-retention"
 applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "把新增、查詢、更新與刪除拆成可驗證的業務契約，處理競爭、重送與未知提交。"
 sources:

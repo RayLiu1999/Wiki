@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["dotnet-time-zones"]
 relatedArticles: ["data-access-type-mapping", "dotnet-hosting"]
 applicableVersions: ".NET 9 / .NET 10、C# 13 / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "資料庫主鍵嚴禁使用隨機 GUID v4，全面升級為 .NET 原生 Guid.CreateVersion7() 以保護 B+Tree 循序寫入效能。"
 sources:

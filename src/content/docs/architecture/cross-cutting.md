@@ -8,8 +8,7 @@ order: 8
 tags:
   - "AOP、橫切行為與呼叫邊界"
   - "architecture"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "architecture-behavior-patterns"
   - "aspnet-core-filters"
@@ -17,7 +16,6 @@ relatedArticles:
   - "dotnet-reflection"
   - "aspnet-core-http-resilience"
 applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
-verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"
 lastReviewed: "2026-10-10"
 takeaway: "比較 Middleware、Filter、Decorator 和代理，安排記錄、驗證與重試的範圍。"
 sources:

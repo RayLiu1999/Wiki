@@ -6,16 +6,13 @@ topic: "engineering"
 category: "testing"
 order: 3
 tags: ["整合測試", "Redis", "RabbitMQ", "PostgreSQL", "Outbox", "故障演練", "OpenTelemetry", "traceparent", "metrics", "DLQ"]
-difficulty: "intermediate"
+difficulty: "advanced"
 prerequisites: ["engineering-business-tests", "engineering-metrics-tracing", "architecture-outbox-inbox", "redis-reliability"]
 relatedArticles: ["rabbitmq-retries-idempotency", "rabbitmq-queues-ordering", "redis-cache-aside"]
 applicableVersions: "以 .NET 10、Redis 8.2.10、RabbitMQ 4.3.6、PostgreSQL 18.6 的教學案例說明。"
-verifiedWith: "已執行隔離容器、HTTP 與故障恢復測試，並以 ActivityListener 核對 traceparent；未驗證 OpenTelemetry exporter、Collector 或正式環境監控。"
 lastReviewed: "2026-10-10"
 takeaway: "測試應確認使用者需要的資料與結果；重送、回滾、服務停止與重啟要用真實邊界驗證。"
-noteDates: ["2026-10-10"]
 sources: [{"title": "Microsoft Learn：測試策略", "url": "https://learn.microsoft.com/en-us/ef/core/testing/choosing-a-testing-strategy"}, {"title": "RabbitMQ：Reliability", "url": "https://www.rabbitmq.com/docs/reliability"}, {"title": "Redis：Persistence", "url": "https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/"}, {"title": "Microsoft Learn：分散式追蹤", "url": "https://learn.microsoft.com/en-us/dotnet/core/diagnostics/distributed-tracing-instrumentation-walkthroughs"}, {"title": "OpenTelemetry：.NET Instrumentation", "url": "https://opentelemetry.io/docs/languages/dotnet/instrumentation/"}]
-learningDepth: "deep"
 ---
 
 在電商微服務架構中，Redis 快取與 RabbitMQ 訊息佇列承載了高併發流量削峰與最終一致性保障。然而，涉及網路斷線、訊息確認（ACK/NACK）、佇列積壓與死信處理（DLQ）的異常邊界，純記憶體單元測試或 Mock 框架根本無能為力。我們必須藉助真實的容器化基礎設施與混沌故障演練（Failure Drills），以可觀察的業務結果驗證系統的自我修復與韌性。

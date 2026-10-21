@@ -7,15 +7,12 @@ category: "async-threading"
 order: 3
 tags: ["C#", "ValueTask", "TaskCompletionSource", "零配置", "GC優化", "非同步"]
 articleType: "deep-dive"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["csharp-async-await"]
 relatedArticles: ["csharp-cancellation-disposable", "csharp-channels"]
 applicableVersions: "C# 10+ / 14、.NET 6+ / .NET 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
 lastReviewed: "2026-10-10"
 takeaway: "高命中率的熱快取查詢使用 ValueTask<T> 避免 Task 物件配置；TaskCompletionSource 必須標記 RunContinuationsAsynchronously 避免續行同步阻塞；絕不重複 await ValueTask。"
-noteDates: ["2026-10-10"]
 sources:
   - title: "Microsoft .NET Blog：Understanding the Whys, Whats, and Whens of ValueTask"
     url: "https://devblogs.microsoft.com/dotnet/understanding-the-whys-whats-and-whens-of-valuetask/"

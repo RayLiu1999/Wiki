@@ -7,15 +7,12 @@ category: "syntax-runtime"
 order: 2
 tags: ["C#", "值型別", "參考型別", "記憶體", "Struct", "Boxing", "GC 效能"]
 articleType: "deep-dive"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["csharp-collections-linq", "csharp-async-await"]
 applicableVersions: "C# 12+ / 14、.NET 8+ / .NET 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
 lastReviewed: "2026-10-10"
 takeaway: "小型不可變資料（<= 16 bytes）優先使用 readonly struct；方法傳遞大型 struct 必須搭配 in 關鍵字避免隱形拷貝；struct 做字典鍵必須實作 IEquatable<T>。"
-noteDates: ["2026-10-10"]
 sources:
   - title: "Microsoft Learn：結構型別 (C# 參考)"
     url: "https://learn.microsoft.com/zh-tw/dotnet/csharp/language-reference/builtin-types/struct"

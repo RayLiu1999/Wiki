@@ -6,15 +6,12 @@ topic: "gke"
 category: "gke-platform"
 order: 2
 tags: ["GKE 工作負載身分與 IAM", "gke"]
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["kubernetes-configuration-security"]
 relatedArticles: ["aspnet-core-authentication", "engineering-ci-cd"]
 applicableVersions: "依 2026-10-08 的 Google Cloud／Kubernetes 官方文件核對；可用功能、地區與費率以實際平台為準。"
-verifiedWith: "已核對官方概念與責任範圍；未建立 GCP 資源、執行正式部署或量測雲端成本。"
 lastReviewed: "2026-10-10"
 takeaway: "分清買家登入、Kubernetes RBAC、Pod 雲端授權與 CI 身分聯邦。"
-noteDates: []
 sources: [{"title": "WIF for GKE", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity"}, {"title": "Configure workload access", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/how-to/workload-identity"}, {"title": "CI deployment federation", "url": "https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines"}]
 ---
 

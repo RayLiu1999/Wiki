@@ -13,8 +13,7 @@ tags:
   - "Autovacuum"
   - "Backfill"
   - "資料保留"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "data-access-batch-updates"
   - "data-access-migrations"
@@ -23,7 +22,6 @@ relatedArticles:
   - "data-access-partitioning-sharding"
   - "data-access-load-validation"
 applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "讓匯入、回填與歷史清理有界、可續跑，控制日誌、鎖與複寫負擔。"
 sources:

@@ -7,15 +7,12 @@ category: "async-threading"
 order: 2
 tags: ["C#", "CancellationToken", "IAsyncDisposable", "資源釋放", "非同步"]
 articleType: "deep-dive"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["csharp-async-await"]
 relatedArticles: ["csharp-syntax-traps", "csharp-valuetask-tcs"]
 applicableVersions: "C# 10+ / 14、.NET 6+ / .NET 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
 lastReviewed: "2026-10-10"
 takeaway: "所有非同步 I/O 方法皆應一路串聯 CancellationToken；包含網路或連線資源的類別優先實作 IAsyncDisposable 並搭配 await using。"
-noteDates: ["2026-10-10"]
 sources:
   - title: "Microsoft Learn：非同步工作中的取消"
     url: "https://learn.microsoft.com/zh-tw/dotnet/standard/parallel-programming/task-cancellation"

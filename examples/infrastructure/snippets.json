@@ -1,8 +1,0 @@
-[
-  { "article": "infrastructure/redis/dotnet-integration.md", "source": "RedisDemo/Program.cs", "marker": "redis-dotnet", "block": 0 },
-  { "article": "infrastructure/redis/cache-aside.md", "source": "Common/CachedProducts.cs", "marker": "cache-aside", "block": 0 },
-  { "article": "infrastructure/rabbitmq/dotnet-integration.md", "source": "RabbitMqDemo/Program.cs", "marker": "rabbitmq-dotnet", "block": 0 },
-  { "article": "infrastructure/rabbitmq/acknowledgements.md", "source": "Common/Broker.cs", "marker": "publisher-channel", "block": 0 },
-  { "article": "architecture/outbox-inbox.md", "source": "Common/OrderStore.cs", "marker": "outbox-transaction", "block": 0 },
-  { "article": "architecture/outbox-inbox.md", "source": "Common/OrderStore.cs", "marker": "inbox-transaction", "block": 1 }
-]

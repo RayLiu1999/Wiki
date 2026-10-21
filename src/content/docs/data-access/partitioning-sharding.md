@@ -13,8 +13,7 @@ tags:
   - "封存"
   - "CDC"
   - "上億筆"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "data-access-large-table-queries"
   - "data-access-bulk-retention"
@@ -22,7 +21,6 @@ relatedArticles:
   - "data-access-replication-recovery"
   - "data-access-load-validation"
 applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "依維護與容量證據區分 partition、archive 和 shard，保留唯一性與交易邊界。"
 sources:

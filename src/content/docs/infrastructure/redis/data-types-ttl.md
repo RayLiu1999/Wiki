@@ -16,7 +16,6 @@ tags:
   - "SET"
   - "Key"
 difficulty: "beginner"
-learningDepth: "deep"
 prerequisites:
   - "redis-getting-started"
 relatedArticles:
@@ -24,7 +23,6 @@ relatedArticles:
   - "redis-concurrency"
   - "redis-reliability"
 applicableVersions: "Redis 8.x／StackExchange.Redis 3.x／.NET 10。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "Key、資料結構與 TTL 是同一份資料契約；單一命令的原子性不會自動延伸到一串命令。"
 sources:

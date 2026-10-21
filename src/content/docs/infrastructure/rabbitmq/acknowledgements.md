@@ -14,8 +14,7 @@ tags:
   - "persistent"
   - "prefetch"
   - "at-least-once"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "rabbitmq-dotnet-integration"
   - "data-access-transactions"
@@ -24,7 +23,6 @@ relatedArticles:
   - "architecture-outbox-inbox"
   - "rabbitmq-queues-ordering"
 applicableVersions: "RabbitMQ 4.x／AMQP 0-9-1／RabbitMQ.Client 7.x／.NET 10。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "發布確認與消費確認是兩段獨立責任；穩定 MessageId 與冪等結果補上重送帶來的風險。"
 sources:

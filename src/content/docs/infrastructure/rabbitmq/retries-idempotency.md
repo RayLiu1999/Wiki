@@ -15,8 +15,7 @@ tags:
   - "idempotency"
   - "Inbox"
   - "poison message"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "rabbitmq-acknowledgements"
 relatedArticles:
@@ -24,7 +23,6 @@ relatedArticles:
   - "redis-concurrency"
   - "engineering-cache-messaging-tests"
 applicableVersions: "RabbitMQ 4.x／AMQP 0-9-1／RabbitMQ.Client 7.x／.NET 10。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "重試需要次數與退避上限；消費成功與去重紀錄必須一起提交，才能安全面對重送。"
 sources:

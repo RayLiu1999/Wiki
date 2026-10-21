@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["data-access-ef-core", "csharp-syntax-traps"]
 relatedArticles: ["data-access-batch-updates", "data-access-concurrency"]
 applicableVersions: "EF Core 8 / 10、.NET 8 / 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "批次操作務必關閉 AutoDetectChangesEnabled；大量實體更新完畢後及時 Clear() 清空追蹤字典；唯讀關聯查詢首選 AsNoTrackingWithIdentityResolution。"
 sources:

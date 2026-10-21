@@ -15,8 +15,7 @@ tags:
   - "Cluster"
   - "故障降級"
   - "命中率"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "redis-cache-aside"
 relatedArticles:
@@ -24,7 +23,6 @@ relatedArticles:
   - "engineering-cache-messaging-tests"
   - "engineering-metrics-tracing"
 applicableVersions: "Redis 8.x／StackExchange.Redis 3.x／.NET 10。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "持久化、備份、複寫與降級各自處理不同故障；快取應始終容許資料遺失與重新載入。"
 sources:

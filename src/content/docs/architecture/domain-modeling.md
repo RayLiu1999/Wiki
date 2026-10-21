@@ -15,8 +15,7 @@ tags:
   - "Infrastructure"
   - "Web API"
   - "不變量"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "csharp-syntax-traps"
 relatedArticles:
@@ -24,7 +23,6 @@ relatedArticles:
   - "engineering-business-tests"
   - "data-access-ef-core"
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "先找需要保持一致的商業規則，再決定模型與邊界；資料表不會自動等於 Aggregate。"
 sources:

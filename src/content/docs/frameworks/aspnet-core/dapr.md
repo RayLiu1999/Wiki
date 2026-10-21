@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["aspnet-core-grpc", "aspnet-core-http-client-factory"]
 relatedArticles: ["rabbitmq-dotnet-integration", "redis-dotnet-integration"]
 applicableVersions: ".NET 8 / .NET 10、Dapr 1.13+"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "透過 Dapr Sidecar 解耦業務與具體中間件 SDK；訊息一律封裝為 CloudEvents；注意本機 Sidecar 跳轉延遲代價。"
 sources:

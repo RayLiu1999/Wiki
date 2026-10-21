@@ -3,8 +3,6 @@ title: "08 背景通知與 RabbitMQ"
 description: "讓訂單提交和通知完成分開，理解事件、路由與背景程序。"
 group: "ecommerce"
 order: 8
-environment: "reading"
-verification: "已有本機實驗可觀察部分流程；本章逐項說明其邊界。"
 linkedArticles: ["rabbitmq-getting-started", "rabbitmq-routing", "rabbitmq-dotnet-integration", "rabbitmq-acknowledgements", "dotnet-background-services"]
 prerequisites: ["ecommerce/ordering-inventory"]
 sources: [{"title": "RabbitMQ publishers", "url": "https://www.rabbitmq.com/docs/publishers"}, {"title": "RabbitMQ consumers", "url": "https://www.rabbitmq.com/docs/consumers"}]
@@ -16,7 +14,7 @@ sources: [{"title": "RabbitMQ publishers", "url": "https://www.rabbitmq.com/docs
 
 `OrderPlaced` 表示訂單已建立，不能代表已付款。事件攜帶穩定識別、訂單 ID 與必要資料，訂閱者依契約處理自己的用途。Exchange 根據 routing key 與 binding 把訊息送到 queue；Consumer 從 queue 取得待辦工作。
 
-目前實驗使用邏輯通知 Consumer，完成結果存到資料庫。未來接真實郵件時還需外部服務的冪等、結果查詢和對帳，不能用本地 Inbox 保證外部郵件永遠只寄一次。
+本章的通知是模擬的：Consumer 只把「已通知」記錄寫進資料庫。接真實郵件時還需外部服務的冪等、結果查詢和對帳，不能用本地 Inbox 保證外部郵件永遠只寄一次。
 
 ## 等待與成功的階段
 
@@ -26,6 +24,6 @@ Publisher Confirm 說明 Broker 接受發布；Consumer Ack 說明消費者確�
 
 Worker 需要管理連接、scope、取消與停止。暫時失敗可以有限重試；未知格式和持續失敗需要隔離及診斷。重試副本確認後再 Ack 原訊息，仍可能在未知結果時重複交付，所以去重不可省略。
 
-## 實驗如何觀察
+## 怎麼確認做對了
 
-先保持 Worker 停止，建立訂單並查詢，`notificationRecorded`為 false。啟動 Worker 後再查同一個 orderId，結果變為 true，表示模擬通知記錄已提交。這個欄位沒有宣稱真實郵件已經寄出。[跟做通知流程](/practice/ecommerce/cache-messaging/)。
+先停住 Worker 再下單：訂單查得到，但通知狀態還沒完成。Worker 啟動後，同一張訂單的通知狀態變成完成。這說明下單和通知確實是兩個獨立的階段。

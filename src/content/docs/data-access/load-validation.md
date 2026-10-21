@@ -14,8 +14,7 @@ tags:
   - "到達率"
   - "壓測"
   - "上億筆"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "data-access-pool-capacity"
   - "data-access-large-table-queries"
@@ -24,7 +23,6 @@ relatedArticles:
   - "engineering-metrics-tracing"
   - "data-access-replication-recovery"
 applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "用代表性資料與可觀測工作量驗證設定，區分 QPS、併發、延遲及失敗。"
 sources:

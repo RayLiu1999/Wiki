@@ -8,14 +8,12 @@ order: 1
 tags:
   - "映像、容器與 .NET 程序"
   - "containers"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: []
 relatedArticles:
   - "kubernetes-workloads"
   - "dotnet-background-services"
 applicableVersions: "以 Kubernetes 現行核心 API 與 Docker 容器模型說明；.NET 10。"
-verifiedWith: "已核對 Kubernetes／Docker 官方概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "從建置產物到執行中的程序，理解映像分層、設定、權限與停止訊號。"
 sources:

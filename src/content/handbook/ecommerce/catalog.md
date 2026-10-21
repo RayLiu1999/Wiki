@@ -3,8 +3,6 @@ title: "01 商品、價格與領域模型"
 description: "先定義商品和價格語意，再決定 DTO、實體和值物件。"
 group: "ecommerce"
 order: 1
-environment: "reading"
-verification: "電商設計案例；本章描述規則與方案，尚未提供完整業務實作。"
 linkedArticles: ["csharp-syntax-traps", "csharp-value-reference-types", "architecture-domain-modeling", "architecture-creation-patterns", "data-access-large-table-queries"]
 prerequisites: ["ecommerce/overview"]
 sources: [{"title": "Microsoft modern web application architecture", "url": "https://learn.microsoft.com/en-us/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures"}]
@@ -35,7 +33,7 @@ struct 的 `default` 可能產生不符合金額規則的值；如果使用值�
 
 ## 可檢驗的結果
 
-價格更新後，新的查詢顯示新價格，既有訂單快照不變；不合法金額與數量被拒絕。完整快照與庫存模型是本章設計目標，目前實驗的訂單只有商品識別和數量，尚未實現這份完整模型。
+價格更新後，新的查詢顯示新價格，既有訂單快照不變；不合法金額與數量被拒絕。
 
 ## 資料庫延伸
 

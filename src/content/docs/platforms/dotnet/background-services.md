@@ -7,15 +7,12 @@ category: "runtime-models"
 order: 2
 tags: [".NET", "BackgroundService", "IHostedService", "優雅停機", "Graceful Shutdown", "例外處理"]
 articleType: "deep-dive"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["csharp-cancellation-disposable"]
 relatedArticles: ["dotnet-hosting", "csharp-channels"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
 lastReviewed: "2026-10-10"
 takeaway: "ExecuteAsync 內部必須完整隔離未預期例外防範整站崩潰；循規監聽 stoppingToken 確保 Pod 收到 SIGTERM 時能優雅收尾。"
-noteDates: ["2026-10-10"]
 sources:
   - title: "Microsoft Learn：.NET 中的背景工作 Worker 服務"
     url: "https://learn.microsoft.com/zh-tw/dotnet/core/extensions/workers"

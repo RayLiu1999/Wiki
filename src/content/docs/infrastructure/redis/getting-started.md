@@ -13,7 +13,6 @@ tags:
   - "cache miss"
   - "延遲"
 difficulty: "beginner"
-learningDepth: "deep"
 prerequisites:
   - "csharp-collections-linq"
 relatedArticles:
@@ -21,7 +20,6 @@ relatedArticles:
   - "redis-cache-aside"
   - "architecture-communication-boundaries"
 applicableVersions: "Redis 8.x／StackExchange.Redis 3.x／.NET 10。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "快取是可重建的資料副本；導入 Redis 前，先決定哪些舊值可以接受，以及故障時如何讀取。"
 sources:

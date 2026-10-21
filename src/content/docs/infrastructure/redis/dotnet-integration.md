@@ -12,8 +12,7 @@ tags:
   - "DI"
   - "序列化"
   - "timeout"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "redis-data-types-ttl"
   - "aspnet-core-dependency-injection"
@@ -23,7 +22,6 @@ relatedArticles:
   - "data-access-pools-locks"
   - "redis-reliability"
 applicableVersions: ".NET 10／Microsoft.Extensions.Caching.StackExchangeRedis 10.x／StackExchange.Redis 3.x／Redis 8.x。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "IDistributedCache 提供快取抽象，原生 client 提供 Redis 操作；連線由應用程式生命週期管理。"
 sources:

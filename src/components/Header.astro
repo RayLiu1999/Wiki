@@ -5,7 +5,6 @@ const path = Astro.url.pathname;
 const links = [
   { href: '/start/', label: '開始閱讀', active: path.startsWith('/start/') },
   { href: '/projects/ecommerce/', label: '電商專題', active: path.startsWith('/projects/') },
-  { href: '/practice/ecommerce/', label: '實作指南', active: path.startsWith('/practice/') },
   { href: '/topics/', label: '技術查閱', active: ['/topics/', '/languages/', '/frameworks/', '/architecture/', '/data-access/', '/infrastructure/', '/platforms/', '/engineering/'].some((prefix) => path.startsWith(prefix)) },
   { href: '/saved/', label: '收藏', active: path.startsWith('/saved/') },
 ];

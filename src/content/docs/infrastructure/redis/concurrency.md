@@ -15,8 +15,7 @@ tags:
   - "限流"
   - "分散式鎖"
   - "fencing token"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "redis-cache-aside"
   - "csharp-thread-safety"
@@ -25,7 +24,6 @@ relatedArticles:
   - "data-access-pools-locks"
   - "rabbitmq-retries-idempotency"
 applicableVersions: "Redis 8.x／StackExchange.Redis 3.x／.NET 10。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "減少重複載入與限流可以使用 Redis；關鍵業務規則仍須由權威儲存與交易保護。"
 sources:

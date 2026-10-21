@@ -7,15 +7,12 @@ category: "async-threading"
 order: 4
 tags: ["C#", "Thread Safety", "Interlocked", "SemaphoreSlim", "併發控制", "多執行緒"]
 articleType: "deep-dive"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["csharp-async-await"]
 relatedArticles: ["csharp-channels", "csharp-valuetask-tcs"]
 applicableVersions: "C# 10+ / 14、.NET 6+ / .NET 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
 lastReviewed: "2026-10-10"
 takeaway: "數值遞增與狀態切換優先使用 Interlocked 無鎖操作；非同步臨界區採用 SemaphoreSlim 並嚴格最小化持鎖時間，禁在鎖內執行慢速 I/O。"
-noteDates: ["2026-10-10"]
 sources:
   - title: "Microsoft Learn：執行緒處理指示詞概觀"
     url: "https://learn.microsoft.com/zh-tw/dotnet/standard/threading/overview-of-synchronization-primitives"

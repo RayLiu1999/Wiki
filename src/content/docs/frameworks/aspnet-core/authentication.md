@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["aspnet-core-middleware"]
 relatedArticles: ["aspnet-core-model-binding", "gke-workload-identity"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與結論"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "401 是未出示有效身份，403 是無權操作資源；合理調校 ClockSkew 避免短效 Token 失效延遲；嚴格實施 Policy 授權防範越權。"
 sources:

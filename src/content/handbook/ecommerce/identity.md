@@ -3,8 +3,6 @@ title: "03 買家登入與資料權限"
 description: "讓買家查看自己的購物車與訂單，分清驗證身分和授權資源。"
 group: "ecommerce"
 order: 3
-environment: "reading"
-verification: "電商設計案例；本章描述規則與方案，尚未提供完整業務實作。"
 linkedArticles: ["aspnet-core-authentication", "aspnet-core-middleware", "gke-workload-identity"]
 prerequisites: ["ecommerce/product-api"]
 sources: [{"title": "ASP.NET Core authorization", "url": "https://learn.microsoft.com/en-us/aspnet/core/security/authorization/introduction?view=aspnetcore-10.0"}]
@@ -30,4 +28,4 @@ Authentication 驗證 cookie 或 token 等憑證，建立使用者 principal；A
 
 ## 驗證案例
 
-買家 A 可以讀取自己的訂單，買家 B 無法讀取或修改 A 的訂單；偽造 buyerId 也不能改變所有者。現有本機實驗沒有加入使用者認證，因此該權限契約是設計案例，不能拿實驗 API 當作可對外開放的店家服務。
+買家 A 可以讀取自己的訂單，買家 B 無法讀取或修改 A 的訂單；偽造 buyerId 也不能改變所有者。

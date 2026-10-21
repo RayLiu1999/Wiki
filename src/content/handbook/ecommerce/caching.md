@@ -3,8 +3,6 @@ title: "07 商品快取與失效"
 description: "在允許短暫舊資料的前提下，降低商品讀取負載並觀察故障回源。"
 group: "ecommerce"
 order: 7
-environment: "reading"
-verification: "已有本機實驗可觀察部分流程；本章逐項說明其邊界。"
 linkedArticles: ["redis-getting-started", "redis-data-types-ttl", "redis-cache-aside", "redis-dotnet-integration", "redis-reliability"]
 prerequisites: ["ecommerce/product-api"]
 sources: [{"title": "Redis client-side caching concepts", "url": "https://redis.io/docs/latest/develop/reference/client-side-caching/"}, {"title": "Cache-Aside pattern", "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside"}]
@@ -30,8 +28,4 @@ sources: [{"title": "Redis client-side caching concepts", "url": "https://redis.
 
 ## Redis 故障時
 
-目前實驗允許查詢回 PostgreSQL，並在 source 欄位顯示 database-fallback。回源仍受資料庫容量與併發限制；故障降級並非免費增加處理能力。損壞 JSON 應被識別和清理，而不是當成正確商品返回。
-
-## 可以動手看見的結果
-
-指南會讓你連續查詢、更新價格和查看 TTL。冷讀通常回 database，後續讀命中 redis；更新後可以讀到新價格和 version。既有快取會影響首次來源，指南明確說明如何解釋結果。[進入快取實驗](/practice/ecommerce/cache-messaging/)。
+Redis 故障時，查詢可以改回資料庫讀取，並在回應或日誌標示這次資料來自回源，方便判斷系統正在降級。回源仍受資料庫容量與併發限制；故障降級並非免費增加處理能力。損壞 JSON 應被識別和清理，而不是當成正確商品返回。

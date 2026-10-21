@@ -6,15 +6,12 @@ topic: "kubernetes"
 category: "k8s-reliability"
 order: 4
 tags: ["探針、資源與安全更新", "kubernetes"]
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["kubernetes-workloads", "dotnet-hosting"]
 relatedArticles: ["dotnet-gc-memory", "dotnet-background-services"]
 applicableVersions: "以 Kubernetes 現行核心 API 與 Docker 容器模型說明；GKE 限制另見平台文章。"
-verifiedWith: "已核對 Kubernetes／Docker 官方概念；叢集操作與環境驗證狀態見獨立實作指南。"
 lastReviewed: "2026-10-10"
 takeaway: "用商品查詢與通知工作分清 startup、readiness、liveness、資源和停止邊界。"
-noteDates: []
 sources: [{"title": "Probes", "url": "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/"}, {"title": "Resource management", "url": "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/"}, {"title": "Disruptions", "url": "https://kubernetes.io/docs/concepts/workloads/pods/disruptions/"}]
 ---
 

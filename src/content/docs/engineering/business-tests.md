@@ -6,16 +6,13 @@ topic: "engineering"
 category: "testing"
 order: 1
 tags: ["xUnit", "Fact", "Theory", "NSubstitute", "interface", "單元測試", "整合測試", "商業邏輯", "Infrastructure"]
-difficulty: "intermediate"
+difficulty: "advanced"
 prerequisites: ["architecture-domain-modeling", "architecture-application-patterns"]
 relatedArticles: ["data-access-transactions", "dotnet-time-zones", "engineering-metrics-tracing", "engineering-cache-messaging-tests"]
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "測試保護規則與結果；替身用於必要邊界，真實資料庫行為仍需要整合測試。"
-noteDates: ["2026-05-27", "2026-05-28", "2026-06-25", "2026-10-10"]
 sources: [{"title": "xUnit.net：Getting started", "url": "https://xunit.net/docs/getting-started/v3/getting-started"}, {"title": "NSubstitute：Getting started", "url": "https://nsubstitute.github.io/help/getting-started/"}, {"title": "Microsoft Learn：EF Core 測試策略", "url": "https://learn.microsoft.com/en-us/ef/core/testing/choosing-a-testing-strategy"}]
-learningDepth: "deep"
 ---
 
 在電商軟體開發中，自動化測試是保障高頻交付與系統正確性的關鍵安全網。然而，許多團隊常陷入「測試覆蓋率高達 90%，線上發布依然頻繁故障」的困境。問題的核心在於：測試是否真正聚焦於「可驗證的商業行為不變量（Domain Invariants）」，抑或僅是在機械式地模擬內部實作細節。

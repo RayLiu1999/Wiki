@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["aspnet-core-dependency-injection", "csharp-cancellation-disposable"]
 relatedArticles: ["aspnet-core-http-resilience", "engineering-metrics-tracing"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "嚴禁在請求迴圈中使用 using new HttpClient()；採用 IHttpClientFactory 或 SocketsHttpHandler 設定 PooledConnectionLifetime 兼顧池化與 DNS 刷新。"
 sources:

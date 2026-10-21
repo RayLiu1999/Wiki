@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["data-access-ef-core", "csharp-syntax-traps"]
 relatedArticles: ["data-access-sql-foundations", "data-access-migrations"]
 applicableVersions: "EF Core 8 / 10、.NET 8 / 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "結構化配置優先採用 EF Core 原生 ToJson() 達成 SQL 條件下推；可變物件轉換必配 ValueComparer；Enum 儲存字串須宣告嚴格長度。"
 sources:

@@ -7,15 +7,12 @@ category: "syntax-runtime"
 order: 1
 tags: ["C#", "語法陷阱", "decimal", "Nullable", "Pattern Matching", "後端實務"]
 articleType: "reference"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: []
 relatedArticles: ["csharp-value-reference-types", "csharp-cancellation-disposable"]
 applicableVersions: "C# 12+ / 14、.NET 8+ / .NET 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
 lastReviewed: "2026-10-10"
 takeaway: "涉及金額與計費一律嚴格使用 decimal 並顯式指定捨入模式；警惕 record 的 with 淺拷貝；防範 JSON 還原序列化帶來的 NRT 假安全。"
-noteDates: ["2026-10-10"]
 sources:
   - title: "Microsoft Learn：C# 浮點數型別"
     url: "https://learn.microsoft.com/zh-tw/dotnet/csharp/language-reference/builtin-types/floating-point-numeric-types"

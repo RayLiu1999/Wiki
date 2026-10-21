@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["redis-dotnet-integration", "data-access-transactions"]
 relatedArticles: ["redis-concurrency", "architecture-outbox-inbox", "engineering-cache-messaging-tests"]
 applicableVersions: "Redis 7.2+ / 8.0+、StackExchange.Redis 2.8+ / 3.x、.NET 8+ / .NET 10"
-verifiedWith: "Linux 環境 Redis 8.2 / PostgreSQL 18.6 實測"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "先更 DB 再刪 Cache 是防髒讀底線；高併發防擊穿必用進程內互斥鎖（SingleFlight）收斂回源，搭配 TTL Jitter 預防雪崩。"
 sources:

@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["aspnet-core-options", "aspnet-core-http-client-factory"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "長生命週期嚴禁直接注入短生命週期服務；CI 與啟動期務必開啟 ValidateScopes 與 ValidateOnBuild 阻斷 Captive Dependency。"
 sources:

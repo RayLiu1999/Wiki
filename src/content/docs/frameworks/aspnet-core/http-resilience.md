@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["aspnet-core-http-client-factory", "csharp-cancellation-disposable"]
 relatedArticles: ["aspnet-core-http-contracts", "engineering-metrics-tracing"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "重試必須搭配指數退避與隨機抖動（Jitter）；下游故障果斷透過斷路器快速失敗；嚴禁對 4xx 客戶端錯誤發動重試。"
 sources:

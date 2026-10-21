@@ -15,7 +15,6 @@ const previous = siblings[index - 1];
 const next = siblings[index + 1];
 const prerequisites = guides.filter((guide) => entry.data.prerequisites.includes(guide.id));
 const group = handbookGroups[entry.data.group];
-const environments = { reading: '可直接閱讀', 'host-compose': '主機與 Compose', kind: '本機 Kubernetes', gke: 'GKE 雲端環境', ci: '交付管線' };
 ---
 <SiteLayout title={entry.data.title} description={entry.data.description}>
   <div class="reading-grid handbook-grid">
@@ -24,12 +23,11 @@ const environments = { reading: '可直接閱讀', 'host-compose': '主機與 Co
         <nav class="breadcrumbs" aria-label="麵包屑" data-pagefind-ignore><a href={group.path}>{group.title}</a><Icon name="chevron" size={13} /><span>{entry.data.title}</span></nav>
         <h1 id="_top" data-pagefind-meta="title">{entry.data.title}</h1>
         <p class="article-description" data-pagefind-meta="description">{entry.data.description}</p>
-        <p class="guide-verification"><strong>{environments[entry.data.environment]}</strong> · {entry.data.verification}</p>
         <p class="article-offline" data-article-offline role="status" data-pagefind-ignore>正在確認離線閱讀狀態…</p>
       </div>
       <div class="sl-markdown-content"><Content /></div>
       <div class="article-resources">
-        {prerequisites.length > 0 && <section><h2>開始前的閱讀與環境</h2><ul>{prerequisites.map((guide) => <li><a href={handbookUrl(guide)}>{guide.data.title}</a></li>)}</ul></section>}
+        {prerequisites.length > 0 && <section><h2>開始前先讀</h2><ul>{prerequisites.map((guide) => <li><a href={handbookUrl(guide)}>{guide.data.title}</a></li>)}</ul></section>}
         {related.length > 0 && <section><h2>本篇串接的技術知識</h2><ul>{related.map((article) => <li><a href={articleUrl(article)}>{article.data.title}</a></li>)}</ul></section>}
         <section id="references"><h2>參考來源</h2><ul>{entry.data.sources.map((source) => <li><a href={source.url} rel="noopener noreferrer">{source.title}</a></li>)}</ul></section>
       </div>

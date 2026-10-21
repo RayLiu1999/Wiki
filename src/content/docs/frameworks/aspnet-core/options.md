@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["aspnet-core-dependency-injection"]
 relatedArticles: ["dotnet-hosting", "kubernetes-configuration-security"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "Singleton 服務用 IOptions 或 IOptionsMonitor，Scoped 用 IOptionsSnapshot；一律啟用 ValidateOnStart() 阻斷帶病上線。"
 sources:

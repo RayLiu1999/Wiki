@@ -12,8 +12,7 @@ tags:
   - "PgBouncer"
   - "work_mem"
   - "autovacuum"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "data-access-csharp-connections"
 relatedArticles:
@@ -21,7 +20,6 @@ relatedArticles:
   - "data-access-isolation-locking"
   - "data-access-replication-recovery"
 applicableVersions: "以 .NET 10、PostgreSQL 18 說明；Npgsql 8.x+。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "用 NpgsqlDataSource 理解可共用設定、獨立連線及 PostgreSQL 的記憶體與維護。"
 sources:

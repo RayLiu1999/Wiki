@@ -6,15 +6,12 @@ topic: "kubernetes"
 category: "k8s-reliability"
 order: 5
 tags: ["PV、PVC 與有狀態服務", "kubernetes"]
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["kubernetes-workloads"]
 relatedArticles: ["gke-data-services", "engineering-recovery-cost"]
 applicableVersions: "以 Kubernetes 現行核心 API 與 Docker 容器模型說明；GKE 限制另見平台文章。"
-verifiedWith: "已核對 Kubernetes／Docker 官方概念；叢集操作與環境驗證狀態見獨立實作指南。"
 lastReviewed: "2026-10-10"
 takeaway: "理解儲存宣告、存取模式、資料生命週期，以及高可用和備份的差別。"
-noteDates: []
 sources: [{"title": "Persistent volumes", "url": "https://kubernetes.io/docs/concepts/storage/persistent-volumes/"}, {"title": "StatefulSet", "url": "https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/"}, {"title": "RabbitMQ operators", "url": "https://www.rabbitmq.com/kubernetes/operator/operator-overview"}]
 ---
 

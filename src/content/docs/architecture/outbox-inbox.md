@@ -14,8 +14,7 @@ tags:
   - "transaction"
   - "MessageId"
   - "最終一致性"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "data-access-transactions"
   - "rabbitmq-acknowledgements"
@@ -25,7 +24,6 @@ relatedArticles:
   - "engineering-cache-messaging-tests"
   - "redis-cache-aside"
 applicableVersions: "以 .NET 10、RabbitMQ 4.x、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "本地交易保護資料與意圖，Outbox 與 Inbox 協助恢復；跨邊界仍可能重送，因此結果必須冪等。"
 sources:

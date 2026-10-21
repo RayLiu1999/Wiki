@@ -6,15 +6,12 @@ topic: "engineering"
 category: "delivery"
 order: 5
 tags: ["IaC、Kustomize 與 Helm 的責任", "engineering"]
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["kubernetes-workloads", "engineering-ci-cd"]
 relatedArticles: ["kubernetes-configuration-security", "engineering-recovery-cost"]
 applicableVersions: "依 2026-10-08 的 Google Cloud／Kubernetes 官方文件核對；可用功能、地區與費率以實際平台為準。"
-verifiedWith: "已核對官方概念與責任範圍；未建立 GCP 資源、執行正式部署或量測雲端成本。"
 lastReviewed: "2026-10-10"
 takeaway: "區分雲端資源建立、Kubernetes 宣告、環境差異和狀態管理。"
-noteDates: ["2026-10-10"]
 sources: [{"title": "Terraform state", "url": "https://developer.hashicorp.com/terraform/language/state"}, {"title": "Kustomize", "url": "https://kubernetes.io/docs/tasks/manage-kubernetes-objects/kustomization/"}, {"title": "Helm charts", "url": "https://helm.sh/docs/topics/charts/"}]
 ---
 

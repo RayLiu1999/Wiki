@@ -3,8 +3,6 @@ title: "13 設定、探針與資源"
 description: "讓設定更新、可接流量、程序重啟和安全停止各有證據。"
 group: "ecommerce"
 order: 13
-environment: "reading"
-verification: "電商設計案例；具體的跟做環境與已驗證範圍見實作指南。"
 linkedArticles: ["aspnet-core-options", "kubernetes-configuration-security", "kubernetes-probes-resources", "dotnet-gc-memory", "dotnet-background-services"]
 prerequisites: ["ecommerce/kubernetes"]
 sources: [{"title": "Probes", "url": "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/"}, {"title": "Resource management", "url": "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/"}]

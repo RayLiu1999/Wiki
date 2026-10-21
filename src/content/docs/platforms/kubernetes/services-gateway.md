@@ -6,15 +6,12 @@ topic: "kubernetes"
 category: "k8s-workloads"
 order: 2
 tags: ["Service、Gateway 與流量路由", "kubernetes"]
-difficulty: "intermediate"
-learningDepth: "basic"
+difficulty: "advanced"
 prerequisites: ["kubernetes-workloads", "networking-request-path"]
 relatedArticles: ["kubernetes-workloads", "kubernetes-probes-resources"]
 applicableVersions: "以 Kubernetes 現行核心 API 與 Docker 容器模型說明；GKE 限制另見平台文章。"
-verifiedWith: "已核對 Kubernetes／Docker 官方概念；叢集操作與環境驗證狀態見獨立實作指南。"
 lastReviewed: "2026-10-10"
 takeaway: "從不固定的 Pod IP 走到穩定服務入口，分清 Service 與 HTTP 路由。"
-noteDates: []
 sources: [{"title": "Services", "url": "https://kubernetes.io/docs/concepts/services-networking/service/"}, {"title": "Ingress", "url": "https://kubernetes.io/docs/concepts/services-networking/ingress/"}, {"title": "Gateway API", "url": "https://gateway-api.sigs.k8s.io/concepts/api-overview/"}]
 ---
 

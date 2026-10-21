@@ -1,9 +1,26 @@
 ---
-import HandbookPage from '../../../components/HandbookPage.astro';
-import { getHandbook } from '../../../lib/catalog';
-export async function getStaticPaths() {
-  return (await getHandbook('practice')).map((entry) => ({ params: { slug: entry.id.split('/').slice(1).join('/') === 'overview' ? undefined : entry.id.split('/').slice(1).join('/') }, props: { entry } }));
+import SiteLayout from '../../../layouts/SiteLayout.astro';
+// 實作指南已移除（見 docs/adr/0001），舊網址逐一轉到內容最接近的電商章節。
+export function getStaticPaths() {
+  const moved = {
+    overview: { title: '電商專題', url: '/projects/ecommerce/' },
+    setup: { title: '電商專題', url: '/projects/ecommerce/' },
+    'cache-messaging': { title: '07 商品快取與失效', url: '/projects/ecommerce/caching/' },
+    'failure-drills': { title: '10 行為測試與端到端觀測', url: '/projects/ecommerce/testing-observability/' },
+    containers: { title: '11 容器化與程序邊界', url: '/projects/ecommerce/containers/' },
+    kubernetes: { title: '12 在本機 Kubernetes 執行商品 API', url: '/projects/ecommerce/kubernetes/' },
+    gke: { title: '14 進入 GKE 與外部資料服務', url: '/projects/ecommerce/gke/' },
+    'database-validation': { title: '資料庫專題：高併發與大量訂單', url: '/projects/ecommerce/database-capacity/' },
+  };
+  return Object.entries(moved).map(([slug, target]) => ({ params: { slug: slug === 'overview' ? undefined : slug }, props: { target } }));
 }
-const { entry } = Astro.props;
+const { target } = Astro.props;
 ---
-<HandbookPage entry={entry} />
+<SiteLayout title="頁面已移動">
+  <Fragment slot="head">
+    <meta http-equiv="refresh" content={'0; url=' + target.url} />
+    <meta name="robots" content="noindex" />
+    <link rel="canonical" href={target.url} />
+  </Fragment>
+  <section class="not-found"><h1>這一頁已經移動</h1><p>實作指南已經整併進電商章節。請改讀<a href={target.url}>{target.title}</a>。</p></section>
+</SiteLayout>

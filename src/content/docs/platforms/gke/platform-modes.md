@@ -6,15 +6,12 @@ topic: "gke"
 category: "gke-platform"
 order: 1
 tags: ["GCP 基礎與 GKE 模式選擇", "gke"]
-difficulty: "intermediate"
-learningDepth: "basic"
+difficulty: "advanced"
 prerequisites: ["kubernetes-workloads"]
 relatedArticles: ["gke-workload-identity", "gke-gateway-networking"]
 applicableVersions: "依 2026-10-08 的 Google Cloud／Kubernetes 官方文件核對；可用功能、地區與費率以實際平台為準。"
-verifiedWith: "已核對官方概念與責任範圍；未建立 GCP 資源、執行正式部署或量測雲端成本。"
 lastReviewed: "2026-10-10"
 takeaway: "從 Project、IAM、VPC 和 Registry 走到 Autopilot、Standard 與管理責任。"
-noteDates: []
 sources: [{"title": "GKE modes", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/choose-cluster-mode"}, {"title": "Autopilot workloads in Standard", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/about-autopilot-mode-standard-clusters"}, {"title": "Release channels", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/release-channels"}]
 ---
 

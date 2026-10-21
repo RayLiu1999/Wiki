@@ -341,7 +341,7 @@ summary { cursor: pointer; }
   .reading-grid { display: block; }
   .document-container { padding: 0; max-width: none; }
 }
-.knowledge-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.knowledge-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .knowledge-card { display: block; position: relative; padding: 24px; border: 1px solid var(--wiki-line); border-radius: 12px; background: var(--wiki-surface); color: var(--wiki-ink); text-decoration: none; transition: border-color .15s, background .15s; min-width: 0; }
 .knowledge-card:hover { border-color: var(--wiki-accent); background: var(--wiki-soft); }
 .knowledge-card h3 { margin-top: 20px; font-size: 21px; }
@@ -369,7 +369,6 @@ summary { cursor: pointer; }
 .note-provenance p { overflow-wrap: anywhere; }
 .cs-mark.wide-mark { font-size: 22px; min-width: 76px; }
 .handbook-grid { padding-block: 40px; }
-.guide-verification { margin-top: 18px; padding: 12px 16px; border-left: 3px solid var(--wiki-accent); background: var(--wiki-soft); font: 12px/1.9 var(--wiki-sans); overflow-wrap: anywhere; }
 .map-domain { margin-bottom: 40px; padding-top: 25px; border-top: 1px solid var(--wiki-line); scroll-margin-top: 130px; }
 .map-domain h2 { margin-top: 8px; }
 .map-domain > p:not(.eyebrow) { margin-top: 10px; color: var(--wiki-muted); }
@@ -387,9 +386,6 @@ summary { cursor: pointer; }
   .primary-nav a { flex: 0 0 auto; }
   .handbook-grid { padding-block: 25px; }
   .map-domain { scroll-margin-top: 165px; }
-}
-@media (max-width: 1000px) {
-  .knowledge-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
   .knowledge-grid, .path-options { grid-template-columns: 1fr; }

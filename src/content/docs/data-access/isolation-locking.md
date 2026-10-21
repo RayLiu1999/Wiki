@@ -12,15 +12,13 @@ tags:
   - "Repeatable Read"
   - "Read Committed"
   - "SKIP LOCKED"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "data-access-transactions"
 relatedArticles:
   - "data-access-concurrent-crud"
   - "architecture-outbox-inbox"
 applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "分清快照、鎖定讀、競爭更新與重試單位，避免跨資料庫照搬一致性假設。"
 sources:

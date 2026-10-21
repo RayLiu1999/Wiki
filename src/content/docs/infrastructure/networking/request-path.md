@@ -8,14 +8,12 @@ order: 1
 tags:
   - "從 DNS 到商品 API：網路請求路徑"
   - "networking"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: []
 relatedArticles:
   - "kubernetes-services-gateway"
   - "gke-gateway-networking"
 applicableVersions: "以 Kubernetes 現行核心 API 與 Docker 容器模型說明；.NET 10。"
-verifiedWith: "已核對 Kubernetes／Docker 官方概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "用一筆商品查詢分清 DNS、TCP、TLS、HTTP、負載平衡與應用認證。"
 sources:

@@ -6,15 +6,12 @@ topic: "engineering"
 category: "operations"
 order: 7
 tags: ["還原演練、RPO／RTO 與成本", "engineering"]
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["engineering-slo-alerts", "kubernetes-storage"]
 relatedArticles: ["architecture-outbox-inbox", "engineering-iac"]
 applicableVersions: "依 2026-10-08 的 Google Cloud／Kubernetes 官方文件核對；可用功能、地區與費率以實際平台為準。"
-verifiedWith: "已核對官方概念與責任範圍；未建立 GCP 資源、執行正式部署或量測雲端成本。"
 lastReviewed: "2026-10-10"
 takeaway: "把可用性、資料恢復、資源清理和費用控制放進同一份營運計畫。"
-noteDates: ["2026-10-10"]
 sources: [{"title": "Disaster recovery planning", "url": "https://docs.cloud.google.com/architecture/dr-scenarios-planning-guide"}, {"title": "Cloud Billing budgets", "url": "https://docs.cloud.google.com/billing/docs/how-to/budgets"}, {"title": "GKE backup concepts", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/add-on/backup-for-gke/concepts/backup-for-gke"}]
 ---
 

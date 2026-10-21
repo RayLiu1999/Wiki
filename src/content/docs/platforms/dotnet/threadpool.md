@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["csharp-async-await"]
 relatedArticles: ["dotnet-gc-memory", "dotnet-profiling"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "杜絕一切在非同步任務上的同步阻塞；針對可預期的秒殺流量突波，合理提高 MinThreads 繞過爬山演算法冷注入瓶頸。"
 sources:

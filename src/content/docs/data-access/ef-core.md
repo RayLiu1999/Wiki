@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["csharp-collections-linq", "aspnet-core-dependency-injection"]
 relatedArticles: ["data-access-type-mapping", "data-access-batch-updates", "data-access-transactions"]
 applicableVersions: "EF Core 8 / 10、.NET 8 / 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "唯讀查詢一律加上 AsNoTracking；關聯載入優先採用 Select 投影或 Include + AsSplitQuery 杜絕笛卡爾積；禁止跨執行緒共用 DbContext。"
 sources:

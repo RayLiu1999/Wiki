@@ -8,8 +8,7 @@ order: 9
 tags:
   - "EF Core 樂觀並行與庫存競爭"
   - "data-access"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "data-access-tracking"
   - "data-access-transactions"
@@ -17,7 +16,6 @@ relatedArticles:
   - "csharp-thread-safety"
   - "kubernetes-autoscaling"
 applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
-verifiedWith: "已依官方文件核對概念；文中示意片段未宣稱完成外部服務整合或效能量測。"
 lastReviewed: "2026-10-10"
 takeaway: "從兩人修改商品理解版本比對、衝突結果，以及交易和並行控制的分工。"
 sources:

@@ -6,15 +6,12 @@ topic: "gke"
 category: "gke-integration"
 order: 3
 tags: ["GKE Gateway、TLS 與負載平衡", "gke"]
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["kubernetes-services-gateway", "gke-platform-modes"]
 relatedArticles: ["networking-request-path", "kubernetes-probes-resources"]
 applicableVersions: "依 2026-10-08 的 Google Cloud／Kubernetes 官方文件核對；可用功能、地區與費率以實際平台為準。"
-verifiedWith: "已核對官方概念與責任範圍；未建立 GCP 資源、執行正式部署或量測雲端成本。"
 lastReviewed: "2026-10-10"
 takeaway: "理解控制器、HTTPRoute、NEG、健康檢查與真實的流量路徑。"
-noteDates: []
 sources: [{"title": "GKE Gateway API", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/gateway-api"}, {"title": "Deploying Gateways", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/how-to/deploying-gateways"}, {"title": "Gateway policies", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/how-to/configure-gateway-resources"}]
 ---
 

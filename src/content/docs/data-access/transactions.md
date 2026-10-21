@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["data-access-ef-core", "csharp-cancellation-disposable"]
 relatedArticles: ["data-access-batch-updates", "architecture-outbox-inbox"]
 applicableVersions: "EF Core 8 / 10、.NET 8 / 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "Linux 容器嚴禁跨多連線使用 TransactionScope；持交易期間禁執行外部 I/O；跨微服務一律採用 Outbox 與 Saga 最終一致性。"
 sources:

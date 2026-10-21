@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["data-access-ef-core", "csharp-syntax-traps"]
 relatedArticles: ["data-access-type-mapping", "data-access-large-table-queries"]
 applicableVersions: "SQL Server 2019+、PostgreSQL 14+、MySQL 8.0+"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "確保查詢條件滿足 SARGable 原則；C# 字串必須精確對齊 Ansi/Unicode 避免隱式轉換；杜絕在索引欄位上套用函數。"
 sources:

@@ -6,15 +6,12 @@ topic: "kubernetes"
 category: "k8s-workloads"
 order: 1
 tags: ["Kubernetes 的期望狀態與工作負載", "kubernetes"]
-difficulty: "intermediate"
-learningDepth: "basic"
+difficulty: "advanced"
 prerequisites: ["containers-image-runtime"]
 relatedArticles: ["kubernetes-probes-resources", "kubernetes-autoscaling"]
 applicableVersions: "以 Kubernetes 現行核心 API 與 Docker 容器模型說明；GKE 限制另見平台文章。"
-verifiedWith: "已核對 Kubernetes／Docker 官方概念；叢集操作與環境驗證狀態見獨立實作指南。"
 lastReviewed: "2026-10-10"
 takeaway: "理解控制器、Pod、Deployment、Job、Namespace 與程序副本。"
-noteDates: []
 sources: [{"title": "Kubernetes overview", "url": "https://kubernetes.io/docs/concepts/overview/"}, {"title": "Deployment", "url": "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/"}, {"title": "Pods", "url": "https://kubernetes.io/docs/concepts/workloads/pods/"}]
 ---
 

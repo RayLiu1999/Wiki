@@ -3,8 +3,6 @@ title: "電商範圍與元件責任"
 description: "用同一筆購買流程說明 API、資料庫、快取、訊息與部署平台各負責什麼。"
 group: "start"
 order: 1
-environment: "reading"
-verification: "情境與設計說明；實作範圍及跟做前提見內文。"
 linkedArticles: ["architecture-communication-boundaries", "architecture-outbox-inbox", "kubernetes-workloads"]
 prerequisites: ["start/overview"]
 sources: [{"title": "Microsoft modern web application architecture", "url": "https://learn.microsoft.com/en-us/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures"}]
@@ -12,11 +10,9 @@ sources: [{"title": "Microsoft modern web application architecture", "url": "htt
 
 學習案例以一個店家販售商品為起點，保留未來擴展賣家、物流和結算的空間。買家先查商品，再加入購物車、送出訂單、完成模擬付款，最後得到通知。這條主線足以討論交易、並行、快取、訊息與雲端部署。
 
-## 共同案例和實驗資料
+## 共同案例
 
-設計章節以「保溫杯、單價 120 元、庫存 3 個、購買 2 個」討論規則。這組數字是情境條件，方便推演競爭與金額；它不是宣稱目前資料庫已有完整的庫存與購物車。
-
-現有快取與訊息實驗初始化的是商品 1「C# 實務筆記」、價格 100 元。指南會把價格更新成 120 元，再建立數量 2 的訂單。兩者使用相同問題脈絡，但各自的資料與實作範圍會明確列出。
+設計章節以「保溫杯、單價 120 元、庫存 3 個、購買 2 個」討論規則。這組數字是情境條件，方便推演競爭與金額。
 
 ## 各元件負責什麼
 
@@ -28,11 +24,11 @@ sources: [{"title": "Microsoft modern web application architecture", "url": "htt
 | Outbox 發布器 | 將已提交事件交給 Broker | 發布確認後記錄交付狀態 |
 | RabbitMQ | 路由、保存並分派待處理事件 | Confirm／Ack 各確認不同階段 |
 | 通知 Consumer | 處理事件並記錄結果 | 用例結果提交後再確認消費 |
-| Kubernetes／GKE | 排程、更新、入口與資源管理 | 工作負載按平台條件運作 |
+| Kubernetes（GKE／EKS） | 排程、更新、入口與資源管理 | 工作負載按平台條件運作 |
 
 ## 一筆訂單如何走完
 
-上表描述現有 PostgreSQL 實驗。新加入的[資料庫專題](/projects/ecommerce/database-capacity/)比較 MySQL 與 PostgreSQL 的連線、交易及容量設計，選擇其中一個作為權威交易來源；快取和訊息的責任仍按用例定義。
+本站以 PostgreSQL 作為權威交易來源。[資料庫專題](/projects/ecommerce/database-capacity/)比較 MySQL 與 PostgreSQL 的連線、交易及容量設計，選擇其中一個作為權威交易來源；快取和訊息的責任仍按用例定義。
 
 <figure class="concept-flow">
 <figcaption>訂單提交與通知完成的流程</figcaption>
@@ -40,9 +36,3 @@ sources: [{"title": "Microsoft modern web application architecture", "url": "htt
 </figure>
 
 API 先提交訂單和 Outbox，可以在 Worker 尚未完成通知時回應成功。通知會稍後完成；發生重送時，以穩定事件 ID 與業務唯一條件保護結果。
-
-## 目前有哪些可執行內容
-
-現有實驗具備商品快取、價格更新、訂單加 Outbox、RabbitMQ 確認、重試、死信、Inbox 與模擬通知。通知只是資料庫紀錄，沒有實際寄信；訂單尚未整合登入、購物車、庫存扣減或付款。
-
-另有獨立的小型商品 API 示範容器和 Kubernetes 宣告，使用固定回應來聚焦部署行為。完整電商功能與 GKE 正式營運則是各章節的設計和驗證目標。

@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["dotnet-background-services", "dotnet-clr-jit"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "Linux 容器覆寫巢狀設定一律採用雙底線 __；耗時預熱交由 IHostApplicationLifetime 或探針處理，禁在 Host 構建時同步卡死。"
 sources:

@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["csharp-value-reference-types"]
 relatedArticles: ["dotnet-threadpool", "dotnet-profiling"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "高頻大型緩衝區（>= 85KB）一律使用 ArrayPool 杜絕 LOH 碎裂；容器環境務必明確設定 GCHeapHardLimit 或對齊 cgroup v2 限制防範 OOMKilled。"
 sources:

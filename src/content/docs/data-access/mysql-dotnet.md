@@ -12,8 +12,7 @@ tags:
   - "InnoDB"
   - "TLS"
   - "ConnectionTimeout"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "data-access-csharp-connections"
 relatedArticles:
@@ -21,7 +20,6 @@ relatedArticles:
   - "data-access-concurrent-crud"
   - "data-access-isolation-locking"
 applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）說明；MySqlConnector 2.x+。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "用 MySqlConnector 理解短期連線、TLS、參數化 SQL 與 MySQL 的容量設定。"
 sources:

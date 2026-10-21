@@ -3,8 +3,6 @@ title: "12 在本機 Kubernetes 執行商品 API"
 description: "用兩個 Pod、Service 與 port-forward 理解期望狀態和流量。"
 group: "ecommerce"
 order: 12
-environment: "reading"
-verification: "電商設計案例；具體的跟做環境與已驗證範圍見實作指南。"
 linkedArticles: ["kubernetes-workloads", "kubernetes-services-gateway", "kubernetes-probes-resources"]
 prerequisites: ["ecommerce/containers"]
 sources: [{"title": "kind quick start", "url": "https://kind.sigs.k8s.io/docs/user/quick-start/"}, {"title": "Deployments", "url": "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/"}]
@@ -27,14 +25,10 @@ sources: [{"title": "kind quick start", "url": "https://kind.sigs.k8s.io/docs/us
 
 固定回應的小型 API 適合觀察部署。完整系統若保存購物車、冪等資料或工作領取狀態，必須使用共用資料邊界。每個 Pod 的 Singleton 或 lock 都只屬於自己的程序。
 
-本機指南使用 kind 叢集與本機映像載入。kind 的網路、磁碟和本機硬體不代表 GKE 的負載平衡或故障域；學完共同模型後，再進雲端整合。
+本機叢集（例如 kind）的網路、磁碟和本機硬體不代表 GKE 的負載平衡或故障域；學完共同模型後，再進雲端整合。
 
 ## 重建和更新
 
 在專用學習叢集中刪除一個 Pod，Deployment 會建立替代。確認新 Pod 取得就緒，再查商品回應。映像更新時觀察 rolling update；舊版本也要能和當時的資料格式合作。
 
 port-forward 選到的 Pod 若被移除，轉送可能中斷，需重新啟動。連續回應來自同一程序，也不能推論 Service 沒有其他端點。
-
-## 跟做入口
-
-[本機 Kubernetes 指南](/practice/ecommerce/kubernetes/)包含 kind 前提、明確 context、映像載入、apply、觀察與清理。本站沒有宣稱已在讀者的叢集執行這些操作。

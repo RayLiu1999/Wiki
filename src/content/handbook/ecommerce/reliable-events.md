@@ -3,8 +3,6 @@ title: "09 Outbox、Inbox 與重送"
 description: "逐步確認資料庫提交、發布確認、通知結果與消費確認的邊界。"
 group: "ecommerce"
 order: 9
-environment: "reading"
-verification: "已有本機實驗可觀察部分流程；本章逐項說明其邊界。"
 linkedArticles: ["architecture-outbox-inbox", "rabbitmq-acknowledgements", "rabbitmq-retries-idempotency", "rabbitmq-queues-ordering", "data-access-transactions"]
 prerequisites: ["ecommerce/notifications"]
 sources: [{"title": "Transactional outbox", "url": "https://learn.microsoft.com/en-us/azure/architecture/databases/guide/transactional-outbox-cosmos"}, {"title": "RabbitMQ confirms", "url": "https://www.rabbitmq.com/docs/confirms"}]
@@ -30,6 +28,6 @@ Confirm 後、標記前中斷，下一次會重送。Outbox 並沒有消除重�
 
 多個 Consumer 與重試可能改變完成順序。依賴事件先後時，需要版本或合法狀態轉移，不應只假設 Queue 依序投遞就一定依序完成。
 
-## 目前驗證範圍
+## 多個發布器時
 
-隔離測試覆蓋訂單與 Outbox 回滾、Confirm 後狀態窗口、Inbox 與通知回滾、Ack 前斷線重送、並行重複事件與有限重試。發布器尚未實現多程序 claim／lease，因此這份實驗不能直接當作多 Pod 發布器方案。[故障與恢復指南](/practice/ecommerce/failure-drills/)說明證據與範圍。
+只有一個發布器時，上面的流程就夠用。部署成多個 Pod、同時有多個發布器時，還需要 claim／lease 之類的工作領取機制，否則兩個發布器可能同時拿到同一筆 Outbox。做法見[多副本與擴縮](/projects/ecommerce/scaling/)。

@@ -8,13 +8,11 @@ order: 2
 tags:
   - "Compose 與本機服務邊界"
   - "containers"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "containers-image-runtime"
 relatedArticles: []
 applicableVersions: "以 Docker Compose v2 及 Docker 容器模型說明；.NET 10。"
-verifiedWith: "已核對 Docker Compose 官方概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "分清主機程序、容器網路、port 映射、volume 和服務就緒。"
 sources:

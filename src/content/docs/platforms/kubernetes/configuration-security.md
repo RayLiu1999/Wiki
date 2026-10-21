@@ -6,15 +6,12 @@ topic: "kubernetes"
 category: "k8s-configuration"
 order: 3
 tags: ["設定、Secret 與工作負載權限", "kubernetes"]
-difficulty: "intermediate"
-learningDepth: "basic"
+difficulty: "advanced"
 prerequisites: ["kubernetes-workloads"]
 relatedArticles: ["aspnet-core-options", "gke-workload-identity"]
 applicableVersions: "以 Kubernetes 現行核心 API 與 Docker 容器模型說明；GKE 限制另見平台文章。"
-verifiedWith: "已核對 Kubernetes／Docker 官方概念；叢集操作與環境驗證狀態見獨立實作指南。"
 lastReviewed: "2026-10-10"
 takeaway: "區分應用設定、敏感值、Kubernetes API 權限、網路政策與雲端身分。"
-noteDates: []
 sources: [{"title": "Secrets", "url": "https://kubernetes.io/docs/concepts/configuration/secret/"}, {"title": "RBAC", "url": "https://kubernetes.io/docs/reference/access-authn-authz/rbac/"}, {"title": "Network policies", "url": "https://kubernetes.io/docs/concepts/services-networking/network-policies/"}]
 ---
 

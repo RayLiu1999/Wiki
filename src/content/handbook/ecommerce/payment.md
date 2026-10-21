@@ -3,8 +3,6 @@ title: "06 模擬付款與狀態轉移"
 description: "處理付款未知結果、重複回呼與訂單一致性，建立可測試的假付款流程。"
 group: "ecommerce"
 order: 6
-environment: "reading"
-verification: "電商設計案例；本章描述規則與方案，尚未提供完整業務實作。"
 linkedArticles: ["aspnet-core-http-client-factory", "aspnet-core-http-resilience", "data-access-transactions", "architecture-communication-boundaries", "engineering-business-tests"]
 prerequisites: ["ecommerce/ordering-inventory"]
 sources: [{"title": "Microsoft modern web application architecture", "url": "https://learn.microsoft.com/en-us/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures"}]

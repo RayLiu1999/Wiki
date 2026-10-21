@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["csharp-async-await"]
 relatedArticles: ["aspnet-core-authentication", "aspnet-core-filters"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "UseExceptionHandler 必須放在管線最外層；UseAuthentication 必須先於 UseAuthorization；禁止在 Response.HasStarted 後修改 Header。"
 sources:

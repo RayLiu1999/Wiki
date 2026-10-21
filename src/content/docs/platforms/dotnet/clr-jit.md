@@ -7,15 +7,12 @@ category: "runtime-performance"
 order: 3
 tags: [".NET", "JIT", "分層編譯", "Dynamic PGO", "冷啟動", "ReadyToRun"]
 articleType: "deep-dive"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["dotnet-gc-memory", "dotnet-hosting"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
 lastReviewed: "2026-10-10"
 takeaway: "理解 Tier 0 極速啟動與 Tier 1 穩態優化的折衷；關鍵熱路徑於就緒探針前完成預熱，消除動態 PGO 升級期的延遲毛刺。"
-noteDates: ["2026-10-10"]
 sources:
   - title: "Microsoft Learn：分層編譯 (Tiered Compilation)"
     url: "https://learn.microsoft.com/zh-tw/dotnet/core/run-time-config/compilation#tiered-compilation"

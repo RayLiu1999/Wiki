@@ -16,8 +16,7 @@ tags:
   - "Domain Event"
   - "Integration Event"
   - "事件契約"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "csharp-channels"
   - "rabbitmq-getting-started"
@@ -28,7 +27,6 @@ relatedArticles:
   - "aspnet-core-dapr"
   - "rabbitmq-queues-ordering"
 applicableVersions: "以 .NET 10、Redis 8.x、RabbitMQ 4.x 說明；driver／EF provider 的主版相容性須各自核對。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "先決定誰需要立即回覆、工作能否遺失、是否需要重播，再選擇通訊機制。"
 sources:

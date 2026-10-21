@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["data-access-transactions", "csharp-cancellation-disposable"]
 relatedArticles: ["data-access-pools-locks", "csharp-thread-safety"]
 applicableVersions: "EF Core 7+ / 8 / 10、.NET 8 / 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "海量更新一律首選 ExecuteUpdateAsync 直達資料庫；大批次作業必須分塊（Chunking）執行防範鎖升級與逾時。"
 sources:

@@ -6,15 +6,12 @@ topic: "engineering"
 category: "delivery"
 order: 4
 tags: ["從 commit 到部署：CI/CD 與映像追溯", "engineering"]
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["containers-image-runtime", "data-access-migrations"]
 relatedArticles: ["engineering-iac", "engineering-slo-alerts"]
 applicableVersions: "依 2026-10-08 的 Google Cloud／Kubernetes 官方文件核對；可用功能、地區與費率以實際平台為準。"
-verifiedWith: "已核對官方概念與責任範圍；未建立 GCP 資源、執行正式部署或量測雲端成本。"
 lastReviewed: "2026-10-10"
 takeaway: "把驗證、映像、環境、migration 和部署後結果連成可追查的交付流程。"
-noteDates: ["2026-10-10"]
 sources: [{"title": "OIDC deployment pipelines", "url": "https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines"}, {"title": "Deployments", "url": "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/"}, {"title": "EF production migrations", "url": "https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/applying"}]
 ---
 

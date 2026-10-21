@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["dotnet-clr-jit", "dotnet-profiling"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "熱路徑嚴禁裸調未快取的反射；高頻動態存取優先以 Expression Tree 編譯並快取為委派，現代架構首選 Source Generator 達成編譯期零開銷。"
 sources:

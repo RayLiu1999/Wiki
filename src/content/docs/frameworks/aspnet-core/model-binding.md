@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["aspnet-core-routing"]
 relatedArticles: ["aspnet-core-http-contracts", "aspnet-core-dependency-injection"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "自訂讀取 Request.Body 必須一路非同步串流處理；大型承載資料務必限制 MaxRequestBodySize；驗證邏輯與資料庫存取嚴格脫鉤。"
 sources:

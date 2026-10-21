@@ -1,8 +1,0 @@
-<Solution>
-  <Project Path="Common/Common.csproj" />
-  <Project Path="RedisDemo/RedisDemo.csproj" />
-  <Project Path="RabbitMqDemo/RabbitMqDemo.csproj" />
-  <Project Path="OrderApi/OrderApi.csproj" />
-  <Project Path="OrderWorker/OrderWorker.csproj" />
-  <Project Path="IntegrationChecks/IntegrationChecks.csproj" />
-</Solution>

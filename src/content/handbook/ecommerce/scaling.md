@@ -3,8 +3,6 @@ title: "15 多副本、容量與安全擴縮"
 description: "增加處理能力之前，先核對共享狀態、工作領取和下游容量。"
 group: "ecommerce"
 order: 15
-environment: "reading"
-verification: "電商設計案例；具體的跟做環境與已驗證範圍見實作指南。"
 linkedArticles: ["kubernetes-autoscaling", "data-access-pools-locks", "redis-concurrency", "rabbitmq-retries-idempotency", "dotnet-threadpool", "data-access-pool-capacity", "data-access-load-validation"]
 prerequisites: ["ecommerce/gke"]
 sources: [{"title": "HPA", "url": "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/"}, {"title": "RabbitMQ consumers", "url": "https://www.rabbitmq.com/docs/consumers"}]
@@ -22,7 +20,7 @@ Redis 故障回源可能讓資料庫負載突然增加，因此最大副本數�
 
 多個 Outbox 發布器需要 claim／lease 或對應的交易鎖定協定，確保可辨識工作所有權、程序死亡後恢復以及租期到期行為。Consumer 仍以穩定事件 ID 和業務條件去重。
 
-目前實驗未實現多發布器工作領取協定，因此不把 Worker 設為多副本。完成此協定後，用真實資料庫並行測試核對重複領取訊息、未知 Confirm、停止與恢復。
+工作領取協定完成之前，不要把發布器設成多副本。完成後，用真實資料庫的並行測試核對重複領取、未知 Confirm、停止與恢復。
 
 ## 指標與容量預算
 

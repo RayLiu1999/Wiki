@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["dotnet-identifiers", "dotnet-hosting"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "所有業務時間戳一律使用 DateTimeOffset 並以 UTC 儲存；純日期與純時間使用 DateOnly/TimeOnly；時間相依邏輯依賴 TimeProvider。"
 sources:

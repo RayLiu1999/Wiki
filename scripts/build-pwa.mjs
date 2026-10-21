@@ -58,7 +58,6 @@ const result = await injectManifest({
     'topics/index.html',
     'start/index.html',
     'projects/ecommerce/index.html',
-    'practice/ecommerce/index.html',
     'saved/index.html',
   ],
   maximumFileSizeToCacheInBytes: 2 * 1024 * 1024,

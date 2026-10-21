@@ -6,15 +6,12 @@ topic: "engineering"
 category: "operations"
 order: 6
 tags: ["SLO、錯誤預算與可行動告警", "engineering"]
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["engineering-metrics-tracing"]
 relatedArticles: ["kubernetes-autoscaling", "engineering-recovery-cost"]
 applicableVersions: "依 2026-10-08 的 Google Cloud／Kubernetes 官方文件核對；可用功能、地區與費率以實際平台為準。"
-verifiedWith: "已核對官方概念與責任範圍；未建立 GCP 資源、執行正式部署或量測雲端成本。"
 lastReviewed: "2026-10-10"
 takeaway: "從商品查詢和通知完成時間定義品質，再用證據建立告警。"
-noteDates: ["2026-10-10"]
 sources: [{"title": "SRE service level objectives", "url": "https://sre.google/sre-book/service-level-objectives/"}, {"title": "SRE alerting on SLOs", "url": "https://sre.google/workbook/alerting-on-slos/"}]
 ---
 

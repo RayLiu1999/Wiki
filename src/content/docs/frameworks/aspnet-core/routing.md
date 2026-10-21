@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["aspnet-core-middleware"]
 relatedArticles: ["aspnet-core-model-binding", "aspnet-core-api-styles-aot"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "優先使用內建高效約束（如 :int, :guid）取代正則表達式；路由約束僅負責選擇端點，嚴禁承載領域業務校驗以免誤報 404。"
 sources:

@@ -10,7 +10,7 @@ articleType: "reference"
 prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["dotnet-hosting", "dotnet-clr-jit"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "方案根目錄必備 global.json 鎖定 SDK 版本；啟用 Central Package Management (CPM) 消除微服務間版本衝突地獄。"
 sources:

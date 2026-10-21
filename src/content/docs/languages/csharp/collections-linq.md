@@ -7,15 +7,12 @@ category: "collections-memory"
 order: 1
 tags: ["C#", "LINQ", "Span", "集合", "效能優化", "記憶體"]
 articleType: "deep-dive"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["csharp-value-reference-types"]
 relatedArticles: ["csharp-syntax-traps", "csharp-thread-safety"]
 applicableVersions: "C# 10+ / 14、.NET 6+ / .NET 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
 lastReviewed: "2026-10-10"
 takeaway: "避免對 IEnumerable 多次列舉重跑查詢；集合已知大小應預給 capacity；高頻字串處理優先使用 ReadOnlySpan 達成零記憶體配置。"
-noteDates: ["2026-10-10"]
 sources:
   - title: "Microsoft Learn：Span<T> 與 Memory<T> 最佳做法"
     url: "https://learn.microsoft.com/zh-tw/dotnet/standard/memory-and-spans/"

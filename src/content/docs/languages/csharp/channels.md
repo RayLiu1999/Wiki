@@ -7,15 +7,12 @@ category: "async-threading"
 order: 5
 tags: ["C#", "Channels", "生產者消費者", "背壓", "非同步", "高吞吐"]
 articleType: "deep-dive"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["csharp-async-await"]
 relatedArticles: ["csharp-valuetask-tcs", "csharp-thread-safety"]
 applicableVersions: "C# 10+ / 14、.NET 6+ / .NET 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
 lastReviewed: "2026-10-10"
 takeaway: "行程內解耦首選 BoundedChannel 並設定有界容量以實現背壓；消費者搭配 await foreach，生產結束必須顯式 Complete()。"
-noteDates: ["2026-10-10"]
 sources:
   - title: "Microsoft .NET Blog：An Introduction to System.Threading.Channels"
     url: "https://devblogs.microsoft.com/dotnet/an-introduction-to-system-threading-channels/"

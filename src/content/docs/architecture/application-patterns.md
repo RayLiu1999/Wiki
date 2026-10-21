@@ -15,8 +15,7 @@ tags:
   - "Handler"
   - "DTO"
   - "Validator"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites:
   - "architecture-domain-modeling"
 relatedArticles:
@@ -27,7 +26,6 @@ relatedArticles:
   - "architecture-outbox-inbox"
   - "architecture-communication-boundaries"
 applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "模式用來釐清責任；CQRS 不要求分開資料庫，Mediator 也不會自動提供交易。"
 sources:

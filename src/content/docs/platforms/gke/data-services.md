@@ -6,15 +6,12 @@ topic: "gke"
 category: "gke-integration"
 order: 4
 tags: ["GKE 與 PostgreSQL、Redis、RabbitMQ 整合", "gke"]
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["gke-workload-identity", "data-access-pools-locks"]
 relatedArticles: ["redis-reliability", "rabbitmq-acknowledgements", "kubernetes-storage", "data-access-mysql-dotnet", "data-access-postgresql-dotnet", "data-access-pool-capacity", "data-access-replication-recovery"]
 applicableVersions: "依 2026-10-08 的 Google Cloud／Kubernetes 官方文件核對；可用功能、地區與費率以實際平台為準。"
-verifiedWith: "已核對官方概念與責任範圍；未建立 GCP 資源、執行正式部署或量測雲端成本。"
 lastReviewed: "2026-10-10"
 takeaway: "逐層核對外部端點、IAM、服務登入、連線池與恢復責任。"
-noteDates: []
 sources: [{"title": "Cloud SQL from GKE", "url": "https://docs.cloud.google.com/sql/docs/postgres/connect-kubernetes-engine"}, {"title": "Cloud SQL Auth Proxy", "url": "https://docs.cloud.google.com/sql/docs/postgres/sql-proxy"}, {"title": "RabbitMQ operators", "url": "https://www.rabbitmq.com/kubernetes/operator/operator-overview"}]
 ---
 

@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["aspnet-core-http-contracts"]
 relatedArticles: ["aspnet-core-model-binding", "dotnet-clr-jit"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "極限效能、高吞吐或 Serverless 首選 Minimal APIs 與 Native AOT；大型既有單體可保留 Controllers；AOT 必須搭配 JSON Source Generator。"
 sources:

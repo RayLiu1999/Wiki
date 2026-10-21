@@ -16,7 +16,6 @@ tags:
   - "工作佇列"
   - "pub/sub"
 difficulty: "beginner"
-learningDepth: "deep"
 prerequisites:
   - "csharp-channels"
 relatedArticles:
@@ -24,7 +23,6 @@ relatedArticles:
   - "architecture-communication-boundaries"
   - "aspnet-core-dapr"
 applicableVersions: "RabbitMQ 4.x／AMQP 0-9-1／RabbitMQ.Client 7.x／.NET 10。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
 lastReviewed: "2026-10-10"
 takeaway: "把工作交給佇列後，發布、排隊與完成是不同階段；API 的回應契約要說清楚已完成哪一步。"
 sources:

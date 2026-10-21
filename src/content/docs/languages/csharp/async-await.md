@@ -7,15 +7,12 @@ category: "async-threading"
 order: 1
 tags: ["C#", "非同步", "async", "await", "狀態機", "ThreadPool", "死結"]
 articleType: "deep-dive"
-difficulty: "intermediate"
-learningDepth: "deep"
+difficulty: "advanced"
 prerequisites: ["csharp-syntax-traps"]
 relatedArticles: ["csharp-valuetask-tcs", "csharp-cancellation-disposable", "csharp-thread-safety"]
 applicableVersions: "C# 12+ / 14、.NET 8+ / .NET 10"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
 lastReviewed: "2026-10-10"
 takeaway: "一路非同步到底（Async all the way down），絕不在非同步方法上呼叫 .Result 或 .Wait()；杜絕 async void。"
-noteDates: ["2026-10-10"]
 sources:
   - title: "Microsoft Learn：以非同步方式使用 async 和 await 進行程式設計"
     url: "https://learn.microsoft.com/zh-tw/dotnet/csharp/asynchronous-programming/"

@@ -10,7 +10,7 @@ articleType: "deep-dive"
 prerequisites: ["aspnet-core-middleware", "aspnet-core-routing"]
 relatedArticles: ["aspnet-core-api-styles-aot", "architecture-cross-cutting"]
 applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-verifiedWith: ".NET SDK 10.0.105 實測編譯與執行"
+difficulty: "advanced"
 lastReviewed: "2026-10-10"
 takeaway: "現代架構首選 IEndpointFilter 兼顧 Minimal API 與 Controller；全域例外交給 Middleware，端點驗證與短路交由 Filter。"
 sources:

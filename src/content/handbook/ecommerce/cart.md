@@ -3,8 +3,6 @@ title: "04 購物車與共享狀態"
 description: "用購物車討論集合、期限、並行更新與結帳時的重新驗證。"
 group: "ecommerce"
 order: 4
-environment: "reading"
-verification: "電商設計案例；本章描述規則與方案，尚未提供完整業務實作。"
 linkedArticles: ["csharp-collections-linq", "redis-data-types-ttl", "redis-concurrency", "csharp-thread-safety", "data-access-concurrency"]
 prerequisites: ["ecommerce/identity"]
 sources: [{"title": "Redis data types", "url": "https://redis.io/docs/latest/develop/data-types/"}]
@@ -32,4 +30,4 @@ sources: [{"title": "Redis data types", "url": "https://redis.io/docs/latest/dev
 
 ## 驗證案例
 
-同一商品重複加入後數量符合命令語意；兩裝置競爭不會悄悄丟失更新；到期時畫面說明已過期；結帳前價格改變可以辨識並重新確認。現有實驗沒有購物車端點，本章用於討論共享狀態設計。
+同一商品重複加入後數量符合命令語意；兩裝置競爭不會悄悄丟失更新；到期時畫面說明已過期；結帳前價格改變可以辨識並重新確認。
