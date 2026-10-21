@@ -3,7 +3,7 @@ title: "07 商品快取與失效"
 description: "在允許短暫舊資料的前提下，降低商品讀取負載並觀察故障回源。"
 group: "ecommerce"
 order: 7
-linkedArticles: ["redis-getting-started", "redis-data-types-ttl", "redis-cache-aside", "redis-dotnet-integration", "redis-reliability"]
+linkedArticles: ["redis-getting-started", "redis-data-types-ttl", "redis-cache-aside", "redis-dotnet-integration", "redis-reliability", "architecture-behavior-patterns"]
 prerequisites: ["ecommerce/product-api"]
 sources: [{"title": "Redis client-side caching concepts", "url": "https://redis.io/docs/latest/develop/reference/client-side-caching/"}, {"title": "Cache-Aside pattern", "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside"}]
 ---

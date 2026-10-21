@@ -35,3 +35,5 @@ HPA 的 CPU 目標需要 requests 與資源指標。Queue 年齡、處理量等�
 ## 資料庫延伸
 
 API／Worker、rollout 額外 Pod、讀副本與故障回源的連線預算，見[池容量](/data-access/pool-capacity/)和[資料庫容量專題](/projects/ecommerce/database-capacity/)。增加 Pod 前先量測主庫承受量。
+
+在 EKS 上，節點擴縮由 Karpenter 或 Auto Mode 負責，佇列型 Worker 同樣可以用 KEDA 依積壓擴縮，見 [EKS 平台模式](/platforms/eks/platform-modes/)。

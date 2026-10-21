@@ -3,7 +3,7 @@ title: "01 商品、價格與領域模型"
 description: "先定義商品和價格語意，再決定 DTO、實體和值物件。"
 group: "ecommerce"
 order: 1
-linkedArticles: ["csharp-syntax-traps", "csharp-value-reference-types", "architecture-domain-modeling", "architecture-creation-patterns", "data-access-large-table-queries"]
+linkedArticles: ["csharp-syntax-traps", "csharp-value-reference-types", "architecture-domain-modeling", "architecture-creation-patterns", "data-access-large-table-queries", "data-access-sql-foundations", "data-access-ef-core", "data-access-type-mapping", "data-access-product-search", "dotnet-identifiers"]
 prerequisites: ["ecommerce/overview"]
 sources: [{"title": "Microsoft modern web application architecture", "url": "https://learn.microsoft.com/en-us/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures"}]
 ---

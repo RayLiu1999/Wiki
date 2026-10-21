@@ -3,7 +3,7 @@ title: "03 買家登入與資料權限"
 description: "讓買家查看自己的購物車與訂單，分清驗證身分和授權資源。"
 group: "ecommerce"
 order: 3
-linkedArticles: ["aspnet-core-authentication", "aspnet-core-middleware", "gke-workload-identity"]
+linkedArticles: ["aspnet-core-authentication", "aspnet-core-middleware", "gke-workload-identity", "security-api-risks", "security-secrets-management"]
 prerequisites: ["ecommerce/product-api"]
 sources: [{"title": "ASP.NET Core authorization", "url": "https://learn.microsoft.com/en-us/aspnet/core/security/authorization/introduction?view=aspnetcore-10.0"}]
 ---

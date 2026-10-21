@@ -3,7 +3,7 @@ title: "16 CI/CD、映像與資料變更"
 description: "建立可追溯的交付流程，讓新舊程序與 schema 安全共存。"
 group: "ecommerce"
 order: 16
-linkedArticles: ["engineering-ci-cd", "engineering-iac", "data-access-migrations", "dotnet-sdk-packages", "data-access-bulk-retention"]
+linkedArticles: ["engineering-ci-cd", "engineering-iac", "data-access-migrations", "dotnet-sdk-packages", "data-access-bulk-retention", "data-access-batch-updates"]
 prerequisites: ["ecommerce/scaling"]
 sources: [{"title": "EF production migrations", "url": "https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/applying"}, {"title": "Deployment pipeline federation", "url": "https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines"}]
 ---
@@ -31,3 +31,5 @@ rollout 完成後檢查商品查詢、合法訂單提交、背景結果、錯誤
 ## 資料庫延伸
 
 上億列上的回填、索引與結構更新另見[大量寫入與保留](/data-access/bulk-retention/)；online DDL 仍需檢查鎖、磁碟與失敗處理。
+
+在 EKS 上，映像放在 ECR、CI 以 OIDC 扮演 IAM 角色、Terraform 狀態放在 S3，見 [CI/CD](/engineering/ci-cd/)與 [IaC](/engineering/iac/)中的 EKS 做法。

@@ -3,7 +3,7 @@ title: "08 背景通知與 RabbitMQ"
 description: "讓訂單提交和通知完成分開，理解事件、路由與背景程序。"
 group: "ecommerce"
 order: 8
-linkedArticles: ["rabbitmq-getting-started", "rabbitmq-routing", "rabbitmq-dotnet-integration", "rabbitmq-acknowledgements", "dotnet-background-services"]
+linkedArticles: ["rabbitmq-getting-started", "rabbitmq-routing", "rabbitmq-dotnet-integration", "rabbitmq-acknowledgements", "dotnet-background-services", "csharp-channels", "aspnet-core-grpc", "aspnet-core-dapr"]
 prerequisites: ["ecommerce/ordering-inventory"]
 sources: [{"title": "RabbitMQ publishers", "url": "https://www.rabbitmq.com/docs/publishers"}, {"title": "RabbitMQ consumers", "url": "https://www.rabbitmq.com/docs/consumers"}]
 ---

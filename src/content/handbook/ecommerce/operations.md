@@ -35,3 +35,5 @@ sources: [{"title": "SRE objectives", "url": "https://sre.google/sre-book/servic
 ## 資料庫延伸
 
 資料庫的讀副本延遲、未知提交與時間點恢復，延伸至[讀副本與復原](/data-access/replication-recovery/)；容量與長期維護的證據怎麼記錄，見[資料庫專題](/projects/ecommerce/database-capacity/)。
+
+在 EKS 上，指標與告警使用 CloudWatch（可搭配 Application Signals 定義 SLO），預算使用 AWS Budgets，見 [SLO 與告警](/engineering/slo-alerts/)與 [還原演練與成本](/engineering/recovery-cost/)。

@@ -3,7 +3,7 @@ title: "11 容器化與程序邊界"
 description: "先建立可重複啟動的商品 API，再理解相依與資料如何配置。"
 group: "ecommerce"
 order: 11
-linkedArticles: ["containers-image-runtime", "containers-compose", "dotnet-hosting", "dotnet-background-services"]
+linkedArticles: ["containers-image-runtime", "containers-compose", "dotnet-hosting", "dotnet-background-services", "networking-request-path", "dotnet-clr-jit", "dotnet-reflection"]
 prerequisites: ["ecommerce/testing-observability"]
 sources: [{"title": "Docker multi-stage build", "url": "https://docs.docker.com/build/building/multi-stage/"}, {"title": ".NET container images", "url": "https://learn.microsoft.com/en-us/dotnet/core/docker/container-images"}]
 ---

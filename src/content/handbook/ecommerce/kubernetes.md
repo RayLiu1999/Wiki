@@ -3,7 +3,7 @@ title: "12 在本機 Kubernetes 執行商品 API"
 description: "用兩個 Pod、Service 與 port-forward 理解期望狀態和流量。"
 group: "ecommerce"
 order: 12
-linkedArticles: ["kubernetes-workloads", "kubernetes-services-gateway", "kubernetes-probes-resources"]
+linkedArticles: ["kubernetes-workloads", "kubernetes-services-gateway", "kubernetes-probes-resources", "kubernetes-storage"]
 prerequisites: ["ecommerce/containers"]
 sources: [{"title": "kind quick start", "url": "https://kind.sigs.k8s.io/docs/user/quick-start/"}, {"title": "Deployments", "url": "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/"}]
 ---

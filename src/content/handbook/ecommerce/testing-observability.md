@@ -3,7 +3,7 @@ title: "10 行為測試與端到端觀測"
 description: "以商品、訂單和通知結果證明正常流程與失敗恢復。"
 group: "ecommerce"
 order: 10
-linkedArticles: ["engineering-business-tests", "engineering-cache-messaging-tests", "engineering-metrics-tracing", "dotnet-profiling"]
+linkedArticles: ["engineering-business-tests", "engineering-cache-messaging-tests", "engineering-metrics-tracing", "dotnet-profiling", "engineering-integration-tests", "engineering-structured-logging"]
 prerequisites: ["ecommerce/reliable-events"]
 sources: [{"title": "OpenTelemetry .NET", "url": "https://opentelemetry.io/docs/languages/dotnet/"}, {"title": "RabbitMQ monitoring", "url": "https://www.rabbitmq.com/docs/monitoring"}]
 ---

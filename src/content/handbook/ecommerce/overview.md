@@ -10,6 +10,24 @@ sources: [{"title": "Microsoft modern web application architecture", "url": "htt
 
 從一個店家的商品查詢開始，逐步加入登入、購物車、訂單、模擬付款與通知，再把程序放上容器、Kubernetes 和 GKE（EKS 的差異另有說明）。每章先提出需求與規則，接著說明技術選擇及失敗邊界；深入知識透過篇末連結補充。
 
+## 系統全貌
+
+```mermaid
+flowchart LR
+    Buyer["買家"] --> LB["負載平衡器<br/>GKE Gateway"]
+    LB --> API["商品／訂單 API<br/>ASP.NET Core"]
+    API --> Redis[("Redis<br/>商品快取")]
+    API --> DB[("PostgreSQL<br/>商品、訂單、Outbox")]
+    API -->|"付款請求"| Pay["付款服務（模擬）"]
+    Pay -->|"簽章回呼"| API
+    DB --> Pub["Outbox 發布器"]
+    Pub --> MQ[("RabbitMQ")]
+    MQ --> Worker["通知 Worker<br/>Inbox 去重"]
+    Worker --> DB
+```
+
+API 與 Worker 都跑在 Kubernetes（GKE）上；資料庫、快取與訊息佇列在主線中分別使用 Cloud SQL、Memorystore 與自建的 RabbitMQ。每一章會放大這張圖的其中一塊。
+
 ## 章節順序
 
 | 章 | 情境與目標 |

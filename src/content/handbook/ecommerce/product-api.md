@@ -3,7 +3,7 @@ title: "02 商品 API 與 HTTP 契約"
 description: "把商品查詢、價格更新和錯誤回應寫成清楚的端點契約。"
 group: "ecommerce"
 order: 2
-linkedArticles: ["aspnet-core-http-contracts", "aspnet-core-routing", "aspnet-core-model-binding", "aspnet-core-filters", "data-access-concurrency", "data-access-csharp-connections", "data-access-mysql-dotnet", "data-access-postgresql-dotnet"]
+linkedArticles: ["aspnet-core-http-contracts", "aspnet-core-routing", "aspnet-core-model-binding", "aspnet-core-filters", "data-access-concurrency", "data-access-csharp-connections", "data-access-mysql-dotnet", "data-access-postgresql-dotnet", "aspnet-core-dependency-injection", "aspnet-core-rate-limiting", "aspnet-core-api-versioning", "aspnet-core-api-styles-aot", "csharp-async-await", "csharp-cancellation-disposable", "architecture-application-patterns", "architecture-clean-architecture", "architecture-cross-cutting", "data-access-tracking"]
 prerequisites: ["ecommerce/catalog"]
 sources: [{"title": "Microsoft modern web application architecture", "url": "https://learn.microsoft.com/en-us/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures"}]
 ---

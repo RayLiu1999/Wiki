@@ -3,7 +3,7 @@ title: "14 進入 GKE 與外部資料服務"
 description: "把本機模型接到 GCP 身分、Registry、網路、Gateway 與資料端點。"
 group: "ecommerce"
 order: 14
-linkedArticles: ["gke-platform-modes", "gke-workload-identity", "gke-gateway-networking", "gke-data-services"]
+linkedArticles: ["gke-platform-modes", "gke-workload-identity", "gke-gateway-networking", "gke-data-services", "cloud-service-mapping", "eks-platform-modes", "eks-pod-identity", "eks-load-balancing", "eks-data-services"]
 prerequisites: ["ecommerce/configuration"]
 sources: [{"title": "GKE modes", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/choose-cluster-mode"}, {"title": "Cloud SQL with GKE", "url": "https://docs.cloud.google.com/sql/docs/postgres/connect-kubernetes-engine"}]
 ---
@@ -25,6 +25,10 @@ Cloud SQL Auth Proxy 可以提供授權與安全連線，不會代替應用的 c
 初次部署先用 port-forward 驗證 API，確認映像與程序正常。正式入口再配置 Gateway／HTTPRoute、DNS、TLS 與健康檢查。GKE 的負載平衡器可透過 NEG 轉送到 Pod；Controller 負責配置，不是所有請求經過的代理。
 
 readiness 與雲端負載平衡健康是兩層檢查。如果 API 使用`/health/ready`，要核對 HealthCheckPolicy 與平台支援設置。
+
+## 在 EKS 上的差異
+
+主線以 GKE 為例；在 AWS 上，叢集換成 EKS、Pod 身分換成 Pod Identity、入口換成 AWS Load Balancer Controller 建立的 ALB、資料服務換成 RDS（搭配 RDS Proxy）、ElastiCache 與 Amazon MQ。兩邊的對應與名稱相近但行為不同的地方，見 [GCP 與 AWS 服務對照](/platforms/eks/cloud-service-mapping/)；各元件的細節見 [EKS 主題](/platforms/eks/)。
 
 ## 可檢驗的結果
 

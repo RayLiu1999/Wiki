@@ -3,7 +3,7 @@ title: "06 模擬付款與狀態轉移"
 description: "處理付款未知結果、重複回呼與訂單一致性，建立可測試的假付款流程。"
 group: "ecommerce"
 order: 6
-linkedArticles: ["aspnet-core-http-client-factory", "aspnet-core-http-resilience", "data-access-transactions", "architecture-communication-boundaries", "engineering-business-tests"]
+linkedArticles: ["aspnet-core-http-client-factory", "aspnet-core-http-resilience", "data-access-transactions", "architecture-communication-boundaries", "engineering-business-tests", "security-webhook-signatures", "csharp-valuetask-tcs", "dotnet-time-zones"]
 prerequisites: ["ecommerce/ordering-inventory"]
 sources: [{"title": "Microsoft modern web application architecture", "url": "https://learn.microsoft.com/en-us/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures"}]
 ---
@@ -27,6 +27,10 @@ HttpClientFactory 管理 handler 與連線；resilience 策略管理逾時與特
 模擬提供者應能穩定製造成功、明確拒絕、暫時失敗、結果未知與重複回呼。測試應核對最終狀態、事件數量與唯一業務結果，而不是只驗證某個方法呼叫次數。
 
 這裡只討論假付款設計，尚未接入真實支付或提供模擬付款項目。輸入銀行卡資料、真實金流合規與商家結算不在本階段範圍。
+
+## 回呼是不是真的
+
+付款服務的回呼打到一個公開的端點，任何人都能送出看起來一樣的請求。處理前先驗證簽章（以原始請求內容計算 HMAC、固定時間比較）、檢查時間戳避免舊通知被重放，再以交易識別去重；最後向付款服務的查詢介面確認實際狀態，才把訂單改成已付款。做法見 [Webhook 簽章驗證](/security/webhook-signatures/)。
 
 ## 驗證案例
 
