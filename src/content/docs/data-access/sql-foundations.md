@@ -76,7 +76,7 @@ EF Core 寫 `o.CreatedAt.Date == day` 也會被翻譯成類似的函式呼叫。
 SELECT id, name FROM products WHERE name LIKE '%保溫杯%';
 ```
 
-`LIKE '保溫%'`（只有結尾萬用字元）可以用索引；中間或開頭的比對要改用全文檢索，例如 PostgreSQL 的 `tsvector` 與 GIN 索引。
+`LIKE '保溫%'`（只有結尾萬用字元）可以用索引；中間或開頭的比對要改用 trigram 索引或全文檢索，見 [商品搜尋](/data-access/product-search/)。
 
 ### 3. 欄位和參數的型別不一致
 
