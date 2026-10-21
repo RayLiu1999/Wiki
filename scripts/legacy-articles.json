@@ -8,9 +8,5 @@
   "platforms/dotnet/reflection.md",
   "platforms/dotnet/sdk-packages.md",
   "platforms/dotnet/threadpool.md",
-  "platforms/dotnet/time-zones.md",
-  "platforms/gke/data-services.md",
-  "platforms/gke/gateway-networking.md",
-  "platforms/gke/platform-modes.md",
-  "platforms/gke/workload-identity.md"
+  "platforms/dotnet/time-zones.md"
 ]

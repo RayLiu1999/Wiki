@@ -1,158 +1,132 @@
 ---
-title: "GKE 工作負載身分與 IAM"
-description: "分清買家登入、Kubernetes RBAC、Pod 雲端授權與 CI 身分聯邦。"
+title: "GKE 工作負載身分：讓 Pod 用自己的身分存取 GCP，不放金鑰"
+description: "說明 Workload Identity Federation for GKE 如何讓 Kubernetes ServiceAccount 取得 GCP 權限、為什麼不要下載服務帳號金鑰或共用節點身分，以及四種常被混淆的身分。"
 articleId: "gke-workload-identity"
 topic: "gke"
 category: "gke-platform"
 order: 2
-tags: ["GKE 工作負載身分與 IAM", "gke"]
+tags: ["GKE", "Workload Identity Federation", "IAM", "ServiceAccount", "服務帳號金鑰"]
+articleType: "deep-dive"
 difficulty: "advanced"
 prerequisites: ["kubernetes-configuration-security"]
-relatedArticles: ["aspnet-core-authentication", "engineering-ci-cd"]
-applicableVersions: "依 2026-10-08 的 Google Cloud／Kubernetes 官方文件核對；可用功能、地區與費率以實際平台為準。"
-lastReviewed: "2026-10-10"
-takeaway: "分清買家登入、Kubernetes RBAC、Pod 雲端授權與 CI 身分聯邦。"
-sources: [{"title": "WIF for GKE", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity"}, {"title": "Configure workload access", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/how-to/workload-identity"}, {"title": "CI deployment federation", "url": "https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines"}]
+relatedArticles: ["eks-pod-identity", "gke-data-services", "engineering-ci-cd"]
+applicableVersions: "依 2026-10 的 GKE 與 Google Cloud IAM 官方文件；Google Cloud 用戶端程式庫現行版本。"
+lastReviewed: "2026-10-21"
+takeaway: "每個工作負載一個 Kubernetes ServiceAccount，直接在 IAM 授權給它；不要下載服務帳號 JSON 金鑰，也不要讓應用程式使用節點的身分。"
+sources:
+  - title: "GKE：Workload Identity Federation for GKE"
+    url: "https://cloud.google.com/kubernetes-engine/docs/concepts/workload-identity"
+  - title: "GKE：設定 Workload Identity Federation for GKE"
+    url: "https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity"
+  - title: "Google Cloud：服務帳號金鑰的最佳做法"
+    url: "https://cloud.google.com/iam/docs/best-practices-for-managing-service-account-keys"
+  - title: "Google Cloud：Application Default Credentials"
+    url: "https://cloud.google.com/docs/authentication/application-default-credentials"
 ---
 
-當 ASP.NET Core 微服務部署在 GKE 上時，應用程式經常需要與 Google Cloud 的原生代管服務互動（例如向 Secret Manager 讀取金流私鑰、將訂單發票 PDF 上傳至 Cloud Storage、或是透過 Pub/Sub 派發事件）。如何讓容器內的程式以安全、無密碼且最小權限的方式取得 Google Cloud IAM 授權，是雲端原生架構中至關重要的安全防線。
+## 這是什麼
 
-## 案發現場
+訂單 API 要把發票 PDF 寫進 Cloud Storage、從 Secret Manager 讀取機密、以 IAM 驗證連 Cloud SQL，都需要 GCP 的權限。最直覺的做法是下載一個服務帳號的 JSON 金鑰放進 Secret，但這把金鑰不會過期，外洩了誰都能拿來用。
 
-某電商企業在一次第三方資安合規紅隊演練中，被揭露了災難性的權限控制漏洞：
+**Workload Identity Federation for GKE** 讓 Pod 以自己的 Kubernetes ServiceAccount 身分，向 GCP 換取短期的存取權杖。你在 IAM 上直接授權給這個 ServiceAccount，程式裡不需要任何金鑰。
 
-1. **長期靜態 JSON 私鑰洩漏**：開發人員為了讓訂單 API 能上傳發票至 Cloud Storage，在 GCP 控制台下載了 Google 服務帳號（GSA）的長期私鑰檔案（`sa-key.json`），並將其轉為 Kubernetes Secret 掛載進容器。半年後，這把未設定過期機制的私鑰在兼職工程師的個人筆電備份中遭到外洩，攻擊者直接利用該金鑰讀取了包含數百萬筆顧客交易紀錄的儲存貯體（Bucket）。
-2. **節點權限過大被 Pod 橫向竊取**：團隊在建立 GKE Standard 叢集時，未指定專用服務帳號，節點預設繼承了 Google Compute Engine 的預設服務帳號；而維運人員因圖省事，直接給該預設帳號授予了專案層級的 `Editor` 權限。某個存在套件漏洞的前台商品查詢 Pod 被植入 WebShell 後，攻擊者直接向節點本機 Link-local 位址 `http://169.254.169.254/computeMetadata/v1/` 發起查詢，成功取得了擁有全專案編輯權限的 Access Token！
-3. **身分層級模糊與職責混亂**：技術團隊將四種截然不同的身分機制混為一談：將前台買家的 JWT 權限、Kubernetes RBAC 內部權限、Google Cloud IAM 雲端權限以及 CI/CD Pipeline 部署身分綁定在一起，導致單一身分異常時引發連鎖失控。
+## 運作原理
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    participant Pod as ASP.NET Core Pod (KSA)
-    participant Meta as GKE GKE Workload Identity (169.254.169.254)
-    participant OIDC as GKE OIDC Provider (Google Cloud)
-    participant IAM as Google Cloud IAM (GSA)
-    participant GCS as Cloud Storage / Secret Manager
-
-    Pod->>Meta: 請求 Google OAuth2 Access Token
-    Meta->>OIDC: 驗證 Pod 注入的 KSA Token
-    OIDC->>IAM: 驗證身分聯邦綁定 (roles/iam.workloadIdentityUser)
-    IAM->>Meta: 簽發短期 GSA Access Token (有效限 1 小時)
-    Meta->>Pod: 回傳短期 Token (完全無靜態私鑰)
-    Pod->>GCS: 攜帶 Token 存取雲端 API (發票上傳 / 機密讀取)
+    participant Pod as 訂單 API Pod（KSA：order-api）
+    participant MD as GKE metadata server（節點上）
+    participant STS as Google STS
+    participant GCS as Cloud Storage
+    Pod->>MD: 用戶端程式庫要求權杖（Application Default Credentials）
+    MD->>STS: 以 KSA 的身分交換
+    STS-->>MD: 短期存取權杖
+    MD-->>Pod: 權杖
+    Pod->>GCS: 寫入 invoices/...（IAM 檢查這個 KSA 的權限）
 ```
 
-## 反模式與正確解法
+Google Cloud 的用戶端程式庫會依 **Application Default Credentials** 的順序尋找憑證。在啟用了工作負載身分的 GKE 上，Pod 的請求會被導向節點上的 GKE metadata server，由它代表這個 Pod 的 Kubernetes ServiceAccount 取得權杖。
 
-### 反模式一：下載並掛載長期靜態服務帳號 JSON 私鑰
+IAM 中可以直接以 principal 的形式授權給某個 Namespace 中的某個 ServiceAccount，例如：
+`principal://iam.googleapis.com/projects/<專案編號>/locations/global/workloadIdentityPools/<專案 ID>.svc.id.goog/subject/ns/shop/sa/order-api`
 
-在容器中掛載 `sa-key.json` 具有極高的營運風險：私鑰不會自動過期、缺乏自動輪替機制、容易被打包進 Docker 映像檔或外洩至日誌與備份中。
+Autopilot 叢集預設啟用工作負載身分；Standard 叢集要在叢集與節點池上啟用。
 
-#### 正確解法：全面啟用 Workload Identity Federation for GKE
+## 常見錯誤與正確寫法
 
-徹底淘汰任何靜態私鑰，透過 GKE 原生身分聯邦，將 Kubernetes ServiceAccount（KSA）與 Google 服務帳號（GSA）雙向綁定：
-1. **建立專屬 GSA 並授予最小雲端權限**：
-```bash
-# 建立專為訂單 API 設計的 Google 服務帳號
-gcloud iam service-accounts create order-api-gsa \
-    --project=ecommerce-prod-project
+### 1. 下載服務帳號金鑰放進 Secret
 
-# 授予讀取指定 Secret 的權限（而非全專案 Secret Manager Admin）
-gcloud secrets add-iam-policy-binding payment-gateway-secret \
-    --member="serviceAccount:order-api-gsa@ecommerce-prod-project.iam.gserviceaccount.com" \
-    --role="roles/secretmanager.secretAccessor"
-```
-
-2. **建立專屬 KSA 並建立雙向聯邦信任**：
-```bash
-# 允許 KSA 模擬該 GSA
-gcloud iam service-accounts add-iam-policy-binding \
-    order-api-gsa@ecommerce-prod-project.iam.gserviceaccount.com \
-    --role="roles/iam.workloadIdentityUser" \
-    --member="serviceAccount:ecommerce-prod-project.svc.id.goog[ecommerce-prod/order-api-ksa]"
-```
-
-3. **在 Kubernetes ServiceAccount 上加上 Annotation**：
-```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: order-api-ksa
-  namespace: ecommerce-prod
-  annotations:
-    iam.gke.io/gcp-service-account: order-api-gsa@ecommerce-prod-project.iam.gserviceaccount.com
-```
-
-4. **在 Deployment 中指定該 ServiceAccount**：
-```yaml
-spec:
-  template:
-    spec:
-      serviceAccountName: order-api-ksa
-      containers:
-      - name: api
-        image: ecommerce-registry.internal/order-api:v2.1.0
-```
-
-ASP.NET Core 應用程式在呼叫官方 Google Cloud SDK（例如 `SecretManagerServiceClient.Create()`）時，SDK 會全自動感知當前環境並向 GKE Metadata Server 請求短期 Token，程式碼中完全不需要任何金鑰路徑！
-
-### 反模式二：依賴節點預設服務帳號，所有工作負載共用節點身分
-
-未啟用 Workload Identity 時，Pod 發起的雲端請求會 fallback 至底層虛擬機節點的 Compute Engine 預設服務帳號。這會導致叢集內所有的 Pod（包括低安全等級的內部測試工具）都繼承了相同的節點身分，違背最小權限原則。
-
-#### 正確解法：隔離節點身分與工作負載身分
-
-- 叢集建立時強制啟用 Workload Identity（Autopilot 預設啟用）。
-- 節點池本身的服務帳號僅配置節點基礎運作所需的最小角色（如 `roles/logging.logWriter`、`roles/monitoring.metricWriter`、`roles/artifactregistry.reader`）。
-- 應用程式一律透過專屬 KSA 綁定 GSA，彼此權限嚴格隔離。
-
-### 反模式三：混淆四大身分體系邊界
-
-| 身分體系 | 驗證主體 | 授權邊界 | 電商實例 |
-| :--- | :--- | :--- | :--- |
-| **應用使用者身分** | 外部買家 / 顧客 | 業務 API 授權 (ASP.NET Core JWT / OAuth2) | 檢查買家是否有權查看 `/orders/12345` |
-| **Kubernetes RBAC** | 內部 Pod / 維運人員 | Kubernetes API Server 資源 (Pods, ConfigMaps) | 控制器是否有權更新 Deployment 狀態 |
-| **Google Cloud IAM** | 雲端資源工作負載 (GSA) | Google Cloud API (Cloud Storage, BigQuery) | 訂單 API 是否有權讀取 Secret Manager |
-| **CI/CD Pipeline 聯邦** | GitHub Actions / GitLab | GCP 部署發布權限 (Workload Identity Federation) | CI Pipeline 是否有權推送映像並執行發布 |
-
-四大身分各有明確職責，絕對不可互相借道混用。
-
-## 踩坑與避坑指南
-
-### 1. 雙向綁定設定的命名空間與名稱拼寫錯誤
-Workload Identity 需要「GSA 的 IAM Policy 允許 KSA」以及「KSA 的 Annotation 指向 GSA」**兩端同時成立**。
-- `serviceAccount:<PROJECT_ID>.svc.id.goog[<NAMESPACE>/<KSA_NAME>]` 格式中，若 Namespace 拼寫錯誤，或忘記加上 `.svc.id.goog`，Pod 呼叫雲端 API 時將收到 HTTP 403 `Caller does not have required permission`。
-
-### 2. NetworkPolicy 誤擋 Link-local Metadata 位址（169.254.169.254）
-若在 Namespace 中宣告了嚴格的 `NetworkPolicy` 限制 Egress 出站流量，而未白名單放行 GKE 節點本機 Metadata Server（`169.254.169.254:80`），Google Cloud C# SDK 將無法與身分代理通訊，導致請求在連線階段拋出 `HttpRequestException: Connection timed out`。
-- **避坑建議**：限制出站時，必須在 Egress 規則中放行至 `169.254.169.254/32` 的 Port 80。
-
-### 3. 本機偵錯與雲端部署的環境變數干擾
-在本地開發時，工程師常透過環境變數 `GOOGLE_APPLICATION_CREDENTIALS` 指向本機的 JSON 憑證。當容器映像部署到 GKE 上時，若環境變數中依然殘留此路徑且檔案不存在，Google SDK 會直接拋出檔案找不到例外，而不會 fallback 到 Workload Identity。
-- **避坑建議**：在正式環境部署 YAML 中，嚴格禁止宣告 `GOOGLE_APPLICATION_CREDENTIALS` 環境變數。
-
-## 線上排查指令
-
-針對 GKE 工作負載身分授權失敗與 Token 異常，使用下列指令排查：
+金鑰長期有效，任何能讀到 Secret 的人都能使用，輪替也很麻煩。改成直接授權給 Kubernetes ServiceAccount：
 
 ```bash
-# 1. 檢視 Kubernetes ServiceAccount 的 Annotation 是否精確指向目標 GSA
-kubectl describe sa order-api-ksa -n ecommerce-prod
-
-# 2. 檢視 Google Service Account 上的 IAM 信任政策（確認 WorkloadIdentityUser 綁定）
-gcloud iam service-accounts get-iam-policy \
-    order-api-gsa@ecommerce-prod-project.iam.gserviceaccount.com
-
-# 3. 進入 Pod 內部排查能否正常取得 GSA 關聯身分（確認回傳非節點預設帳號）
-kubectl exec -it deploy/order-api -n ecommerce-prod -- \
-    curl -s -H "Metadata-Flavor: Google" \
-    http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/email
-
-# 4. 進入 Pod 內部排查短期 OAuth2 Access Token 簽發是否正常
-kubectl exec -it deploy/order-api -n ecommerce-prod -- \
-    curl -s -H "Metadata-Flavor: Google" \
-    http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token
-
-# 5. 驗證 GSA 對目標雲端資源（如 Secret Manager）是否具備足夠 IAM 角色
-gcloud secrets get-iam-policy payment-gateway-secret
+# 讓 shop 命名空間的 order-api ServiceAccount 可以寫入發票 bucket
+gcloud storage buckets add-iam-policy-binding gs://shop-invoices \
+  --role=roles/storage.objectCreator \
+  --member="principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/shop-prod.svc.id.goog/subject/ns/shop/sa/order-api"
 ```
+
+Deployment 指定 `serviceAccountName: order-api`；程式使用預設的憑證即可：
+
+```csharp
+// 套件：Google.Cloud.Storage.V1
+// 不傳任何憑證：用戶端程式庫依 Application Default Credentials 取得工作負載身分的權杖
+builder.Services.AddSingleton(_ => StorageClient.Create());
+```
+
+### 2. 所有應用程式共用節點的服務帳號
+
+應用程式靠節點的服務帳號存取 GCP，代表同一個節點上的所有 Pod 都有相同的權限。被入侵一個 Pod，就拿到了所有服務的權限。每個工作負載各自一個 Kubernetes ServiceAccount，只授權它需要的資源與動作。
+
+### 3. 把不同的身分混為一談
+
+| 身分 | 用途 | 管理位置 |
+| --- | --- | --- |
+| 買家／店家帳號 | 誰在使用 API | 身分服務、JWT，見 [驗證與授權](/security/authentication/) |
+| Kubernetes RBAC | 誰能操作 Kubernetes API | Role、RoleBinding |
+| 工作負載身分 | Pod 能存取哪些 GCP 資源 | IAM 授權給 Kubernetes ServiceAccount |
+| CI 的身分 | 部署流程能推映像、改叢集 | Workload Identity Federation（GitHub OIDC），見 [CI/CD](/engineering/ci-cd/) |
+
+「Pod 有 GCP 權限」不代表「Pod 能操作 Kubernetes」，反之亦然；每一種身分都要各自以最小權限設定。
+
+## 使用邊界
+
+- 部分 GCP 服務或舊版函式庫對直接授權給 Kubernetes ServiceAccount 的支援有限，這時可以改用「Kubernetes ServiceAccount 扮演 IAM 服務帳號」的做法（以 `iam.gke.io/gcp-service-account` 註記連結），細節見官方文件。
+- 使用 NetworkPolicy 限制對外連線時，要允許 Pod 連到 metadata server，否則取不到權杖。
+- AWS 上對應的機制是 EKS Pod Identity，見 [EKS Pod Identity](/platforms/eks/pod-identity/)。
+
+## 雲端排查
+
+### 叢集層（GKE 與 EKS 相同）
+
+```bash
+# Pod 使用的 ServiceAccount
+kubectl get pod <pod-name> -n shop -o jsonpath='{.spec.serviceAccountName}'
+```
+
+### 託管服務層
+
+#### GKE
+
+```bash
+# 叢集是否啟用工作負載身分（輸出應為 <專案 ID>.svc.id.goog）
+gcloud container clusters describe shop --region=asia-east1 \
+  --format='value(workloadIdentityConfig.workloadPool)'
+
+# 用同一個 ServiceAccount 啟動臨時 Pod，確認拿到的身分與權限
+kubectl run wi-test -n shop --rm -it --image=google/cloud-sdk:slim \
+  --overrides='{"spec":{"serviceAccountName":"order-api"}}' -- \
+  gcloud auth print-access-token --quiet > /dev/null && echo "取得權杖成功"
+
+# 某個資源上有哪些授權
+gcloud storage buckets get-iam-policy gs://shop-invoices
+```
+
+取得權杖成功但存取資源被拒（`403 PERMISSION_DENIED`），問題在 IAM 授權的 principal 字串或角色；連權杖都取不到，問題在叢集或節點池沒有啟用工作負載身分，或 NetworkPolicy 擋住了 metadata server。
+
+#### EKS
+
+Pod Identity 的關聯與信任政策檢查，見 [EKS Pod Identity](/platforms/eks/pod-identity/)的雲端排查。
+
+### 應用程式層
+
+應用程式日誌中的 `PermissionDenied` 例外通常會帶出被拒絕的資源與權限名稱；把它和 IAM 授權對照，就知道少了哪一個角色。

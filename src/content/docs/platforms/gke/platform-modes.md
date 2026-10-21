@@ -1,134 +1,141 @@
 ---
-title: "GCP 基礎與 GKE 模式選擇"
-description: "從 Project、IAM、VPC 和 Registry 走到 Autopilot、Standard 與管理責任。"
+title: "GKE 平台模式：Autopilot 與 Standard 怎麼選，叢集建立前要先決定什麼"
+description: "說明 GCP 的 Project、IAM、VPC 與 Artifact Registry 基本概念，比較 GKE Autopilot 與 Standard，並說明 VPC 原生網段、發布頻道與維護時段這些建立後很難改的決定。"
 articleId: "gke-platform-modes"
 topic: "gke"
 category: "gke-platform"
 order: 1
-tags: ["GCP 基礎與 GKE 模式選擇", "gke"]
-difficulty: "advanced"
+tags: ["GKE", "Autopilot", "Standard", "VPC-native", "發布頻道", "Artifact Registry"]
+articleType: "deep-dive"
+difficulty: "beginner"
 prerequisites: ["kubernetes-workloads"]
-relatedArticles: ["gke-workload-identity", "gke-gateway-networking"]
-applicableVersions: "依 2026-10-08 的 Google Cloud／Kubernetes 官方文件核對；可用功能、地區與費率以實際平台為準。"
-lastReviewed: "2026-10-10"
-takeaway: "從 Project、IAM、VPC 和 Registry 走到 Autopilot、Standard 與管理責任。"
-sources: [{"title": "GKE modes", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/choose-cluster-mode"}, {"title": "Autopilot workloads in Standard", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/about-autopilot-mode-standard-clusters"}, {"title": "Release channels", "url": "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/release-channels"}]
+relatedArticles: ["eks-platform-modes", "cloud-service-mapping", "gke-workload-identity"]
+applicableVersions: "依 2026-10 的 Google Kubernetes Engine 官方文件；可用功能、地區與費率以實際平台為準。"
+lastReviewed: "2026-10-21"
+takeaway: "沒有專職平台團隊時用 Autopilot；建立叢集前先規劃好 Pod 與 Service 的網段、選定發布頻道並設定維護時段，這些事後很難修改。"
+sources:
+  - title: "GKE：選擇叢集運作模式"
+    url: "https://cloud.google.com/kubernetes-engine/docs/concepts/choose-cluster-mode"
+  - title: "GKE：Autopilot 概觀"
+    url: "https://cloud.google.com/kubernetes-engine/docs/concepts/autopilot-overview"
+  - title: "GKE：VPC 原生叢集"
+    url: "https://cloud.google.com/kubernetes-engine/docs/concepts/alias-ips"
+  - title: "GKE：發布管道"
+    url: "https://cloud.google.com/kubernetes-engine/docs/concepts/release-channels"
+  - title: "GKE：維護時段與排除項目"
+    url: "https://cloud.google.com/kubernetes-engine/docs/concepts/maintenance-windows-and-exclusions"
+  - title: "Artifact Registry：存取控制"
+    url: "https://cloud.google.com/artifact-registry/docs/access-control"
 ---
 
-當電商後端應用程式從本機 Docker Compose 邁向 Google Cloud (GCP) 上線時，我們面臨的第一個核心架構抉擇就是：如何組織 Google Cloud 資源階級，以及應選擇 **GKE Autopilot** 還是 **GKE Standard** 叢集模式。這不僅僅是主機計費方式的差異，更直接決定了工程團隊在基礎設施、安全加固、節點維運與自動擴縮上的責任邊界（Shared Responsibility Model）。
+## 這是什麼
 
-## 案發現場
+**GKE**（Google Kubernetes Engine）是 Google Cloud 的受管 Kubernetes。在使用它之前，先認識 GCP 的幾個基本單位：
 
-某電商技術團隊為了將核心交易系統遷移至 Google Kubernetes Engine (GKE)，架構師選擇了傳統的 GKE Standard 模式，並自行配置節點池（Node Pool）。上線營運三個月後，連續發生多次重大非預期事故：
+- **Project**：資源、帳單與權限的隔離單位。正式環境與測試環境通常是不同的 Project。
+- **IAM**：誰可以對哪些資源做什麼。
+- **VPC**：私有網路。GCP 的 VPC 是全球性的，子網屬於某個區域。
+- **Artifact Registry**：存放容器映像的倉庫。
 
-1. **節點底層故障引發長時間掛死**：某個承載訂單 API 的實體節點發生底層硬體磁碟壞軌，由於團隊在建立 Standard 叢集時未開啟 `Node Auto-repair`（節點自動修復）與 `Node Auto-upgrade`，該節點陷入 `NotReady` 長達數小時，上面的 Pod 無法正常移轉，導致可用性嚴重受損。
-2. **單可用區維護引發全站停擺**：為了節省節點池跨可用區（Cross-AZ）網路傳輸費用，團隊將 GKE Standard 節點池建立在單一可用區（`asia-east1-a`）。當 Google Cloud 針對該可用區進行機房底層維護時，整個叢集瞬間失去所有運算節點，造成全站停擺長達 40 分鐘。
-3. **Route-based 舊式網路導致 IP 枯竭與轉發延遲**：建立叢集時使用了舊版的 Route-based 網路（而非 VPC-native），Pod IP 使用叢集內部私有覆蓋網路。隨著促銷活動副本擴展，Pod IP 迅速用盡；且外部負載平衡器無法直接定址 Pod，必須經由 NodePort 進行二次跳躍與 iptables SNAT，造成連線延遲顯著增加。
-4. **促銷前夕遭遇控制平面強制升級**：叢集未配置發布頻道（Release Channel）與維護視窗（Maintenance Window）。在特賣活動開跑前 30 分鐘，GKE 控制平面觸發自動版本升級，API Server 短暫無法響應，導致 HPA 自動擴縮容指令全面失敗。
+GKE 有兩種運作模式：
+
+- **Autopilot**：Google 管理節點，依 Pod 的 requests 配置運算資源，以 Pod 為單位計費。
+- **Standard**：你建立並管理節點池（node pool），選擇機型、數量與更新時機，以節點計費。
+
+## 運作原理
 
 ```mermaid
-flowchart TD
-    subgraph GCP["Google Cloud 專案架構 (Project / VPC)"]
-        IAM["IAM 權限管理 (最小權限)"]
-        AR["Artifact Registry (容器映像倉庫)"]
-        VPC["VPC-native 網路 (Alias IP 次要網段)"]
-        
-        VPC --> ModeChoice{叢集架構選擇}
-        
-        ModeChoice -->|Google 全託管運算| Auto["GKE Autopilot 模式"]
-        Auto --> AutoCost["按 Pod 資源 Requests 計費<br/>自動節點修復、OS 安全防護、SLA 保障"]
-        
-        ModeChoice -->|自管虛擬機池| Std["GKE Standard 模式"]
-        Std --> StdCost["按 Compute Engine 虛擬機計費<br/>需自行維運 NodePool、手動設定 Auto-repair"]
+flowchart TB
+    subgraph Project["Project：shop-prod"]
+        subgraph VPC["VPC：shop-vpc（子網：asia-east1）"]
+            subgraph GKE["區域型 GKE 叢集"]
+                CP["控制平面（Google 管理）"]
+                Nodes["節點：Autopilot 自動配置／Standard 節點池"]
+            end
+            SQL[("Cloud SQL（私人 IP）")]
+        end
+        AR["Artifact Registry"]
     end
+    Nodes -->|"拉取映像"| AR
+    Nodes --> SQL
 ```
 
-## 反模式與正確解法
+**VPC 原生叢集**：Pod 從子網的「次要 IP 範圍」取得 IP，可以直接和 VPC 中的其他資源（Cloud SQL、Memorystore）互通。Pod 與 Service 的 IP 範圍在建立叢集時決定，範圍太小會限制叢集能容納的 Pod 數量，事後很難擴大。
 
-### 反模式一：缺乏專職維運團隊卻盲目選用 GKE Standard 模式
+**區域型叢集**：控制平面與節點分散在區域內的多個可用區，單一可用區故障時叢集仍可運作。正式環境建議使用區域型叢集。
 
-許多中小型團隊認為 GKE Standard「比較有控制感」，可以自由登入節點除錯、調整 Linux Kernel 參數與安裝任意 DaemonSet。然而，這意味著團隊必須承擔節點 OS 安全更新、節點自動修復、節點擴展器（Cluster Autoscaler）容量規劃、OS CVE 補丁與 CIS 基準安全加固等龐大負載，常常因為維運失誤造成節點崩潰。
+**發布頻道**：GKE 會自動升級叢集的 Kubernetes 版本。發布頻道（Rapid、Regular、Stable 等）決定升級的節奏；**維護時段**決定升級可以在什麼時間進行，**維護排除項目**可以在大促期間暫停升級。
 
-#### 正確解法：應用優先團隊全面採用 GKE Autopilot
+## 常見錯誤與正確寫法
 
-在 GKE Autopilot 模式下，Google Cloud 全權負責節點基礎設施的管理、安全防護與自動修補：
-1. **計費模型優化**：使用者僅針對 Pod 所宣告的 `requests`（CPU、記憶體、暫存儲存空間）付費，完全無需為未利用的節點閒置資源買單。
-2. **預設安全加固**：Autopilot 強制實施 GKE 安全最佳實踐（預設封鎖特權容器、開啟 Workload Identity、內建 Linux Capabilities 限制與安全審計）。
-3. **零維運節點池**：節點自動擴展、排程調度與自動修復全由平台演算法接手，無須手動配置 Node Pool。
+### 1. 沒有平台團隊卻選了 Standard
 
-只有在需要特殊 Linux 內核模組、客製 GPU 驅動，或必須運行特權 DaemonSet 的大型平臺團隊，才應選用 GKE Standard。
-
-### 反模式二：使用 Route-based 網路建立叢集，忽視次要網段規劃
-
-Route-based 叢集是舊世代的 Kubernetes 網路實作，依賴 VPC 路由表進行封包路由，限制了叢集節點上限（最多 250 個節點），且 Pod IP 無法被 Google Cloud 虛擬私有雲（VPC）其他原生服務（如 Cloud SQL、外部負載平衡器）直接定址。
-
-#### 正確解法：強制使用 VPC-native（Alias IP）並合理規劃 Secondary CIDR
-
-VPC-native 叢集利用 Google Cloud VPC Alias IP 機制，將 VPC 次要 IP 網段直接分配給 Pod：
-1. **容器原生負載平衡**：外部負載平衡器可透過獨立網路端點群組（NEG）直接將封包送到 Pod IP，零額外轉發跳躍。
-2. **次要網段空間規劃**：建立叢集前，必須在 VPC Subnet 內預先規劃足夠大的次要 IP 區段（例如 Pod 網段分配 `/18` 容納 16,384 個 IP，Service 網段分配 `/20` 容納 4,096 個 IP），避免日後業務擴張時 IP 枯竭：
+Standard 模式要自己決定節點機型、管理節點池的擴縮與升級、處理節點的安全設定。對以應用程式為主的團隊來說，這些工作很容易被忽略，直到某次升級或容量不足才發現。沒有特殊需求（GPU、特定機型、節點層級的自訂設定）時，選 Autopilot：
 
 ```bash
-# 建立包含充裕次要網段的 Subnet
-gcloud compute networks subnets create gke-subnet-prod \
-    --network=ecommerce-vpc \
-    --region=asia-east1 \
-    --range=10.10.0.0/20 \
-    --secondary-range=gke-pods=10.20.0.0/16,gke-services=10.30.0.0/20
+gcloud container clusters create-auto shop \
+  --region=asia-east1 \
+  --network=shop-vpc --subnetwork=shop-gke \
+  --cluster-secondary-range-name=pods \
+  --services-secondary-range-name=services \
+  --release-channel=regular
 ```
 
-### 反模式三：未配置發布頻道與維護時段，導致非預期升級中斷
+### 2. 網段規劃太小
 
-依賴 Static（靜態）版本且未宣告維護時段，會讓 GKE 在 Google 發布重大安全性補丁時，於非預期的任意時間（甚至在大促活動進行中）觸發強制更新，造成節點輪流重開機。
+大促時 Pod 數暴增，新的 Pod 拿不到 IP。建立叢集前，依「節點數上限 × 每個節點的 Pod 數」規劃 Pod 的次要範圍，並預留成長空間；Service 的範圍也要足夠。
 
-#### 正確解法：配置發布頻道（Release Channel）與維護排除視窗
+### 3. 沒設定維護時段，升級發生在尖峰
 
-- **Release Channel**：正式環境建議選用 `Regular`（平衡新功能與穩定性）或 `Stable`（經過廣泛驗證、變動頻率最低）。
-- **維護時段（Maintenance Window）**：設定允許升級的時間區段（例如每週二凌晨 02:00 ~ 06:00）。
-- **維護排除期（Maintenance Exclusion）**：在周年慶、雙十一等重大行銷活動期間，設定長達數週的全面禁止升級視窗：
+自動升級在營業時間進行，節點輪流被替換，Pod 被重新排程。設定維護時段在離峰，並在大促前加上維護排除項目：
 
 ```bash
-# 為 GKE 叢集設定固定維護時段
-gcloud container clusters update ecommerce-prod-cluster \
-    --region=asia-east1 \
-    --maintenance-window-start=2026-10-15T02:00:00Z \
-    --maintenance-window-duration=4h \
-    --maintenance-window-recurrence="FREQ=WEEKLY;BYDAY=TU"
+gcloud container clusters update shop --region=asia-east1 \
+  --maintenance-window-start=2026-01-01T18:00:00Z \
+  --maintenance-window-end=2026-01-01T22:00:00Z \
+  --maintenance-window-recurrence="FREQ=WEEKLY;BYDAY=TU,WE,TH"
 ```
 
-## 踩坑與避坑指南
+配合 PodDisruptionBudget，升級時才不會一次移走所有副本，見 [探針與安全停止](/platforms/kubernetes/probes-resources/)。
 
-### 1. Autopilot 模式下的資源配額自動調升（Resource Rounding）
-GKE Autopilot 為了確保節點排程穩定，對 Pod 的資源宣告設有強制規則：
-- 最低 CPU request 為 250m（0.25 vCPU）。
-- CPU 與 Memory 必須符合特定比率範圍（例如 1 vCPU 需搭配 1Gi 至 8Gi 記憶體）。
-- **避坑建議**：若你在 Deployment 中宣告了 `cpu: 50m, memory: 128Mi`，Autopilot 在接收入口時會**自動將其向上調升**至 `250m / 512Mi` 並以此計費！設計 YAML 時務必對齊 Autopilot 基準規範，避免帳單溢出。
+## 使用邊界
 
-### 2. Artifact Registry 映像拉取的跨專案授權
-當 GKE 叢集位於專案 `ecommerce-prod`，而共用映像倉庫 Artifact Registry 位於專案 `ecommerce-common` 時，GKE 節點的預設服務帳號在拉取映像時會遭到拒絕，出現 `ErrImagePull / ImagePullBackOff`。
-- **避坑建議**：必須在 Artifact Registry 所在專案中，將 `roles/artifactregistry.reader` 角色授予 GKE 叢集服務帳號（或 Workload Identity 服務帳號）。
+- **Autopilot 依 Pod 的 requests 計費**，並會依規則調整 requests（例如最小值、CPU 與記憶體的比例）。requests 設太高就是多付錢，設太低則可能被節流，依實測調整。
+- 節點拉取映像需要 Artifact Registry 的讀取權限；映像放在另一個 Project 時，要另外授權。
+- AWS 上對應的選擇是 EKS Auto Mode 與受管節點群組，見 [EKS 平台模式](/platforms/eks/platform-modes/)。
 
-### 3. 多可用區（Multi-Zonal）與區域型（Regional）叢集差異
-- **單一可用區叢集（Single-Zone）**：控制平面與節點都在同一個機房，若該可用區維護即全線中斷，僅適合開發測試。
-- **區域型叢集（Regional）**：控制平面具備三份副本分散在三個可用區，節點池亦跨多可用區分佈。**所有生產環境必須強制採用 Regional 叢集**，確保單一機房斷電時服務不中斷。
+## 雲端排查
 
-## 線上排查指令
-
-針對 GKE 叢集狀態、節點自動修復與雲端操作歷程，維運人員可使用下列指令排查：
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-# 1. 檢視目前專案下所有 GKE 叢集模式、版本與執行狀態
-gcloud container clusters list
-
-# 2. 深入查詢叢集詳細規格（包含 Release Channel、維護時段與次要網段）
-gcloud container clusters describe ecommerce-prod-cluster --region=asia-east1
-
-# 3. 檢視 VPC 子網路與次要 IP 區段（Secondary Ranges）剩餘容量
-gcloud compute networks subnets describe gke-subnet-prod --region=asia-east1
-
-# 4. 檢查 GKE 節點狀態與所屬節點池（Node Pool）標籤
-kubectl get nodes -o wide -L cloud.google.com/gke-nodepool,topology.kubernetes.io/zone
-
-# 5. 查看當前正在背景執行的 GKE 平台操作（排查控制平面升級或節點自動修復中）
-gcloud container operations list --filter="STATUS=RUNNING" --sort-by='~startTime'
+kubectl get nodes -o wide
+kubectl get events -A --sort-by=.lastTimestamp | tail -20
 ```
+
+### 託管服務層
+
+#### GKE
+
+```bash
+# 叢集模式、版本、發布頻道與維護設定
+gcloud container clusters describe shop --region=asia-east1 \
+  --format='value(autopilot.enabled,currentMasterVersion,releaseChannel.channel,maintenancePolicy)'
+
+# 最近的叢集操作（升級、修復）
+gcloud container operations list --filter="targetLink~clusters/shop" --limit=10
+
+# 叢集可用的 Pod IP 範圍
+gcloud container clusters describe shop --region=asia-east1 \
+  --format='value(ipAllocationPolicy.clusterIpv4CidrBlock,ipAllocationPolicy.servicesIpv4CidrBlock)'
+```
+
+`ImagePullBackOff` 且錯誤訊息提到權限，檢查節點使用的服務帳號是否有該 Artifact Registry 的 `roles/artifactregistry.reader`。
+
+#### EKS
+
+叢集版本、節點群組與子網 IP 的檢查，見 [EKS 平台模式](/platforms/eks/platform-modes/)的雲端排查。
+
+### 應用程式層
+
+升級期間 Pod 會被重新排程；應用程式日誌中「收到 SIGTERM」的時間與叢集操作的時間吻合，就能確認中斷來自維護，而不是程式本身的問題。
