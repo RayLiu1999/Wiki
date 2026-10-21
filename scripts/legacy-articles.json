@@ -1,7 +1,4 @@
 [
-  "data-access/load-validation.md",
-  "data-access/partitioning-sharding.md",
-  "data-access/replication-recovery.md",
   "engineering/business-tests.md",
   "engineering/cache-messaging-tests.md",
   "engineering/ci-cd.md",
