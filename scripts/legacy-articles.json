@@ -1,7 +1,4 @@
 [
-  "infrastructure/containers-networking/compose.md",
-  "infrastructure/containers-networking/image-runtime.md",
-  "infrastructure/containers-networking/request-path.md",
   "platforms/dotnet/background-services.md",
   "platforms/dotnet/clr-jit.md",
   "platforms/dotnet/gc-memory.md",

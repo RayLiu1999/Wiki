@@ -1,179 +1,108 @@
 ---
-title: "Compose 與本機服務邊界"
-description: "分清主機程序、容器網路、port 映射、volume 和服務就緒。"
+title: "Docker Compose：在本機把 API、資料庫、Redis 與 RabbitMQ 一起跑起來"
+description: "說明 Compose 如何定義多個容器、容器之間怎麼用服務名稱連線、depends_on 為什麼不等於「已經可以用」，以及具名 volume 與主機服務的位址。"
 articleId: "containers-compose"
 topic: "containers-networking"
 category: "containers"
 order: 2
-tags:
-  - "Compose 與本機服務邊界"
-  - "containers"
-difficulty: "advanced"
-prerequisites:
-  - "containers-image-runtime"
-relatedArticles: []
-applicableVersions: "以 Docker Compose v2 及 Docker 容器模型說明；.NET 10。"
-lastReviewed: "2026-10-10"
-takeaway: "分清主機程序、容器網路、port 映射、volume 和服務就緒。"
+tags: ["Docker Compose", "depends_on", "healthcheck", "volume", "本機開發"]
+articleType: "deep-dive"
+difficulty: "beginner"
+prerequisites: ["containers-image-runtime"]
+relatedArticles: ["networking-request-path", "engineering-integration-tests", "kubernetes-workloads"]
+applicableVersions: "Docker Compose v2.20 以上。"
+lastReviewed: "2026-10-21"
+takeaway: "容器之間用服務名稱連線，不是 localhost；depends_on 要搭配 healthcheck 才會等到服務真的可用；要保留的資料放具名 volume。"
+omitSections:
+  - section: "雲端排查"
+    reason: "Compose 只用於本機開發與 CI，不會部署到 GKE 或 EKS；雲端上的對應做法見 Kubernetes 主題。"
 sources:
-  - title: "Compose networking"
-    url: "https://docs.docker.com/compose/how-tos/networking/"
-  - title: "Compose startup order"
+  - title: "Docker：Compose file reference（services）"
+    url: "https://docs.docker.com/reference/compose-file/services/"
+  - title: "Docker：Control startup order（depends_on 與 healthcheck）"
     url: "https://docs.docker.com/compose/how-tos/startup-order/"
+  - title: "Docker：Networking in Compose"
+    url: "https://docs.docker.com/compose/how-tos/networking/"
+  - title: "Docker：Volumes"
+    url: "https://docs.docker.com/engine/storage/volumes/"
 ---
 
-## 案發現場
+## 這是什麼
 
-在現代雲原生微服務開發中，Docker Compose 是本機一鍵拉起相依基礎設施（API、PostgreSQL、Redis、RabbitMQ）的標準工具。然而，剛接觸容器化開發的工程師，常會深陷以下兩類典型的「環境啟動崩潰」：
+訂單 API 要跑起來，需要 PostgreSQL、Redis、RabbitMQ。每個開發者都在自己電腦上手動安裝這些服務，版本與設定各不相同。**Docker Compose** 用一個 `compose.yaml` 檔描述「要跑哪些容器、怎麼連、資料放哪」，一個指令就能把整套環境啟動。
 
-事故現場一：**`depends_on` 的「假就緒」連線拒絕**。
-開發者撰寫了 Compose 檔案，並在 `api` 服務配置了 `depends_on: [postgres]`。然而每次執行 `docker compose up`，API 容器在 2 秒內直接 CrashLoop 退出：
-```text
-Npgsql.NpgsqlException (0x80004005): Connection refused (postgres:5432)
-   at Npgsql.Internal.NpgsqlConnector.ConnectAsync(...)
+Compose 適合本機開發與 CI；正式環境的編排交給 Kubernetes。但兩者的觀念很接近（服務、網路、設定、儲存），在 Compose 上理解清楚，搬到 Kubernetes 會更順。
+
+## 運作原理
+
+```mermaid
+flowchart LR
+    subgraph Net["Compose 預設網路"]
+        API["order-api<br/>連 postgres:5432、redis:6379"] --> PG["postgres"]
+        API --> Redis["redis"]
+        API --> MQ["rabbitmq"]
+    end
+    Host["你的電腦<br/>localhost:8080"] -->|"ports: 8080:8080"| API
+    PG --> Vol[("具名 volume：pgdata")]
 ```
-工程師困惑地抱怨：「我明明已經寫了 `depends_on: postgres`，為什麼 API 還會抱怨資料庫拒絕連線？」。
-真相是：**Docker Compose 預設的 `depends_on` 僅代表「PostgreSQL 容器進程已經被啟動（Process Running）」，完全不管資料庫引擎是否已經完成磁碟初始化、跑完復原日誌並準備好接受連線！** 在這短短 2~5 秒的資料庫啟動空窗期內，API 嘗試連線必定直接被拒絕。
 
-事故現場二：**網路邊界混淆（Localhost 迷思）**。
-工程師在 `appsettings.Development.json` 中配置了連線字串：`Host=localhost;Port=5432`。
-當 API 以本機程序（`dotnet run`）執行時一切正常；但當 API 本身也被打包放進 Docker Compose 運行時，立刻噴出 `Connection refused`。
-因為在容器的網路名稱空間（Network Namespace）中，**容器內部的 `localhost` 指向的是該容器自己**，而不是主機，也不是其他容器！
+Compose 為同一個專案的所有服務建立一個網路，每個服務可以用**服務名稱**互相連線：API 連資料庫的主機名稱是 `postgres`，不是 `localhost`。在容器裡，`localhost` 指的是容器自己。
 
----
+`ports` 把容器的 port 對應到你電腦上的 port，讓你從瀏覽器或工具連進去；容器之間的連線不需要 `ports`。
 
-## 反模式與正確解法
+## 常見錯誤與正確寫法
 
-### 反模式一：陽春 depends_on 缺乏健康檢查探針
-
-單純寫 `depends_on: - postgres`，無法解決資料庫、Broker 啟動時間差引發的競態條件。
-
-### 正確解法一：利用 service_healthy 與健康檢查探針
-
-在被依賴的服務上定義 `healthcheck`，並讓上游服務等待其達到 `condition: service_healthy`：
+### 1. depends_on 只保證「已啟動」，不保證「可以用」
 
 ```yaml
-# 正確解法：生產級本機微服務環境 docker-compose.yml
+# 錯：postgres 容器啟動了，但資料庫可能還在初始化，API 一連就失敗
+services:
+  order-api:
+    depends_on: [postgres]
+```
+
+為依賴的服務加上健康檢查，並等它變成健康：
+
+```yaml
 services:
   postgres:
-    image: postgres:18-alpine
-    container_name: dev-postgres
+    image: postgres:18
     environment:
-      POSTGRES_USER: app_user
-      POSTGRES_PASSWORD: dev_password
-      POSTGRES_DB: ecommerce_db
-    ports:
-      - "5432:5432" # 僅供主機上的 pgAdmin 或本機 IDE 存取
+      POSTGRES_DB: shop
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: local-dev-only   # 只用於本機
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shop -d shop"]
+      interval: 5s
+      retries: 10
     volumes:
-      - postgres-data:/var/lib/postgresql/data # 具名 Volume 持久化資料！
-    networks:
-      - backend-net
-    # 關鍵：定義健康檢查探針
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app_user -d ecommerce_db"]
-      interval: 3s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
+      - pgdata:/var/lib/postgresql
 
-  redis:
-    image: redis:8-alpine
-    container_name: dev-redis
-    ports:
-      - "6379:6379"
-    networks:
-      - backend-net
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 3s
-      timeout: 3s
-      retries: 3
-
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: dev-ecommerce-api
+  order-api:
+    build: .
+    ports: ["8080:8080"]
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
-      # 關鍵：容器間通訊使用服務名稱（Service Name）作為 DNS 主機名！
-      ConnectionStrings__DefaultDatabase: "Host=postgres;Port=5432;Database=ecommerce_db;Username=app_user;Password=dev_password"
-      ConnectionStrings__Redis: "redis:6379"
-    ports:
-      - "8080:8080"
-    networks:
-      - backend-net
-    # 關鍵：嚴格等待所有相依服務達到真正「健康就緒」狀態！
+      ConnectionStrings__Shop: "Host=postgres;Database=shop;Username=shop;Password=local-dev-only"
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-networks:
-  backend-net:
-    driver: bridge
+        condition: service_healthy   # 等健康檢查通過才啟動
 
 volumes:
-  postgres-data: # 宣告具名 Volume，容器刪除後測試資料不遺失
+  pgdata:
 ```
 
----
+即使如此，應用程式本身仍要能在依賴暫時不可用時重試，因為正式環境中依賴隨時可能重啟。
 
-### 反模式二：未掛載具名 Volume 導致測試資料重啟即失
+### 2. 資料放在容器裡，重建就消失
 
-直接使用匿名容器執行 PostgreSQL，每次執行 `docker compose down`，昨天辛苦建立的測試訂單與使用者帳號全數被抹除。
+沒有掛 volume 時，資料寫在容器自己的檔案層，`docker compose down` 後就不見了。要保留的資料（本機資料庫）放在**具名 volume**；需要每次都乾淨的環境（例如 CI），就不掛 volume，或用 `docker compose down -v` 一起刪除。
 
-### 正確解法二：具名 Volume（Named Volumes）隔離持久化
+### 3. 容器要連你電腦上的服務
 
-在 Compose 最底層宣告 `volumes: [postgres-data]`，Docker 會在主機專屬目錄中妥善保存資料庫檔案，即使多次執行 `down` 與 `up`，資料依然完整保留。
+容器裡的 `localhost` 是容器自己。要連到主機上的服務（例如你在 IDE 裡執行的 API），Docker Desktop 與 OrbStack 提供 `host.docker.internal` 這個名稱；在 Linux 上要在服務加上 `extra_hosts: ["host.docker.internal:host-gateway"]`。
 
----
+## 使用邊界
 
-## 踩坑與避坑指南
-
-### 1. 容器存取宿主機（Host Machine）服務的特殊位址
-- **現象**：API 運行在容器內，需要存取運行在宿主機本地（非容器）的某個本機服務（例如主機上用 npm 跑的 Mock Server）。
-- **踩坑點**：容器內無法透過 `localhost` 存取宿主機。
-- **規則**：
-  - 在 Docker Desktop（macOS / Windows）中，使用特殊 DNS 名稱：**`host.docker.internal`**。
-  - 在 Linux 環境下，需在 Compose 的 service 區塊加上：
-    ```yaml
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ```
-
-### 2. Bind Mount 檔案目錄權限衝突（Permission Denied）
-- 若將主機本地目錄直接掛載進容器（例如掛載日誌目錄 `./logs:/app/logs`）：
-- **踩坑點**：若容器內部是以非 Root 使用者（如前面提到的 UID 1654 `$APP_UID`）執行，而主機目錄擁有者為 UID 1000 或 Root，容器會因權限不足拋出 `UnauthorizedAccessException: Access to the path is denied`。
-- **解法**：在主機預先建立該目錄並調整權限，或優先使用 Docker Named Volume 取代 Bind Mount。
-
----
-
-## 線上排查指令
-
-### 1. 檢視 Compose 服務啟動順序與真實健康狀態
-
-```bash
-docker compose ps
-```
-**健康狀態解讀：**
-- `running (healthy)`：代表服務已啟動且通過 healthcheck，準備好接受流量！
-- `running (health: starting)`：正在啟動中，依賴它的服務會安全等待。
-- `running (unhealthy)`：探針連續失敗，需排查日誌。
-
-### 2. 檢測容器間 DNS 解析與網路連通性
-
-若懷疑 API 連不上 PostgreSQL，直接在 API 容器內部執行網路探測：
-```bash
-# 測試是否能解析 postgres 服務名稱並連通 5432 連接埠
-docker compose exec api nc -zv postgres 5432
-```
-若輸出 `postgres (172.x.x.x:5432) open`，代表容器網路完全暢通！
-
-### 3. 查看特定健康檢查失敗的詳細日誌
-
-```bash
-# 檢查特定容器最近 5 次 healthcheck 的輸出結果與錯誤訊息
-docker inspect --format='{{json .State.Health}}' dev-postgres
-```
+- **Compose 不是正式環境的部署工具。** 它沒有跨機器排程、自動擴縮、滾動更新；正式環境用 Kubernetes，見 [Kubernetes 工作負載](/platforms/kubernetes/workloads/)。
+- 本機的密碼只用於開發，不要和任何雲端環境共用。
+- 自動化測試需要獨立的資料庫時，Testcontainers 會為每次測試建立乾淨的容器，比共用的 Compose 環境更適合，見 [整合測試](/engineering/integration-tests/)。
