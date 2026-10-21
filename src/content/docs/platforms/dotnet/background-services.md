@@ -1,215 +1,151 @@
 ---
-title: "BackgroundService 實戰：未捕捉例外崩潰與優雅停機"
-description: "深入剖析 BackgroundService 生命週期、未捕獲例外導致整站 Crash 的根本原因、Scoped 服務注入陷阱，以及 Kubernetes 優雅停機最佳實務。"
+title: "BackgroundService：背景工作丟出例外時，整個服務會停下來"
+description: "說明 BackgroundService 的生命週期、未處理例外為什麼會讓主機停止、背景服務如何使用 Scoped 服務、停止時如何收尾，以及多個 Pod 重複執行排程的問題。"
 articleId: "dotnet-background-services"
 topic: "dotnet"
 category: "runtime-models"
-order: 2
-tags: [".NET", "BackgroundService", "IHostedService", "優雅停機", "Graceful Shutdown", "例外處理"]
+order: 3
+tags: [".NET", "BackgroundService", "IHostedService", "PeriodicTimer", "優雅停機"]
 articleType: "deep-dive"
-difficulty: "advanced"
+difficulty: "beginner"
 prerequisites: ["csharp-cancellation-disposable"]
-relatedArticles: ["dotnet-hosting", "csharp-channels"]
-applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-lastReviewed: "2026-10-10"
-takeaway: "ExecuteAsync 內部必須完整隔離未預期例外防範整站崩潰；循規監聽 stoppingToken 確保 Pod 收到 SIGTERM 時能優雅收尾。"
+relatedArticles: ["dotnet-hosting", "csharp-channels", "rabbitmq-dotnet-integration"]
+applicableVersions: ".NET 8～10（未處理例外預設停止主機的行為自 .NET 6 起）。"
+lastReviewed: "2026-10-21"
+takeaway: "ExecuteAsync 裡的迴圈要自己接住每一輪的例外；需要 DbContext 時每一輪建立一個 scope；收到 stoppingToken 就停止接新工作；多個 Pod 會各自執行同一個背景服務。"
 sources:
-  - title: "Microsoft Learn：.NET 中的背景工作 Worker 服務"
-    url: "https://learn.microsoft.com/zh-tw/dotnet/core/extensions/workers"
-  - title: "Microsoft Learn：BackgroundService 類別"
-    url: "https://learn.microsoft.com/zh-tw/dotnet/api/microsoft.extensions.hosting.backgroundservice"
-  - title: "David Fowler：Async Guidance on IHostedService"
-    url: "https://github.com/davidfowl/AspNetCoreDiagnosticScenarios/blob/master/AsyncGuidance.md"
+  - title: "Microsoft Learn：使用 BackgroundService 實作背景工作"
+    url: "https://learn.microsoft.com/dotnet/core/extensions/workers"
+  - title: "Microsoft Learn：BackgroundServiceExceptionBehavior"
+    url: "https://learn.microsoft.com/dotnet/api/microsoft.extensions.hosting.backgroundserviceexceptionbehavior"
+  - title: "Microsoft Learn：在 BackgroundService 中使用範圍服務"
+    url: "https://learn.microsoft.com/dotnet/core/extensions/scoped-service"
+  - title: "Kubernetes：CronJob"
+    url: "https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/"
 ---
 
-在 ASP.NET Core 與 .NET Generic Host 架構中，`BackgroundService` 是執行非同步常駐任務（如定時對帳排程、從 RabbitMQ/Kafka 拉取訊息消費、或將記憶體日誌批次刷盤）的標準基礎類別。然而，自 .NET 6 起，宿主執行環境引進了更嚴苛的容錯政策：**背景工作中的未處理例外預設會被視為致命錯誤，直接終止整座 Web 伺服器**！若未深刻理解其生命週期管理、DI 範圍約束與 Kubernetes 容器信號協同，看似無害的背景 Worker 很可能成為線上伺服器集體崩潰與資料損毀的定時炸彈。
+## 這是什麼
 
-## 案發現場
+訂單 API 除了處理 HTTP 請求，還有一些要在背景持續進行的工作：每分鐘釋放過期的庫存保留、把 outbox 的事件發布到 RabbitMQ、消費通知訊息。**BackgroundService** 是 .NET 提供的基底類別：你實作一個 `ExecuteAsync` 方法，Host 啟動時開始執行它，停止時透過 `stoppingToken` 通知它結束。
 
-某電商核心交易微服務在一次黑色星期五促銷期間，遭遇了接二連三的離奇崩潰與停機災難：
+它很容易寫，但有幾個預設行為會在正式環境造成意外：一個例外就能讓整個 API 停止、Singleton 生命週期不能直接使用 `DbContext`、多個 Pod 會各自執行同一份工作。
 
-1. **一筆格式錯誤的毒訊息直接搞垮整座 Web API**：為了非同步推送訂單通知，工程師在 Web API 內部註冊了一個 `BackgroundService` 來消費內部的非同步佇列。在促銷尖峰，一筆包含非法字元的 JSON 訊息進入佇列，還原序列化時拋出了 `JsonReaderException`。由於開發者未在 `ExecuteAsync` 內部捕捉該例外，自 .NET 6 起預設的 `BackgroundServiceExceptionBehavior.StopHost` 立即生效——整座承受著每秒數千請求的 ASP.NET Core Kestrel 伺服器進程**被直接無條件關閉（Process Shutdown）**，引發全站可用率崩盤！
-2. **多執行緒併發崩潰（Captive Dependency）**：Worker 負責定時從資料庫撈取過期未付款訂單並自動取消。工程師在建構子中直接注入了 `OrderDbContext`。由於 `BackgroundService` 是單例（Singleton），而 `DbContext` 是範圍型別（Scoped），在並行執行時，底層拋出著名的 `InvalidOperationException: A second operation was started on this context instance before a previous operation completed`，導致資料庫連線損毀。
-3. **K8s 滾動更新被 SIGKILL 暴力擊殺**：在微服務進行例行版本發布時，Kubernetes 向舊 Pod 發送了 `SIGTERM` 優雅停機信號。然而 Worker 的執行迴圈沒有檢查 `stoppingToken`，依然在進行一筆長達 45 秒的批次對帳任務。30 秒寬限期（`terminationGracePeriodSeconds`）過後，Kubernetes 判定容器未退出，直接發送 `SIGKILL` 撲殺，正在寫入一半的會計憑證資料庫發生狀態撕裂，留下數千筆未對齊帳目的殘損資料。
+## 運作原理
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    participant K8s as Kubernetes 控制平面
-    participant Kestrel as Kestrel Web API (Host)
-    participant Worker as BackgroundService (Worker)
-    participant DB as 核心資料庫 (PostgreSQL)
-
-    Note over K8s,Worker: 情境一：未捕獲例外引發整站崩潰
-    Worker->>Worker: 處理訊息拋出未捕獲的 JsonException！
-    Worker->>Kestrel: 例外向上外溢至 Generic Host
-    Note over Kestrel: 觸發 StopHost 策略！整座 Web 伺服器強制關閉退出！
-    
-    Note over K8s,Worker: 情境二：忽略停機信號引發 SIGKILL 擊殺
-    K8s->>Kestrel: 發送 SIGTERM (要求優雅停機)
-    Kestrel->>Worker: 觸發 stoppingToken 取消權杖
-    Note over Worker: 💣 忽略 stoppingToken，繼續硬跑長耗時對帳！
-    Note over K8s: 等待 30 秒寬限期逾時...
-    K8s->>Worker: 💥 發送 SIGKILL (Exit Code 137) 強制擊殺！
-    Note over DB: 批次寫入中途遭硬切斷，資料產生殘損！
+    participant Host as Generic Host
+    participant BG as BackgroundService
+    participant K as Kubernetes
+    Host->>BG: StartAsync → 呼叫 ExecuteAsync(stoppingToken)
+    loop 每一分鐘
+        BG->>BG: 建立 scope、處理一輪、釋放 scope
+    end
+    K->>Host: SIGTERM
+    Host->>BG: stoppingToken 被取消
+    BG->>BG: 完成目前這一輪，離開迴圈
+    BG-->>Host: ExecuteAsync 結束
 ```
 
-## 反模式與正確解法
+**未處理的例外會停止主機。** 從 .NET 6 起，`ExecuteAsync` 丟出未處理的例外時，預設行為（`BackgroundServiceExceptionBehavior.StopHost`）是記錄錯誤並**停止整個主機**。如果這個背景服務和 API 在同一個程序，API 也會跟著停止。
 
-### 反模式一：未隔離例外，任由非同步任務例外外溢至 Host
+**BackgroundService 是 Singleton。** 它在整個應用程式生命週期只有一個實例，不能直接注入 Scoped 服務（例如 `DbContext`），否則就是 Captive Dependency。
 
-在 `ExecuteAsync` 內部直接裸跑迴圈，一旦依賴的遠端服務（如 Redis 或資料庫）發生短暫網路中斷或還原序列化失敗，拋出的例外會直接逃逸出 `ExecuteAsync`。
+## 常見錯誤與正確寫法
 
-#### 正確解法：在迴圈內部嚴格隔離例外，並區分取消信號
-
-Worker 必須在處理每一筆工作項目時建立嚴格的 `try-catch` 隔離防線。業務例外應記錄警報並重試或跳過，**唯獨 `OperationCanceledException` 在 `stoppingToken` 被觸發時，才應允許退出迴圈**：
+### 1. 一次失敗就讓整個服務停止
 
 ```csharp
-// 💣 Bad：一旦任何一個例外拋出，整座 API 伺服器陪葬退出
-protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+public sealed class ReservationExpiryWorker(
+    IServiceScopeFactory scopes, ILogger<ReservationExpiryWorker> logger, TimeProvider time) : BackgroundService
 {
-    while (!stoppingToken.IsCancellationRequested)
-    {
-        await ProcessNextOrderAsync(); // 拋出例外即 Crash 整個 Host
-    }
-}
-
-// ✅ Good：例外自我防禦、安全隔離與優雅停機
-public sealed class OrderProcessingWorker : BackgroundService
-{
-    private readonly ILogger<OrderProcessingWorker> _logger;
-    private readonly IServiceScopeFactory _scopeFactory;
-
-    public OrderProcessingWorker(
-        ILogger<OrderProcessingWorker> logger,
-        IServiceScopeFactory scopeFactory)
-    {
-        _logger = logger;
-        _scopeFactory = scopeFactory;
-    }
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("訂單處理背景服務啟動");
-
-        // 使用 .NET 6+ 原生的 PeriodicTimer 代替手動 Task.Delay
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
-
-        while (!stoppingToken.IsCancellationRequested)
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             try
             {
-                // 等待定時器或取消信號
-                if (!await timer.WaitForNextTickAsync(stoppingToken))
-                    break;
-
-                await ProcessBatchSafelyAsync(stoppingToken);
+                await using var scope = scopes.CreateAsyncScope();          // 每一輪一個新的 scope
+                var db = scope.ServiceProvider.GetRequiredService<ShopDbContext>();
+                var released = await db.Reservations
+                    .Where(r => r.ExpiresAt < time.GetUtcNow())
+                    .ExecuteDeleteAsync(stoppingToken);
+                logger.LogInformation("釋放 {Count} 筆過期保留", released);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                // 收到優雅停機信號，正常退出迴圈
-                _logger.LogInformation("收到主機停機信號，正在退出背景工作迴圈");
-                break;
+                break;                                                     // 正在停止：正常離開
             }
             catch (Exception ex)
             {
-                // 核心關鍵：捕捉並記錄所有未預期的業務或網路例外，絕對不讓例外擊垮主機！
-                _logger.LogError(ex, "背景處理單批訂單時遭遇異常，將於下一輪重試");
+                logger.LogError(ex, "釋放過期保留失敗，下一輪再試");          // 一輪失敗，不影響之後的輪次
             }
         }
-
-        _logger.LogInformation("訂單處理背景服務已安全停機");
-    }
-
-    private async Task ProcessBatchSafelyAsync(CancellationToken ct)
-    {
-        // 解決捕捉性依賴：手動建立獨立的生命週期範圍
-        using var scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<OrderDbContext>();
-
-        var expiredOrders = await dbContext.Orders
-            .Where(o => o.Status == OrderStatus.Pending && o.CreatedAt < DateTime.UtcNow.AddMinutes(-30))
-            .Take(50)
-            .ToListAsync(ct);
-
-        foreach (var order in expiredOrders)
-        {
-            order.Cancel("逾時未付款系統自動取消");
-        }
-
-        await dbContext.SaveChangesAsync(ct);
     }
 }
 ```
 
-### 反模式二：在 Singleton Worker 中直接注入 Scoped 服務（Captive Dependency）
+每一輪自己接住例外，記錄後繼續下一輪。`PeriodicTimer` 在 `stoppingToken` 被取消時會結束等待，迴圈自然離開。
 
-`BackgroundService` 在 DI 容器中是作為 `Singleton`（單例）註冊的。若在建構子中直接注入 `OrderDbContext` 或任何 Scoped 服務，該 DbContext 將被迫變成單例，整個進程共享同一實體，不僅永遠無法釋放記憶體，而且在多執行緒併發時必然引發資料競爭崩潰。
+### 2. 直接注入 DbContext
 
-#### 正確解法：注入 `IServiceScopeFactory` 並在每次迭代建立 Scope
+如上例，注入 `IServiceScopeFactory`，每一輪建立 scope 再取得 `DbContext`；或注入 `IDbContextFactory<T>`，見 [C# 連線設計](/data-access/csharp-connections/)。
 
-如上方良好範例所示，注入 `IServiceScopeFactory`，並在每次迴圈或每批訊息處理時呼叫 `using var scope = _scopeFactory.CreateScope();`，使用完畢後立即隨 `using` 釋放 DbContext 連線，確保連線池正常歸還。
+### 3. 停止時直接中斷進行中的工作
 
-### 反模式三：忽略 `stoppingToken`，長耗時作業無法優雅停機
+收到停止訊號時，不要再領取新的工作，但讓正在處理的這一筆完成（或確保它可以安全地重做）。訊息消費者停止時不 Ack 未完成的訊息，讓它回到佇列，見 [.NET 整合 RabbitMQ](/infrastructure/rabbitmq/dotnet-integration/)。停止的總時間要在 Host 的 `ShutdownTimeout` 之內，見 [Generic Host](/platforms/dotnet/hosting/)。
 
-在微服務更新部署時，Kubernetes 會發送 `SIGTERM`，.NET Host 會觸發 `stoppingToken.Cancel()` 並等待 `HostOptions.ShutdownTimeout`（預設 30 秒）。若 Worker 內部執行的非同步 I/O 未傳入 `stoppingToken`，Worker 就無法及時中止，最終在超時後被 `SIGKILL` 暴力中斷。
+### 4. 多個 Pod 重複執行同一份排程
 
-#### 正確解法：所有內部非同步 I/O 一律傳入 `stoppingToken`，並配合 HostOptions
+API 擴到 5 個 Pod，每個 Pod 都有一個 `ReservationExpiryWorker`，同一份工作每分鐘被執行 5 次。上面的例子是冪等的（刪除已過期的資料，重複執行也無害），所以可以接受。不能重複的工作有幾種做法：
 
-在 `Program.cs` 中，若預期背景作業需要充足的時間收尾（例如清空佇列緩衝），可調大關機寬限期，並確保與 Kubernetes `terminationGracePeriodSeconds` 對齊：
+- 用 Kubernetes 的 **CronJob** 執行，排程由叢集負責，一次只跑一個。
+- 把背景工作放在獨立的 Worker Deployment，固定 1 個副本（搭配 Single Active Consumer 等機制避免中斷時沒人執行）。
+- 每一輪先以資料庫的鎖或條件更新「領取」工作，只有領到的 Pod 執行。
 
-```csharp
-builder.Services.Configure<HostOptions>(options =>
-{
-    // 提供足夠的優雅停機時間讓背景任務排空
-    options.ShutdownTimeout = TimeSpan.FromSeconds(45);
-    
-    // 若特定次要背景服務確實允許崩潰而不影響 Web API，可調為 Ignore（預設為 StopHost）
-    // options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
-});
-```
+## 使用邊界
 
-## 踩坑與避坑指南
+- 長時間的 CPU 密集工作不要放在和 API 同一個程序的背景服務，會搶走處理請求的資源；放到獨立的 Worker。
+- 不要用 `Task.Run` 啟動一個永遠不結束的迴圈；它佔用執行緒池的執行緒，也沒有停止與例外處理的機制。用 BackgroundService。
+- 程序內的工作佇列見 [Channels](/languages/csharp/channels/)；不能遺失的工作要持久化，見 [Outbox 與 Inbox](/architecture/outbox-inbox/)。
 
-### 1. `ExecuteAsync` 提前返回的假成功陷阱
-如果 `ExecuteAsync` 內部啟動了一個未被 `await` 的 `Task.Run`，該方法會立即執行完畢並返回。
-- **後果**：.NET Generic Host 會認為該 BackgroundService 已經成功完成並退出！若內部 Task 隨後拋出例外，將無人監管，甚至造成背景執行緒成為孤兒程序。
-- **最佳實踐**：`ExecuteAsync` 本身必須保持非同步執行，直到整個服務生命週期結束才退出。
+## 雲端排查
 
-### 2. 多 Pod 水平擴展環境下的排程重複執行
-`BackgroundService` 是進程內部的常駐 Worker。當你的 API 透過 HPA 水平擴展為 5 個 Pod 時，**5 個 Pod 內部各自都會執行一份該 BackgroundService**！
-- **避坑建議**：若任務是「定時取消訂單」或「定時發送對帳報表」，多個 Pod 同時跑會造成嚴重重複執行與死鎖。應升級為：
-  1. 使用 Kubernetes `CronJob` 執行一次性容器任務；
-  2. 使用分散式排程架構（如 Quartz.NET 叢集模式或搭配 Redis 分散式鎖 / DB 悲觀鎖排他執行）。
-
-### 3. DI 容器驗證範圍設置
-為了在開發階段就杜絕 Captive Dependency 注入錯誤，必須在 `Program.cs` 啟用嚴格的 DI 範圍驗證：
-
-```csharp
-builder.Host.UseDefaultServiceProvider(options =>
-{
-    options.ValidateScopes = true;     // 禁止在 Singleton 中解析 Scoped 服務
-    options.ValidateOnBuild = true;    // 啟動建置時即檢查依賴樹
-});
-```
-
-## 線上排查指令
-
-針對生產環境中背景 Worker 崩潰、例外排查與 Kubernetes 停機逾時問題，使用下列指令排查：
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-# 1. 檢視 Pod 上一次崩潰退出的日誌（排查是否因 BackgroundService 未處理例外引發 StopHost）
-kubectl logs <pod-name> -n ecommerce-prod --previous --tail=100
+# 背景服務的例外讓主機停止時，容器會結束並重啟
+kubectl get pod -n shop -l app=order-api -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].restartCount}{"\n"}{end}'
+kubectl logs <pod-name> -n shop --previous | grep -i -B2 -A10 "BackgroundService"
 
-# 2. 檢視 Pod 終止事件（確認是否為 Exit Code 137 SIGKILL 超時強制殺死）
-kubectl describe pod <pod-name> -n ecommerce-prod | grep -A 10 "Last State:"
-
-# 3. 監控運行中背景服務的執行緒狀態與活躍計時器數量
-dotnet-counters monitor --process-id <PID> \
-    --counters System.Runtime[active-timer-count,threadpool-thread-count,exception-count]
-
-# 4. 抓取記憶體 Dump 並檢查 Worker 執行緒是否卡在死循環或死鎖
-dotnet-dump collect --process-id <PID> --output /tmp/worker_hang.dump
-dotnet-dump analyze /tmp/worker_hang.dump
-> clrstack -all
+# 以 CronJob 執行的排程：最近幾次是否成功
+kubectl get cronjob -n shop
+kubectl get jobs -n shop --sort-by=.status.startTime | tail -5
 ```
+
+### 託管服務層
+
+#### GKE
+
+Cloud Logging 中查詢背景服務的錯誤：
+
+```bash
+gcloud logging read 'resource.type="k8s_container" AND resource.labels.namespace_name="shop" AND severity>=ERROR AND textPayload:"BackgroundService"' \
+  --freshness=6h --limit=20
+```
+
+#### EKS
+
+CloudWatch Logs Insights（Container Insights 的應用程式日誌群組）：
+
+```text
+fields @timestamp, kubernetes.pod_name, log
+| filter kubernetes.namespace_name = "shop" and log like /BackgroundService/ and log like /fail|error|Exception/
+| sort @timestamp desc
+| limit 20
+```
+
+### 應用程式層
+
+為每一輪背景工作記錄開始時間、處理筆數與耗時，並建立「最後一次成功執行時間」的指標；它停止更新，就代表背景服務已經不在運作，即使 Pod 看起來一切正常。

@@ -1,287 +1,130 @@
 ---
-title: ".NET GC 記憶體管理與容器 OOM 防禦"
-description: "深入剖析 Gen 0/1/2 世代回收機制、LOH 碎裂災難、ArrayPool 借還優化，以及 Kubernetes 容器環境防範 OOMKilled 的核心設定。"
+title: "GC 與容器記憶體：為什麼 Pod 會被 OOMKilled，以及大型緩衝區的成本"
+description: "說明 .NET GC 的世代與大型物件堆積、在容器中如何依記憶體上限調整、Server GC 與 DATAS，以及用 ArrayPool 重複使用大型緩衝區。"
 articleId: "dotnet-gc-memory"
 topic: "dotnet"
 category: "runtime-performance"
-order: 1
-tags: [".NET", "GC", "記憶體優化", "LOH", "ArrayPool", "Kubernetes", "OOMKilled"]
+order: 6
+tags: [".NET", "GC", "LOH", "ArrayPool", "OOMKilled", "GCHeapHardLimit", "DATAS"]
 articleType: "deep-dive"
-prerequisites: ["csharp-value-reference-types"]
-relatedArticles: ["dotnet-threadpool", "dotnet-profiling"]
-applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
 difficulty: "advanced"
-lastReviewed: "2026-10-10"
-takeaway: "高頻大型緩衝區（>= 85KB）一律使用 ArrayPool 杜絕 LOH 碎裂；容器環境務必明確設定 GCHeapHardLimit 或對齊 cgroup v2 限制防範 OOMKilled。"
+prerequisites: ["csharp-value-reference-types"]
+relatedArticles: ["dotnet-profiling", "kubernetes-probes-resources", "containers-image-runtime"]
+applicableVersions: ".NET 8～10（DATAS 自 .NET 9 起在 Server GC 預設開啟）。"
+lastReviewed: "2026-10-21"
+takeaway: "容器的記憶體上限要依實測設定，並留空間給 GC 堆積以外的記憶體；85 KB 以上的大型暫存陣列用 ArrayPool 重複使用；OOMKilled 時先分清是堆積還是原生記憶體。"
 sources:
-  - title: "Microsoft Learn：記憶體管理與記憶體回收 (GC) 基本概念"
-    url: "https://learn.microsoft.com/zh-tw/dotnet/standard/garbage-collection/fundamentals"
-  - title: "Microsoft Learn：容器中的記憶體回收"
-    url: "https://learn.microsoft.com/zh-tw/dotnet/core/run-time-config/garbage-collector#container-resource-limits"
+  - title: "Microsoft Learn：記憶體回收的基本概念"
+    url: "https://learn.microsoft.com/dotnet/standard/garbage-collection/fundamentals"
+  - title: "Microsoft Learn：大型物件堆積"
+    url: "https://learn.microsoft.com/dotnet/standard/garbage-collection/large-object-heap"
+  - title: "Microsoft Learn：GC 的執行階段設定（容器、HeapHardLimit）"
+    url: "https://learn.microsoft.com/dotnet/core/runtime-config/garbage-collector"
+  - title: "Microsoft Learn：動態調整應用程式大小（DATAS）"
+    url: "https://learn.microsoft.com/dotnet/standard/garbage-collection/datas"
+  - title: "Microsoft Learn：ArrayPool<T>"
+    url: "https://learn.microsoft.com/dotnet/api/system.buffers.arraypool-1"
+  - title: "Microsoft Learn：.NET Runtime 內建指標"
+    url: "https://learn.microsoft.com/dotnet/core/diagnostics/built-in-metrics-runtime"
+  - title: "Google Cloud：GKE 系統指標（kubernetes.io/container）"
+    url: "https://cloud.google.com/monitoring/api/metrics_kubernetes"
+  - title: "Amazon CloudWatch：Container Insights metrics for Amazon EKS"
+    url: "https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Container-Insights-metrics-EKS.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-某跨境電商平台在促銷檔期期間，將核心結帳與訂單匯入服務部署於 Kubernetes 叢集。Pod 的規格配置為 Requests: 500m CPU / 512Mi Memory，Limits: 2 CPU / 1Gi Memory。然而在流量湧入短短 15 分鐘內，多個 Pod 突然相繼無預警終止並重啟，Kubernetes Pod 狀態直接標記為 `OOMKilled`，終端退出碼為 `Exit Code 137`。令開發團隊困惑的是：應用程式日誌中未捕捉到任何未處理例外（Unhandled Exception），APM 監控上的「.NET 託管記憶體（Managed Heap）」甚至只顯示使用了約 380MB，遠低於 1Gi 的上限！
+.NET 的**記憶體回收器**（Garbage Collector，GC）自動找出不再使用的物件並回收它們的記憶體，你不需要手動釋放。但「自動」不代表「免費」：GC 執行時會花 CPU，有時還會短暫暫停程式；在容器裡，記憶體用量超過上限，Pod 就會被系統直接終止（OOMKilled）。
 
-同一時期，另一個批次報表匯出服務發生了相反的怪象：服務運行數十小時後，記憶體用量持續爬升到 800MB，接著系統拋出 `System.OutOfMemoryException` 崩潰。排查人員調取記憶體快照（Memory Dump）後赫然發現：剩餘可用虛擬記憶體空間仍十分充裕，但服務在嘗試配置一個僅 120KB 的位元組陣列時直接宣告失敗。
+這篇說明 GC 怎麼運作、它在容器中如何決定可以用多少記憶體，以及最常見的兩個問題：大型暫存陣列與記憶體上限設定。
 
-經過 SRE 與核心開發小組的深入排查，確認了兩起重大架構事故的根本原因：
-1. **容器環境下 Server GC 與 cgroup 認知脫節**：微服務執行在 32-core 的宿主機節點上，預設啟用的 Server GC 自動為每個 CPU 核心切割獨立的 Heap。在記憶體剛增長到容器 Limit 邊緣時，CLR 尚未觸發跨堆積的 Full GC，而 Linux 核心的 cgroup v2 監控程序便已判定該容器超出 1Gi 配額，以 SIGKILL（Kill -9）冷血抹殺了程序。
-2. **大型物件堆積（LOH）虛擬位址碎裂（Fragmentation）**：報表匯出邏輯反覆配置 100KB~2MB 的臨時 `byte[]` 緩衝區。所有大於等於 85,000 位元組的物件直接繞過世代回收進入 LOH，而 LOH 預設為了效能不做壓縮搬移（Compaction）。長時間運作後，LOH 堆積內部充斥著碎形空隙，再也無法找到一塊連續的 120KB 實體位址，直接引發 OOM。
+## 運作原理
 
 ```mermaid
-flowchart TD
-    subgraph K8sHost["Kubernetes 32-Core 實體宿主機 (cgroup v2 限額 1Gi)"]
-        subgraph DotNetProcess[".NET 程序 (Server GC 模式)"]
-            Runtime["CLR / Server GC"]
-            H0["Heap 0 (Core 0)"]
-            H1["Heap 1 (Core 1)"]
-            Hdots["..."]
-            H31["Heap 31 (Core 31)"]
-            Runtime --> H0
-            Runtime --> H1
-            Runtime --> Hdots
-            Runtime --> H31
-        end
-        OOMKilledWatcher["Linux Kernel cgroup OOM Killer"]
-        DotNetProcess --"總實體記憶體逼近 1Gi"--> OOMKilledWatcher
-        OOMKilledWatcher --"發送 SIGKILL (Exit Code 137)"--> DotNetProcess
-    end
-
-    subgraph LOHProblem["大型物件堆積 (LOH >= 85,000 Bytes)"]
-        direction LR
-        Block1["[已用 150KB]"]
-        Hole1["[空洞 60KB (碎裂)]"]
-        Block2["[已用 200KB]"]
-        Hole2["[空洞 80KB (碎裂)]"]
-        Req["嘗試配置 120KB 緩衝區"]
-        Req -.->|"無法放入 60KB/80KB 連續空間"| OOMException["拋出 OutOfMemoryException"]
-    end
+flowchart LR
+    New["新物件"] --> G0["第 0 代<br/>大部分物件在這裡就被回收"]
+    G0 -->|"存活"| G1["第 1 代"]
+    G1 -->|"存活"| G2["第 2 代<br/>長期存在的物件"]
+    Big["85,000 位元組以上的物件"] --> LOH["大型物件堆積（LOH）<br/>和第 2 代一起回收"]
 ```
 
----
+**世代**：大部分物件很短命（一個請求結束就不用了），GC 把新物件放在第 0 代，頻繁而快速地回收；存活下來的才升級到第 1、2 代，回收頻率較低、成本較高。
 
-## 致命反模式 vs. 正確解法
+**大型物件堆積（LOH）**：85,000 位元組以上的物件直接放在 LOH，只在回收第 2 代時才一起處理。頻繁配置大型暫存陣列（例如讀取上傳檔案的緩衝區），會讓昂貴的第 2 代回收變多，LOH 也容易產生碎片。
 
-### 反模式一：在高併發情境頻繁以 `new byte[]` 配置大型暫存緩衝區
+**容器中的上限**：Pod 設定了記憶體 limits 時，.NET 會讀取容器的上限，預設把 GC 堆積的上限設為容器上限的 75%。剩下的 25% 要容納 GC 堆積以外的記憶體：執行緒堆疊、JIT 編譯的程式碼、原生函式庫（例如資料庫 driver 的原生部分、TLS）。
 
-在處理檔案上傳串流、Excel 產生或巨量 JSON 序列化時，開發者常習慣撰寫 `byte[] buffer = new byte[128 * 1024];`。任何大小大於等於 85,000 位元組的物件會直接分配至 LOH（大型物件堆積）。LOH 物件只會在 Gen 2（完整記憶體回收）期間被回收，頻繁產生大型短期物件會導致：
-- 提早觸發代價昂貴的 Gen 2 Full GC，引發顯著的 Stop-The-World（STW）全局停頓。
-- 由於 LOH 預設不做記憶體壓縮重組，陣列釋放後遺留的空隙若無法精確匹配下次配置的大小，將造成嚴重的記憶體膨脹與碎裂。
+**Server GC 與 DATAS**：ASP.NET Core 預設使用 Server GC，吞吐量較高但傾向使用較多記憶體。.NET 9 起，Server GC 預設啟用 DATAS（動態調整應用程式大小），會依實際負載調整堆積，在容器中更節省記憶體。
 
-### 反模式二：未設定容器記憶體硬上限（GCHeapHardLimit），仰賴 CLR 自適應
+## 常見錯誤與正確寫法
 
-在容器化部署時，若未針對 .NET 執行環境提供明確的記憶體約束變數，.NET 執行環境可能誤判可用記憶體（特別是在舊版 cgroup v1 或核心限制傳遞延遲的環境中），導致 Server GC 在高核心數節點上為多個堆積同時預留記憶體區段（Segments），當整體 Resident Set Size（RSS）觸及容器 Limits 時，作業系統直接發起 OOMKilled，毫無緩衝機會。
-
-### 正確解法：引入 `ArrayPool<T>` 複用大型緩衝區，並精確配置 cgroup 硬上限
-
-以下範例展示了如何透過 `System.Buffers.ArrayPool<T>` 消除 LOH 分配，並展示如何在類別中落實標準的 `IDisposable` 記憶體歸還機制，防止緩衝區洩漏。
+### 1. 每個請求都配置一個大陣列
 
 ```csharp
-using System;
-using System.Buffers;
-using System.IO;
+// 錯：每次都配置 1 MB 的陣列，直接進 LOH，增加第 2 代回收
+var buffer = new byte[1024 * 1024];
+var read = await stream.ReadAsync(buffer, ct);
+```
 
-namespace DotNetPerformance.MemoryOptimization;
+用 `ArrayPool` 借用再歸還：
 
-/// <summary>
-/// 安全租借與歸還的大型緩衝處理器
-/// </summary>
-public sealed class HighPerformancePayloadProcessor : IDisposable
+```csharp
+var buffer = ArrayPool<byte>.Shared.Rent(1024 * 1024); // 可能拿到比要求更大的陣列
+try
 {
-    private readonly ArrayPool<byte> _pool;
-    private byte[]? _rentedBuffer;
-    private bool _disposed;
-
-    public HighPerformancePayloadProcessor(ArrayPool<byte>? pool = null)
-    {
-        // 預設採用 CLR 共享陣列集區
-        _pool = pool ?? ArrayPool<byte>.Shared;
-    }
-
-    /// <summary>
-    /// 處理大型二進位有效負載（零 LOH 配置）
-    /// </summary>
-    /// <param name="requiredSize">所需位元組長度（例如 128KB）</param>
-    /// <returns>實際處理之位元組總數</returns>
-    public int ProcessPayload(int requiredSize)
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        if (requiredSize <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(requiredSize), "大小必須大於 0");
-        }
-
-        // 從集區租借陣列。注意：租借出的陣列長度必定大於或等於 requiredSize
-        _rentedBuffer = _pool.Rent(requiredSize);
-
-        try
-        {
-            // 透過 AsSpan 裁切出業務邏輯真正需要的有效視窗，杜絕溢位讀寫
-            Span<byte> activeSpan = _rentedBuffer.AsSpan(0, requiredSize);
-
-            // 模擬高效能資料填充與處理
-            activeSpan.Fill(0x5A);
-
-            long checksum = 0;
-            for (int i = 0; i < activeSpan.Length; i++)
-            {
-                checksum += activeSpan[i];
-            }
-
-            Console.WriteLine($"[ProcessPayload] 成功處理 {activeSpan.Length:N0} 位元組，校驗碼: {checksum}");
-            return activeSpan.Length;
-        }
-        finally
-        {
-            // 在處理完畢後立即歸還集區
-            ReturnBufferToPool();
-        }
-    }
-
-    private void ReturnBufferToPool()
-    {
-        if (_rentedBuffer is not null)
-        {
-            byte[] bufferToReturn = _rentedBuffer;
-            _rentedBuffer = null;
-
-            // clearArray: false 可提升效能；若處理機密資訊（如密碼或私鑰），必須設為 true 清空內容
-            _pool.Return(bufferToReturn, clearArray: false);
-        }
-    }
-
-    public void Dispose()
-    {
-        if (!_disposed)
-        {
-            ReturnBufferToPool();
-            _disposed = true;
-            GC.SuppressFinalize(this);
-        }
-    }
+    var read = await stream.ReadAsync(buffer.AsMemory(0, 1024 * 1024), ct);
+    // 只使用前 read 個位元組
 }
-
-public static class Program
+finally
 {
-    public static void Main()
-    {
-        Console.WriteLine("=== .NET GC 大型緩衝區 ArrayPool 效能驗證 ===");
-
-        using var processor = new HighPerformancePayloadProcessor();
-
-        // 模擬兩次超過 85KB 的大型資料流處理
-        int processed1 = processor.ProcessPayload(120 * 1024); // 120 KB (進 LOH 的臨界大小)
-        int processed2 = processor.ProcessPayload(256 * 1024); // 256 KB
-
-        Console.WriteLine($"處理作業全部完成，累計處理: {processed1 + processed2:N0} 位元組。");
-    }
+    ArrayPool<byte>.Shared.Return(buffer); // 一定要歸還；歸還後不能再使用這個陣列
 }
 ```
 
-預期控制台輸出：
+`Rent` 回傳的陣列可能比要求的大，而且內容可能是上一個使用者留下的資料；處理時以實際讀取的長度為準。含有敏感資料的緩衝區，歸還時用 `Return(buffer, clearArray: true)` 清除。
 
-```text
-=== .NET GC 大型緩衝區 ArrayPool 效能驗證 ===
-[ProcessPayload] 成功處理 122,880 位元組，校驗碼: 11059200
-[ProcessPayload] 成功處理 262,144 位元組，校驗碼: 23592960
-處理作業全部完成，累計處理: 385,024 位元組。
-```
+### 2. 記憶體上限依感覺設定
 
----
+上限 512 Mi，GC 堆積只能用約 384 Mi；尖峰時堆積加上原生記憶體超過 512 Mi，Pod 就被終止。先在接近正式環境的負載下觀察 working set 的高峰，再設定上限並留餘裕。需要調整堆積佔上限的比例時，使用 `GCHeapHardLimitPercent`（在 `runtimeconfig.json` 中以十進位設定；以環境變數 `DOTNET_GCHeapHardLimitPercent` 設定時，數值以十六進位解讀，例如 `0x46` 代表 70%）。
 
-## 踩坑與避坑指南
+### 3. OOMKilled 就以為是記憶體洩漏
 
-### 1. 深入理解堆積世代與物件生命週期假設
+先分清楚是哪一種記憶體：GC 堆積持續增長且回收後不下降，可能是物件被不該有的參考留住（例如靜態快取無上限）；GC 堆積穩定但 working set 一直增加，問題在原生記憶體。兩者的分析工具不同，見 [.NET 效能診斷](/platforms/dotnet/profiling/)。
 
-.NET GC 建立在強大的**世代假設（Generational Hypothesis）**之上：
-- **第 0 代（Gen 0）**：最新配置的短期物件（例如區域變數、臨時字串）。回收頻率最高，耗時通常小於 1 毫秒。
-- **第 1 代（Gen 1）**：作為 Gen 0 與 Gen 2 之間的緩衝區。在 Gen 0 回收中存活下來的物件會晉升（Promotion）至 Gen 1。
-- **第 2 代（Gen 2）**：長期存活物件（如靜態快取、Singleton 實例）以及大型物件堆積（LOH）。Gen 2 回收又稱 Full GC，會掃描所有世代，停頓時間最長。
-- **固定物件堆積（POH, Pinned Object Heap, .NET 5+）**：專門存放被固定（Pinned）的陣列（例如 Interop/Socket 緩衝區），防止固定物件打散普通世代造成空洞。
+## 使用邊界
 
-> [!WARNING]
-> **嚴禁在商務邏輯中主動呼叫 `GC.Collect()`**：
-> 呼叫 `GC.Collect()` 會強行引發 Full GC，將剛誕生在 Gen 0 的暫存短命物件強制提升為 Gen 1 甚至是 Gen 2，造成「過早晉升（Premature Promotion）」。這不僅嚴重浪費 CPU，還會讓短期物件佔據長期堆積，徹底摧毀 CLR 的自我微調演算法。
+- 一般的業務程式不需要手動呼叫 `GC.Collect()`，那通常只會讓效能變差。
+- `ArrayPool` 用在頻繁、大型、短期的暫存陣列；小陣列或只用一次的情況，直接配置反而簡單。
+- `Span<T>` 與 `stackalloc` 可以避免小型暫存資料的配置，見 [集合與 LINQ](/languages/csharp/collections-linq/)。
+- Pod 的記憶體設定與探針見 [探針與安全停止](/platforms/kubernetes/probes-resources/)。
 
-### 2. Kubernetes 容器環境防禦 OOMKilled 的三大核心配置
+## 雲端排查
 
-在 Linux 容器（Docker / K8s）環境中，若容器設定了 `resources.limits.memory`，必須在應用程式層配合以下環境變數，讓 CLR 的記憶體收縮速度跑在 Linux OOM Killer 之前：
-
-| 環境變數 | 建議值 | 作用與設計理念 |
-| :--- | :--- | :--- |
-| `DOTNET_GCHeapHardLimitPercent` | `75` | 將 GC 堆積硬上限限制在容器記憶體限制的 75%。預留 25% 空間給 JIT 編譯器、Thread Stack、Socket Native 緩衝區等非託管（Native）開銷，防止 Pod 遭 SIGKILL。 |
-| `DOTNET_gcServer` | `1`（多核心高吞吐服務）或 `0`（微型服務） | 1 為 Server GC（預設），每個核心獨立 Heap；若容器配置記憶體極小（如小於 512Mi）但宿主機 CPU 核心極多，建議設為 `0`（Workstation GC）或限制堆積數。 |
-| `DOTNET_GCHeapCount` | 例如 `2` 或 `4` | 當宿主機為 64 核心但容器 CPU Limit 僅配給 2 核心時，強制限制 Server GC 堆積數量，避免 64 個 Heap 瓜分僅有的記憶體額度導致迅速 OOM。 |
-
-### 3. ArrayPool 租借與歸還的四大常見陷阱
-
-1. **未歸還（Buffer Leak）**：忘記將租借的陣列歸還至 `ArrayPool<T>.Shared`，雖然不會引發即時崩潰，但物件池失去作用，內部反覆重新配置新陣列，喪失集區效益。務必使用 `try...finally` 區塊保證歸還。
-2. **重複歸還（Double Return）**：同一份陣列參照被歸還了兩次。在後續多執行緒租借時，會造成兩個不同的請求共享同一個陣列，引發極其難以捉摸的記憶體資料覆蓋損毀事故。
-3. **歸還後繼續使用（Use-After-Return）**：歸還後應立刻將本機變數設為 `null`，嚴禁在歸還後再次讀取或寫入該緩衝區。
-4. **資訊洩漏（Security Hazard）**：租借取得的陣列內部可能包含上一個請求遺留的髒資料。在處理敏感憑據、密碼或跨租戶資料時，呼叫 `Return(buffer, clearArray: true)` 確保資料清除，或在讀取前主動清零。
-
----
-
-## 線上排查指令
-
-當線上容器出現記憶體用量居高不下、Pod 瀕臨 OOMKilled 或懷疑記憶體碎裂時，請依照下列生產診斷 SOP 進行定位：
-
-### 1. 監控容器底層 cgroup 記憶體用量與核心限額
-
-進入容器內確認 .NET 是否正確讀取到 cgroup v2 資源邊界：
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-# 檢查 cgroup v2 當前程序記憶體消耗與絕對上限（單位：Bytes）
-cat /sys/fs/cgroup/memory.current
-cat /sys/fs/cgroup/memory.max
+# 是否被 OOMKilled，以及目前的用量
+kubectl get pod <pod-name> -n shop -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}{"\n"}'
+kubectl top pod <pod-name> -n shop
 
-# 若為 cgroup v1 舊版架構
-cat /sys/fs/cgroup/memory/memory.usage_in_bytes
-cat /sys/fs/cgroup/memory/memory.limit_in_bytes
+# 容器的記憶體上限
+kubectl get pod <pod-name> -n shop -o jsonpath='{.spec.containers[0].resources.limits.memory}{"\n"}'
 ```
 
-### 2. 即時監看 CLR GC 與記憶體配置計數器
+### 託管服務層
 
-利用 `dotnet-counters` 觀察 GC 停頓比率與各世代配置速率：
+#### GKE
+
+Cloud Monitoring 的 `kubernetes.io/container/memory/used_bytes`（依記憶體類型區分）與 `kubernetes.io/container/memory/limit_utilization`。用量呈鋸齒狀（上升後隨回收下降）是正常的；只升不降、最後觸頂被終止，才需要分析。
+
+#### EKS
+
+Container Insights 的 `pod_memory_working_set`、`pod_memory_utilization_over_pod_limit` 與 `pod_number_of_container_restarts`。
+
+### 應用程式層
 
 ```bash
-# 即時監控 GC 堆積大小、配置速率、LOH 尺寸與 GC 停頓時間比
-dotnet-counters monitor System.Runtime \
-  --counters alloc-rate,gc-heap-size,gen-0-gc-count,gen-1-gc-count,gen-2-gc-count,time-in-gc,loh-size,poh-size \
-  --process-id $(pgrep -n -f "dotnet.*YourService")
+dotnet-counters monitor --process-id 1 --counters System.Runtime
 ```
 
-指標判讀準則：
-- 若 `time-in-gc`（GC 所花時間百分比）持續大於 `10%`，代表系統深陷嚴重的記憶體配置壓力與頻繁 GC 停頓。
-- 若 `loh-size` 隨流量急速階梯式上升，代表存在未集區化（Non-pooled）的大型物件配置反模式。
-
-### 3. 採集記憶體轉儲並分析 LOH 碎裂與根引用路徑
-
-當記憶體膨脹時，截取 Core Dump 並透過 `dotnet-dump` 深入分析：
-
-```bash
-# 1. 抓取完整程序 Dump
-dotnet-dump collect --type Full -p $(pgrep -n -f "dotnet.*YourService") -o /tmp/app_memory.dmp
-
-# 2. 啟動互動式分析命令列
-dotnet-dump analyze /tmp/app_memory.dmp
-```
-
-在 `dotnet-dump` 互動式視窗內執行下列 SOS 診斷命令：
-
-```text
-# 檢視託管堆積整體狀態（包括各世代大小與記憶體碎裂度）
-> eeheap -gc
-
-# 統計記憶體中大於等於 85,000 位元組（LOH）的物件分佈
-> dumpheap -stat -min 85000
-
-# 針對特定類型（如 byte[]）列出所有大於 85KB 的實體記憶體位址
-> dumpheap -type System.Byte[] -min 85000
-
-# 追蹤某個大物件為何無法被 GC 回收（分析根節點 GC Root 引用鏈條）
-> gcroot <物件實體十六進位位址>
-```
+觀察 `dotnet.gc.last_collection.heap.size`（回收後的堆積大小）、`dotnet.gc.collections`（各世代的回收次數）與 `dotnet.process.memory.working_set`。第 2 代回收次數快速增加、同時有大量配置，常是 LOH 上的大型陣列；working set 遠大於堆積，往原生記憶體的方向找。

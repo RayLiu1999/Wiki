@@ -1,273 +1,140 @@
 ---
-title: ".NET 生產環境效能診斷：CLI 診斷工具鏈實戰"
-description: "深入剖析 dotnet-counters、dotnet-trace、dotnet-gcdump 與 dotnet-dump 四大生產排查利器之分工矩陣、容器 IPC 權限與實戰避坑。"
+title: ".NET 效能診斷：CPU 飆高、記憶體增加、程式卡住時該用哪個工具"
+description: "說明 dotnet-counters、dotnet-trace、dotnet-gcdump、dotnet-dump 各自適合的情況、在 Kubernetes 的容器中執行診斷工具的方式，以及把診斷檔案帶出叢集分析。"
 articleId: "dotnet-profiling"
 topic: "dotnet"
 category: "runtime-performance"
-order: 5
-tags: [".NET", "效能診斷", "dotnet-trace", "dotnet-dump", "dotnet-counters", "dotnet-gcdump", "生產排查"]
+order: 10
+tags: [".NET", "dotnet-counters", "dotnet-trace", "dotnet-gcdump", "dotnet-dump", "kubectl debug"]
 articleType: "deep-dive"
-prerequisites: ["dotnet-gc-memory"]
-relatedArticles: ["dotnet-threadpool", "dotnet-reflection"]
-applicableVersions: ".NET 8 / .NET 10、Linux / macOS / Windows"
 difficulty: "advanced"
-lastReviewed: "2026-10-10"
-takeaway: "即時監控看 dotnet-counters；CPU 瓶頸取樣用 dotnet-trace；記憶體分析優先選輕量 dotnet-gcdump，死鎖才採集完整 dotnet-dump。"
+prerequisites: ["dotnet-gc-memory"]
+relatedArticles: ["dotnet-threadpool", "engineering-metrics-tracing", "containers-image-runtime"]
+applicableVersions: ".NET 8～10、.NET 診斷工具 9.x 以上。"
+lastReviewed: "2026-10-21"
+takeaway: "先用 dotnet-counters 看趨勢判斷是哪一類問題；CPU 用 dotnet-trace 取樣、記憶體增長用 dotnet-gcdump、卡住或死結才用 dotnet-dump；在容器中以 kubectl debug 掛上診斷容器執行。"
 sources:
   - title: "Microsoft Learn：.NET 診斷工具概觀"
-    url: "https://learn.microsoft.com/zh-tw/dotnet/core/diagnostics/"
-  - title: "Microsoft Learn：dotnet-trace 效能分析公用程式"
-    url: "https://learn.microsoft.com/zh-tw/dotnet/core/diagnostics/dotnet-trace"
+    url: "https://learn.microsoft.com/dotnet/core/diagnostics/tools-overview"
+  - title: "Microsoft Learn：在容器中使用診斷工具"
+    url: "https://learn.microsoft.com/dotnet/core/diagnostics/diagnostics-in-containers"
+  - title: "Microsoft Learn：dotnet-trace"
+    url: "https://learn.microsoft.com/dotnet/core/diagnostics/dotnet-trace"
+  - title: "Microsoft Learn：dotnet-gcdump"
+    url: "https://learn.microsoft.com/dotnet/core/diagnostics/dotnet-gcdump"
+  - title: "Microsoft Learn：dotnet-dump"
+    url: "https://learn.microsoft.com/dotnet/core/diagnostics/dotnet-dump"
+  - title: "Kubernetes：使用臨時容器偵錯"
+    url: "https://kubernetes.io/docs/tasks/debug/debug-application/debug-running-pod/#ephemeral-container"
+  - title: "Cloud Storage：gcloud storage cp"
+    url: "https://cloud.google.com/sdk/gcloud/reference/storage/cp"
+  - title: "AWS CLI：s3 cp"
+    url: "https://docs.aws.amazon.com/cli/latest/reference/s3/cp.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-某金融支付微服務在促銷晚間突發 CPU 100% 滿載，對外 API 延遲由正常的 15ms 飆升至 8,000ms 以上，大批前端交易逾時。由於生產環境受嚴格金融資安規範管控，容器內部未安裝開發環境工具、禁止掛載 Visual Studio 遠端偵錯埠，且宿主機只開放唯讀與有限的 Bastion SSH 存取。
+正式環境出現效能問題時，你需要知道「程式此刻在做什麼」。.NET 提供一組命令列診斷工具，透過 runtime 內建的診斷通道連到執行中的程序，不需要重新部署或修改程式：
 
-值班工程師在緊張混亂中登入 Kubernetes 叢集節點，使用急救指令對佔用了 14GB 記憶體的服務容器執行了 `dotnet-dump collect --type Full`。然而，抓取 14GB 記憶體轉儲的過程耗時近 2 分鐘，磁碟 I/O 瞬間被寫入操作打滿，整個 .NET 程序在寫入期間處於凍結狀態（Freeze）。這段期間內，Kubernetes 的 Liveness Probe 探針因連續 3 次健康檢查未回應（HTTP 504 / Connection Refused），判定容器死鎖失效，毫不留情地發送 SIGKILL 強制殺死並重啟了該 Pod！
+| 工具 | 回答的問題 | 成本 |
+| --- | --- | --- |
+| `dotnet-counters` | 整體趨勢：CPU、GC、執行緒池、請求數 | 很低，可以持續觀察 |
+| `dotnet-trace` | CPU 時間花在哪些方法 | 中等，取樣一段時間 |
+| `dotnet-gcdump` | 堆積裡有哪些物件、各佔多少 | 收集時會觸發一次完整 GC，短暫暫停 |
+| `dotnet-dump` | 所有執行緒在做什麼、完整記憶體內容 | 高：檔案和程序記憶體一樣大，收集時暫停程序 |
 
-最終結果：不僅問題沒有排查出來，寶貴的第一案發現場記憶體狀態完全蒸發，還引發了大規模的服務震盪中斷。
-
-事後復盤證實，該次事故是團隊對 .NET 官方**跨平台 CLI 診斷工具鏈**的工作原理與負載代價缺乏系統性理解所致。面對生產環境故障，必須根據問題特徵（CPU 暴增、記憶體洩漏、緒池飢餓、執行緒死鎖）精準挑選工具，而非盲目採取代價最昂貴的全量傾印。
+## 運作原理
 
 ```mermaid
 flowchart TD
-    subgraph DiagnosisMatrix["生產問題診斷決策樹"]
-        Issue["線上突發效能問題"] --> CheckType{"問題現象與指標"}
-        
-        CheckType -->|"CPU 飆高 / 延遲變慢"| UseTrace["使用 dotnet-trace (採樣模式)<br/>效能開銷: 1% ~ 3%<br/>產出: 火焰圖 (FlameGraph)"]
-        CheckType -->|"記憶體緩慢爬升 / 懷疑洩漏"| UseGCDump["使用 dotnet-gcdump<br/>效能開銷: 極輕量 (數十 MB)<br/>產出: 物件拓撲圖 (無敏感資料)"]
-        CheckType -->|"指標異動即時觀測"| UseCounters["使用 dotnet-counters<br/>效能開銷: 接近 0%<br/>產出: 終端儀表板 / CSV 監控"]
-        CheckType -->|"執行緒死鎖 / Crash 轉儲分析"| UseDump["謹慎使用 dotnet-dump<br/>效能開銷: 昂貴 (暫停行程)<br/>防護: 預留磁碟與調大 K8s Probe"]
-    end
+    Symptom["症狀"] --> C["dotnet-counters：先看趨勢"]
+    C -->|"CPU 高"| T["dotnet-trace：CPU 取樣<br/>看熱門的方法"]
+    C -->|"記憶體持續增加"| G["dotnet-gcdump：比較兩個時間點的堆積"]
+    C -->|"CPU 低、請求卡住"| S["dotnet-stack 或 dotnet-dump：<br/>看執行緒卡在哪裡"]
 ```
 
----
+這些工具透過 runtime 的**診斷通道**（在 Linux 上是 `/tmp` 下的一個 socket）和程序溝通，所以工具必須能看到目標程序與它的 `/tmp`。在 Kubernetes 上，正式的映像通常沒有診斷工具，chiseled 映像甚至沒有 shell，因此要用 `kubectl debug` 掛上一個帶有工具的**臨時容器**，與應用程式容器共用程序命名空間。
 
-## 致命反模式 vs. 正確解法
+## 常見錯誤與正確寫法
 
-### 反模式一：記憶體排查盲目採集完整 Full Core Dump
+### 1. 一出問題就收集完整的 dump
 
-在生產容器記憶體高達數 GB 至十幾 GB 時，執行全量 Dump 會將所有虛擬記憶體頁面寫入容器內部或暫存磁區。這會帶來三大致命威脅：
-1. **磁碟溢滿崩潰**：多數容器的根檔案系統（Root OverlayFS）或臨時空間限制在幾 GB，寫入 Dump 會直接導致 `No space left on device`。
-2. **行程長時間凍結**：CLR 必須凍結所有執行緒以維護記憶體一致性，極易觸發容器平台（K8s / ECS）的 Liveness 探針超時而遭殺死。
-3. **敏感資訊外洩**：Full Dump 包含記憶體內所有使用者密碼、API 金鑰與明文字串，違反 PCI-DSS 與 GDPR 資安規範。
+完整的 dump 和程序的記憶體一樣大（幾 GB），收集時程序會暫停，還可能包含敏感資料（連線字串、使用者資料）。記憶體問題先用 `dotnet-gcdump`：它只記錄堆積中物件的型別與數量，檔案小得多。只有在需要看執行緒的完整狀態（例如死結）或原生記憶體時，才收集完整 dump。
 
-### 反模式二：排查 CPU 瓶頸使用全量事件追蹤（Allocation Profiler）
+### 2. 在 Pod 裡找不到工具或連不到程序
 
-在 CPU 滿載時若使用追蹤工具捕捉「每一個記憶體配置事件」，會向 ETW / EventPipe 塞入每秒數百萬筆事件，進一步加劇 CPU 耗損達 30% 以上，直接引發服務雪崩。
-
-### 正確解法：建立分級診斷矩陣，並在應用程式暴露標準 Metrics 指標
-
-排查 CPU 應採用「取樣分析器（Sample Profiler）」，排查記憶體洩漏優先採用僅記錄型別與物件關聯的 `dotnet-gcdump`。同時，程式庫應使用 `System.Diagnostics.Metrics` 暴露自訂指標，無縫對接 CLI 工具。
-
-```csharp
-using System;
-using System.Collections.Generic;
-using System.Diagnostics.Metrics;
-using System.Threading;
-
-namespace DotNetPerformance.Diagnostics;
-
-/// <summary>
-/// 應用程式核心效能指標暴露器
-/// </summary>
-public sealed class PaymentMetricsPublisher : IDisposable
-{
-    private readonly Meter _meter;
-    private readonly Counter<long> _transactionCounter;
-    private readonly Histogram<double> _latencyHistogram;
-    private readonly ObservableGauge<int> _activeWorkerGauge;
-    private int _currentActiveWorkers;
-    private bool _disposed;
-
-    public PaymentMetricsPublisher()
-    {
-        // 建立微服務指標量測器（可透過 dotnet-counters 即時採集）
-        _meter = new Meter("DotNetPerformance.PaymentCore", "1.0.0");
-
-        // 累計交易計數器
-        _transactionCounter = _meter.CreateCounter<long>(
-            name: "payment_transactions_total",
-            unit: "{transactions}",
-            description: "累計處理交易筆數");
-
-        // 處理延遲直方圖
-        _latencyHistogram = _meter.CreateHistogram<double>(
-            name: "payment_latency_ms",
-            unit: "ms",
-            description: "交易處理時間分佈");
-
-        // 當前工作執行緒觀測計
-        _activeWorkerGauge = _meter.CreateObservableGauge(
-            name: "payment_active_workers",
-            observeValue: () => _currentActiveWorkers,
-            unit: "{workers}",
-            description: "當前正在處理中之背景工作執行緒數");
-    }
-
-    public void RecordTransaction(double elapsedMilliseconds, bool isSuccess)
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        var statusTag = new KeyValuePair<string, object?>("status", isSuccess ? "success" : "failed");
-        _transactionCounter.Add(1, statusTag);
-        _latencyHistogram.Record(elapsedMilliseconds, statusTag);
-    }
-
-    public void SetActiveWorkers(int count)
-    {
-        Interlocked.Exchange(ref _currentActiveWorkers, count);
-    }
-
-    public void Dispose()
-    {
-        if (!_disposed)
-        {
-            _meter.Dispose();
-            _disposed = true;
-        }
-    }
-}
-
-public static class Program
-{
-    public static void Main()
-    {
-        Console.WriteLine("=== .NET CLI 診斷整合與標準指標暴露實測 ===");
-
-        using var publisher = new PaymentMetricsPublisher();
-        publisher.SetActiveWorkers(5);
-
-        // 模擬交易處理與指標記錄
-        publisher.RecordTransaction(12.5, isSuccess: true);
-        publisher.RecordTransaction(45.2, isSuccess: true);
-        publisher.RecordTransaction(180.0, isSuccess: false);
-
-        Console.WriteLine($"指標服務已成功就緒，進程 PID: {Environment.ProcessId}");
-        Console.WriteLine("請在外部終端執行以下指令即可無侵入式觀察即時數據：");
-        Console.WriteLine($"  dotnet-counters monitor DotNetPerformance.PaymentCore -p {Environment.ProcessId}");
-    }
-}
-```
-
-預期控制台輸出：
-
-```text
-=== .NET CLI 診斷整合與標準指標暴露實測 ===
-指標服務已成功就緒，進程 PID: 12345
-請在外部終端執行以下指令即可無侵入式觀察即時數據：
-  dotnet-counters monitor DotNetPerformance.PaymentCore -p 12345
-```
-
----
-
-## 踩坑與避坑指南
-
-### 1. 深入理解 CLR 診斷架構底層：Diagnostics IPC 運作機制
-
-.NET Core 3.0 開始，CLR 在啟動時會自動在作業系統層級建立 Diagnostics IPC 管道：
-- **Linux 系統**：在 `/tmp` 目錄下建立 Unix Domain Socket，格式為 `/tmp/dotnet-diagnostic-{PID}-{epoch}-socket`。
-- **Windows 系統**：建立具名管道（Named Pipe），格式為 `\\.\pipe\dotnet-diagnostic-{PID}`。
-
-#### 容器內診斷的兩大權限天坑：
-1. **Linux 使用者 UID/GID 不匹配**：
-   如果您的 .NET 應用程式在容器中以非 root 帳號（例如 UID `1000` / `appuser`）運行，而您透過 `kubectl exec` 以 `root` 帳號進入容器執行診斷工具，診斷工具將**無法掛載 Socket**。診斷工具必須以與 .NET 行程完全相同的 UID 運行（`su appuser` 或在指令中指定 `--user 1000`）。
-2. **缺少的 Linux Capability（`SYS_PTRACE`）**：
-   診斷工具若要附加（Attach）到不同 PID 的程序，Linux 容器必須具備 `CAP_SYS_PTRACE` 權限。若在精簡的生產環境中執行，需透過 Kubernetes Pod 設定檔宣告：
-   ```yaml
-   securityContext:
-     capabilities:
-       add: ["SYS_PTRACE"]
-   ```
-
-### 2. 四大診斷工具分工矩陣與取捨權衡
-
-| 診斷工具 | 主要適用場景 | 對線上行程的效能損耗 | 產出檔案大小 | 是否包含記憶體明文 |
-| :--- | :--- | :--- | :--- | :--- |
-| **dotnet-counters** | 即時儀表板監控、GC 停頓比率、執行緒池排隊觀察 | 趨近於 0% | 無產出（或輕量 CSV/JSON） | 否 |
-| **dotnet-trace** | CPU 100% 暴增、方法執行延遲熱點、I/O 阻塞定位 | 1% ~ 3%（取樣模式） | 數十 MB 至數百 MB | 否（僅方法簽名與呼叫棧） |
-| **dotnet-gcdump** | 記憶體持續增長、LOH 碎裂、記憶體洩漏初篩 | 極低（短暫暫停標記堆積） | 5MB ~ 100MB（僅記錄型別與引用） | **否（絕無使用者明文）** |
-| **dotnet-dump** | 程式死鎖（Deadlock）、Crash 崩潰前夕、原生記憶體洩漏 | **極高（凍結行程寫入磁碟）** | 等同於進程記憶體（數 GB 至十幾 GB） | **是（包含所有敏感資料）** |
-
----
-
-## 線上排查指令
-
-針對四大典型生產事故場景的標準排查 SOP：
-
-### 場景一：CPU 飆高 100% ── 採集 CPU 取樣並產出 Speedscope 火焰圖
-
-在不中斷業務的情況下，抓取 30 秒的 CPU 呼叫棧取樣：
+以臨時容器的方式掛上診斷工具，`--target` 指定要共用程序命名空間的容器：
 
 ```bash
-# 1. 採集 30 秒 CPU 取樣數據 (使用輕量 Sample Profiler)
-dotnet-trace collect \
-  --process-id $(pgrep -n -f "dotnet.*YourApp") \
-  --duration 00:00:30 \
-  --providers Microsoft-DotNETCore-SampleProfiler \
-  --output /tmp/cpu_profile.nettrace
+# 掛上一個帶有 .NET SDK 的臨時容器
+kubectl debug -it <pod-name> -n shop --image=mcr.microsoft.com/dotnet/sdk:10.0 --target=order-api -- bash
 
-# 2. 將 nettrace 格式轉換為開源火焰圖工具可讀取的 Speedscope 格式
-dotnet-trace convert /tmp/cpu_profile.nettrace --format Speedscope
-
-# 3. 將 cpu_profile.speedscope.json 下載至本機，打開 https://www.speedscope.app 即刻視覺化分析熱點方法
+# 在臨時容器中安裝工具並列出可診斷的程序
+dotnet tool install -g dotnet-counters && export PATH="$PATH:/root/.dotnet/tools"
+dotnet-counters ps
 ```
 
-### 場景二：記憶體洩漏 ── 採集輕量 GCDump 比對物件增長
+診斷通道的 socket 位於目標容器的 `/tmp`，臨時容器需要能存取它；依官方「在容器中使用診斷工具」文件的建議設定（例如共用 `/tmp` 的 volume，或以目標程序的根目錄路徑存取），並確認兩個容器以相同的使用者身分執行。
 
-避免 OOMKilled 的輕量記憶體分析：
+### 3. 只看平均，沒有比較
+
+記憶體洩漏要比較兩個時間點：先收集一次 gcdump，等一段時間（例如處理了一萬個請求後）再收集一次，比較哪些型別的物件數量持續增加。
 
 ```bash
-# 1. 於第 0 分鐘採集第一份快照
-dotnet-gcdump collect -p $(pgrep -n -f "dotnet.*YourApp") -o /tmp/heap_baseline.gcdump
-
-# 2. 等待 10 分鐘記憶體爬升後，採集第二份快照
-dotnet-gcdump collect -p $(pgrep -n -f "dotnet.*YourApp") -o /tmp/heap_growth.gcdump
-
-# 3. 使用 Visual Studio 或 dotnet-gcdump report 比對兩者之間數量淨增加最多的型別
-dotnet-gcdump report /tmp/heap_growth.gcdump
+dotnet-gcdump collect --process-id 1 --output /tmp/before.gcdump
+# ……等待一段時間
+dotnet-gcdump collect --process-id 1 --output /tmp/after.gcdump
 ```
 
-### 場景三：執行緒池排隊與 GC 停頓即時觀測
-
-快速辨識系統是否深陷 ThreadPool 飢餓或頻繁 Full GC：
+CPU 問題收集 30 秒左右的取樣，輸出成可以用 Speedscope 或 PerfView 開啟的格式：
 
 ```bash
-# 監控 System.Runtime 核心計數器，每 1 秒更新一次
-dotnet-counters monitor System.Runtime \
-  --counters alloc-rate,cpu-usage,gc-heap-size,time-in-gc,threadpool-thread-count,threadpool-queue-length \
-  --process-id $(pgrep -n -f "dotnet.*YourApp")
+dotnet-trace collect --process-id 1 --duration 00:00:30 --format Speedscope --output /tmp/cpu
 ```
 
-重點指標判定：
-- `threadpool-queue-length > 50` 且持續上升：典型的 Sync-over-Async 或長工作阻塞執行緒池。
-- `time-in-gc > 15%`：嚴重記憶體分配壓力，GC 正在吞噬系統吞吐量。
+## 使用邊界
 
-### 場景四：服務死鎖（Deadlock）排查 ── dotnet-dump SOS 深度除錯
+- 診斷工具對正式環境仍有影響：gcdump 與 dump 會暫停程序，先把那個 Pod 從流量中移除（例如暫時讓 readiness 失敗或調整 label），再收集。
+- dump 可能包含個資與機密，收集、傳輸與保存都要依資料保護規範處理，用完刪除。
+- 持續性的監控交給指標與追蹤，診斷工具是出事時的放大鏡，見 [指標與追蹤](/engineering/metrics-tracing/)。
 
-當行程毫無 CPU 消耗但所有請求全部卡死，確認發生死鎖時：
+## 雲端排查
+
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-# 1. 採集 Mini/Full 傾印
-dotnet-dump collect -p $(pgrep -n -f "dotnet.*YourApp") -o /tmp/deadlock.dmp
-
-# 2. 啟動互動式分析命令列
-dotnet-dump analyze /tmp/deadlock.dmp
+# 選一個有問題的 Pod，記下它所在的節點與容器名稱
+kubectl get pods -n shop -l app=order-api -o wide
+kubectl get pod <pod-name> -n shop -o jsonpath='{.spec.containers[*].name}'
 ```
 
-在互動式視窗內執行 SOS 診斷命令：
+chiseled 映像沒有 `tar`，`kubectl cp` 無法從應用程式容器複製檔案；把診斷檔案寫在臨時容器能存取的位置，再從臨時容器上傳到物件儲存。
 
-```text
-# 自動偵測 CLR Monitor 鎖死狀態
-> deadlocks
+### 託管服務層
 
-# 列出所有執行緒的託管呼叫堆疊
-> clrstack -all
+#### GKE
 
-# 檢視目前所有執行緒的狀態與鎖等待情況
-> threads
+在臨時容器中（或使用帶有 gcloud 的映像）把檔案上傳到 Cloud Storage，再下載到自己的電腦分析。臨時容器以 Pod 的工作負載身分存取，需要對該 bucket 有寫入權限：
 
-# 檢視未完成的非同步工作狀態機（Async State Machines）
-> dumpasync
+```bash
+gcloud storage cp /tmp/after.gcdump gs://shop-diagnostics/order-api/$(date +%Y%m%d-%H%M)/
 ```
+
+#### EKS
+
+上傳到 S3，Pod 的 Pod Identity 角色需要該 bucket 的 `s3:PutObject` 權限：
+
+```bash
+aws s3 cp /tmp/after.gcdump s3://shop-diagnostics/order-api/$(date +%Y%m%d-%H%M)/
+```
+
+存放診斷檔案的 bucket 設定較短的生命週期規則，自動刪除舊檔。
+
+### 應用程式層
+
+```bash
+# 在臨時容器中即時觀察：GC、執行緒池、例外與 ASP.NET Core 請求
+dotnet-counters monitor --process-id 1 --counters System.Runtime,Microsoft.AspNetCore.Hosting
+```
+
+`dotnet.exceptions` 突然暴增，常常是某段重試或錯誤處理在大量丟出例外，這本身就會消耗大量 CPU；搭配 dotnet-trace 找出是哪裡在丟。

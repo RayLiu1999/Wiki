@@ -1,12 +1,1 @@
-[
-  "platforms/dotnet/background-services.md",
-  "platforms/dotnet/clr-jit.md",
-  "platforms/dotnet/gc-memory.md",
-  "platforms/dotnet/hosting.md",
-  "platforms/dotnet/identifiers.md",
-  "platforms/dotnet/profiling.md",
-  "platforms/dotnet/reflection.md",
-  "platforms/dotnet/sdk-packages.md",
-  "platforms/dotnet/threadpool.md",
-  "platforms/dotnet/time-zones.md"
-]
+[]

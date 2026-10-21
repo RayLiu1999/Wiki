@@ -1,169 +1,137 @@
 ---
-title: ".NET JIT 編譯機制：分層編譯與動態 PGO 實戰"
-description: "深入剖析 Tier 0/1 分層編譯架構、Dynamic PGO 執行期優化、冷啟動預熱延遲毛刺，以及 Readiness 探針防護對策。"
+title: "JIT 與分層編譯：新 Pod 剛上線的那幾分鐘為什麼特別慢"
+description: "說明 .NET 如何在執行時把程式編譯成機器碼、分層編譯與動態 PGO 如何讓程式越跑越快、新 Pod 的暖機延遲，以及 ReadyToRun 與 Native AOT 的取捨。"
 articleId: "dotnet-clr-jit"
 topic: "dotnet"
 category: "runtime-performance"
-order: 3
-tags: [".NET", "JIT", "分層編譯", "Dynamic PGO", "冷啟動", "ReadyToRun"]
+order: 8
+tags: [".NET", "JIT", "分層編譯", "Dynamic PGO", "ReadyToRun", "暖機"]
 articleType: "deep-dive"
 difficulty: "advanced"
-prerequisites: ["csharp-syntax-traps"]
-relatedArticles: ["dotnet-gc-memory", "dotnet-hosting"]
-applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-lastReviewed: "2026-10-10"
-takeaway: "理解 Tier 0 極速啟動與 Tier 1 穩態優化的折衷；關鍵熱路徑於就緒探針前完成預熱，消除動態 PGO 升級期的延遲毛刺。"
+prerequisites: ["dotnet-hosting"]
+relatedArticles: ["aspnet-core-api-styles-aot", "kubernetes-autoscaling", "dotnet-profiling"]
+applicableVersions: ".NET 8～10（Dynamic PGO 自 .NET 8 起預設開啟）。"
+lastReviewed: "2026-10-21"
+takeaway: "新程序一開始執行的是快速編譯、未最佳化的程式碼，經過一段時間才換成最佳化版本；讓熱門路徑在 readiness 通過前先跑過一輪，不要關閉分層編譯。"
 sources:
-  - title: "Microsoft Learn：分層編譯 (Tiered Compilation)"
-    url: "https://learn.microsoft.com/zh-tw/dotnet/core/run-time-config/compilation#tiered-compilation"
-  - title: "Microsoft .NET Blog：Dynamic PGO in .NET 8"
-    url: "https://devblogs.microsoft.com/dotnet/performance-improvements-in-net-8/#pgo"
-  - title: "Stephen Toub：Performance Improvements in .NET 9"
-    url: "https://devblogs.microsoft.com/dotnet/performance-improvements-in-net-9/"
+  - title: "Microsoft Learn：分層編譯設定"
+    url: "https://learn.microsoft.com/dotnet/core/runtime-config/compilation"
+  - title: ".NET Blog：Performance Improvements in .NET 8（Dynamic PGO）"
+    url: "https://devblogs.microsoft.com/dotnet/performance-improvements-in-net-8/"
+  - title: "Microsoft Learn：ReadyToRun 編譯"
+    url: "https://learn.microsoft.com/dotnet/core/deploying/ready-to-run"
+  - title: "Microsoft Learn：原生 AOT 部署"
+    url: "https://learn.microsoft.com/dotnet/core/deploying/native-aot/"
+  - title: "Microsoft Learn：.NET Runtime 內建指標（JIT）"
+    url: "https://learn.microsoft.com/dotnet/core/diagnostics/built-in-metrics-runtime"
+  - title: "Google Cloud：External Application Load Balancer 記錄與監控"
+    url: "https://cloud.google.com/load-balancing/docs/https/https-logging-monitoring"
+  - title: "Amazon CloudWatch：Application Load Balancer 指標"
+    url: "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-cloudwatch-metrics.html"
 ---
 
-在雲端原生微服務與容器化架構中，.NET 應用程式的效能由兩個看似矛盾的目標所驅動：**極速的容器冷啟動（Cold Start）**以因應 Kubernetes HPA 彈性擴縮，以及**極致的穩態吞吐量（Steady-State Throughput）**以承受電商尖峰流量。為了解決這一經典矛盾，現代 .NET（.NET 8 / .NET 10）引進了高度精密的 **分層編譯（Tiered Compilation）** 與 **動態設定檔引導最佳化（Dynamic PGO, Profile-Guided Optimization）** 機制。然而，若未掌握其執行期時序特性，新 Pod 上線時往往會遭遇嚴重的「首波延遲毛刺（Warmup Latency Spikes）」。
+## 這是什麼
 
-## 案發現場
+C# 編譯後產生的是 IL（中間語言），不是 CPU 能直接執行的機器碼。程式執行時，**JIT 編譯器**在第一次呼叫某個方法時才把它編譯成機器碼。
 
-某電商核心商品目錄微服務在年中慶促銷期間，每當遭遇流量高峰觸發 Kubernetes HPA 自動擴容或進行滾動更新發布時，監控圖表便會出現極其劇烈的震盪：
+為了讓程式快速啟動，.NET 使用**分層編譯**：一開始用「快速但不太最佳化」的方式編譯（第 0 層），等某個方法被呼叫很多次、確定是熱門路徑後，再在背景用「完整最佳化」的方式重新編譯（第 1 層）。.NET 8 起還預設開啟**動態 PGO**：在第 0 層執行時收集實際的執行資料（例如某個介面最常見的實作類別），讓第 1 層的最佳化更精準。
 
-1. **新 Pod 剛上線前 30 秒 P99 延遲暴增 50 倍**：當 HPA 偵測到負載擴充了 5 個新 Pod，新 Pod 剛通過預設的 HTTP 就緒探針（Readiness Probe）並切入流量時，前 30 秒至 1 分鐘內的 API P99 延遲由正常的 20ms 瘋狂飆升至 1,200ms 以上，前端買家頻繁回報商品頁面卡頓，部分外部請求甚至因逾時而收到 HTTP 504 錯誤。
-2. **三分鐘後性能奇蹟般飆升**：令人費解的是，伺服器完全沒有重啟，在持續承接流量 2~3 分鐘後，這些新 Pod 的延遲突然自動滑落至 15ms，整體的每秒處理能力（RPS）甚至比舊版 Pod 還高出近 25%！
-3. **盲目關閉分層編譯引發冷啟動逾時崩潰**：維運團隊為了消除上線初期的延遲毛刺，嘗試在組態中粗暴地設定 `DOTNET_TieredCompilation=0`（關閉分層編譯）。結果新 Pod 啟動時間由原本的 2.5 秒直接暴增至 35 秒，導致容器多次因超過 Kubernetes `initialDelaySeconds` 與探針超時而陷入 `CrashLoopBackOff`，促銷擴容徹底失敗！
+結果是：程式越跑越快。反過來說，剛啟動的程序比較慢。
+
+## 運作原理
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor Traffic as 線上生產流量
-    participant K8s as K8s 負載平衡器
-    participant Pod as 新啟動的 .NET Pod
-    participant JIT as CLR JIT 編譯引擎 (背景)
-
-    Pod->>K8s: 通過健康檢查，宣告就緒 (Ready)
-    K8s->>Pod: 導入首波生產流量 (每秒 5,000 RPS)
-    Note over Pod: 處於 Tier 0 (Quick JIT) 階段！<br/>無內聯、無迴圈展開、帶有 Profiling 插樁開銷<br/>💥 延遲飆升至 1,200ms！
-    Traffic->>Pod: 呼叫方法累積超過 30 次
-    Pod->>JIT: 觸發 Tier 1 動態 PGO 背景重編譯排程
-    Note over JIT: JIT 背景執行緒消耗 CPU：<br/>分析型別熱度、解虛擬化、函式內聯
-    JIT-->>Pod: 替換為極致 Tier 1 機器碼！
-    Note over Pod: 進入穩態高效能！<br/>延遲回落至 15ms，吞吐量提升 25%！
+flowchart LR
+    Start["Pod 啟動"] --> T0["第 0 層：快速編譯<br/>啟動快，執行較慢"]
+    T0 -->|"同一方法被呼叫多次"| Profile["收集執行資料（PGO）"]
+    Profile --> T1["第 1 層：背景重新編譯<br/>完整最佳化"]
+    T1 --> Steady["穩定狀態：最快"]
+    Start -. "流量太早進來" .-> Spike["延遲尖峰"]
 ```
 
-## 反模式與正確解法
+新 Pod 通過 readiness 後立刻接到正常流量，這時大部分程式碼還在第 0 層，再加上第一次呼叫時要即時編譯、連線池還沒建立、快取是空的，前幾百個請求的延遲會明顯偏高。HPA 在尖峰時擴容，新 Pod 正好在最忙的時候加入，這個暖機延遲就特別明顯。
 
-### 反模式一：冷 Pod 剛通過基本健康檢查即直面全量生產流量
+## 常見錯誤與正確寫法
 
-許多微服務的就緒探針（Readiness Probe）僅回傳一個靜態的 `200 OK`，完全沒有觸發任何業務核心路徑。當容器宣告就緒時，內部數百個核心業務方法甚至**尚未被 JIT 編譯過**，或僅處於未經最佳化的 **Tier 0（Quick JIT）** 階段。
+### 1. 新 Pod 一啟動就接全部流量
 
-#### 崩潰機理：分層編譯的生命週期演進
-1. **Tier 0（Quick JIT）**：當方法第一次被呼叫時，JIT 為了極速啟動，完全放棄耗時的內聯（Inlining）與迴圈展開，以極粗略的代碼迅速生成機器碼；更重要的是，現代 .NET 會在代碼中注入「效能分析計數器（Tier 0 Instrumentation）」，收集執行期型別分佈與分支機率。
-2. **Tier 1（Optimized JIT + Dynamic PGO）**：當該方法在 Tier 0 下被呼叫累積達 **30 次**（且經過一段冷卻平穩期）後，CLR 會將該方法排入背景 JIT 工作佇列。JIT 引擎讀取收集到的實際執行期特徵，進行深度的介面解虛擬化（Guarded Devirtualization）、大膽的熱路徑內聯與暫存器配置，編譯出終極機器碼並原子替換舊指標。
-若在 Tier 0 階段就硬接大促尖峰流量，插樁代碼的開銷加上背景 JIT 搶奪 CPU，必然引發嚴重的延遲毛刺！
-
-#### 正確解法：在就緒探針（Readiness Probe）之前實施受控預熱（Warmup Loop）
-
-在 ASP.NET Core 的啟動流程中（例如自定義的 `IHostedService` 或就緒健康檢查中），主動對最關鍵的熱路徑（如折扣計算、訂單序列化、快取反序列化）發起內部暖身迴圈（通常虛擬執行 35~50 次），促使 CLR 在流量導入前就將關鍵熱方法升級至 Tier 1：
+在 readiness 通過之前，先讓熱門路徑實際跑過一輪：建立資料庫與 Redis 的連線、呼叫幾次主要的查詢。
 
 ```csharp
-public sealed class JitWarmupHostedService : IHostedService
+public sealed class Warmup(IServiceScopeFactory scopes, ReadinessState readiness, ILogger<Warmup> logger) : IHostedService
 {
-    private readonly ILogger<JitWarmupHostedService> _logger;
-
-    public JitWarmupHostedService(ILogger<JitWarmupHostedService> logger)
+    public async Task StartAsync(CancellationToken ct)
     {
-        _logger = logger;
-    }
-
-    public Task StartAsync(CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("開始執行 JIT 動態 PGO 核心路徑預熱...");
-
-        var dummyOrder = new OrderCalculationContext
+        try
         {
-            Quantity = 2,
-            UnitPrice = 100m,
-            CouponCode = "WARMUP"
-        };
-
-        // 循環呼叫超過 30 次，滿足 JIT Tier 1 升級門檻 (Tiering threshold)
-        for (int i = 0; i < 35; i++)
-        {
-            OrderPricingEngine.CalculateFinalPrice(dummyOrder);
+            await using var scope = scopes.CreateAsyncScope();
+            var catalog = scope.ServiceProvider.GetRequiredService<ProductReader>();
+            for (var i = 0; i < 50; i++)
+            {
+                await catalog.GetAsync(productId: 1, ct); // 觸發 JIT、建立連線、填入快取
+            }
         }
-
-        _logger.LogInformation("JIT 核心路徑預熱完成，準備開放接收線上流量");
-        return Task.CompletedTask;
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "暖機未完成，仍然開始接受流量");
+        }
+        finally
+        {
+            readiness.MarkReady(); // /health/ready 依此回應
+        }
     }
-
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StopAsync(CancellationToken ct) => Task.CompletedTask;
 }
 ```
 
-### 反模式二：為了消除預熱期，盲目關閉分層編譯（TieredCompilation = false）
+暖機只能加速前段，第 1 層的重新編譯仍需要實際流量累積，所以暖機後的延遲仍會在前幾分鐘逐步下降。
 
-部分工程師為了追求「開機即最高效能」，在組態中設定了 `DOTNET_TieredCompilation=0`。這會強制 JIT 在應用程式啟動時，對呼叫到的每一個方法直接進行完整的 Tier 1 複雜優化編譯。
+### 2. 為了避免暖機而關閉分層編譯
 
-#### 嚴重代價：
-1. **冷啟動時間暴增 10 倍以上**：原本 2 秒啟動的 Web API，啟動時間延長至數十秒，喪失了容器秒級水平擴縮容（Autoscaling）的能力；
-2. **喪失 Dynamic PGO 效益**：沒有了 Tier 0 的執行期插樁取樣，JIT 無法得知真實流量下哪些介面實作佔了 99%，也就無法實施精確的介面解虛擬化（Interface Devirtualization），其最終穩態效能反而不如開啟分層編譯！
+關閉分層編譯（`TieredCompilation=false`），所有方法一開始就做完整最佳化編譯：啟動時間大幅增加，而且失去動態 PGO 的效果，穩定狀態反而可能更慢。保留預設值，用暖機與 ReadyToRun 處理啟動問題。
 
-#### 正確解法：保持預設的分層編譯與 Dynamic PGO 開啟
+### 3. 啟動很慢就直接改用 Native AOT
 
-確保專案設定檔中開啟現代最佳化標準（.NET 8+ 預設已啟用）：
+**ReadyToRun** 在發布時先把程式預先編譯成機器碼，啟動時不需要 JIT，之後仍可以由分層編譯換成更好的版本；它只是讓檔案變大一些，相容性幾乎沒有限制：
 
 ```xml
 <PropertyGroup>
-  <!-- 保持啟用分層編譯與動態 PGO（預設即為 true） -->
-  <TieredCompilation>true</TieredCompilation>
-  <TieredPGO>true</TieredPGO>
+  <PublishReadyToRun>true</PublishReadyToRun>
 </PropertyGroup>
 ```
 
-### 反模式三：對極端超低延遲方法未進行強制預編譯
+**Native AOT** 啟動最快、記憶體最小，但不能使用依賴執行期反射的功能，也沒有動態 PGO，長時間執行的吞吐量不一定比較好，見 [API 風格與 Native AOT](/frameworks/aspnet-core/api-styles-aot/)。
 
-在部分對延遲極度敏感的交易環節（例如每小時僅觸發一次、但一旦觸發必須在 100 微秒內完成的高頻撤單防線），由於該方法呼叫頻率過低，可能永遠無法達到 30 次呼叫門檻，每次執行都會撞上冷啟動。
+## 使用邊界
 
-#### 正確解法：使用 `RuntimeHelpers.PrepareMethod` 強制預編譯
+- 可預期的尖峰（例如大促開始時間）提前擴容，讓新 Pod 有時間暖機，比在尖峰時才自動擴容更穩定，見 [自動擴縮](/platforms/kubernetes/autoscaling/)。
+- 暖機要有時間上限，失敗也不能讓 Pod 永遠不就緒；配合 startupProbe 的上限設定。
+- 量測效能時，排除前幾分鐘的資料，否則會把暖機的成本誤認為穩定狀態的表現。
 
-```csharp
-// 對於極少呼叫但要求首擊超低延遲的極端方法，手動強制 JIT 編譯至最高階
-RuntimeHelpers.PrepareMethod(
-    typeof(RiskEngine).GetMethod(nameof(RiskEngine.EmergencyCancel))!.MethodHandle);
-```
+## 雲端排查
 
-## 踩坑與避坑指南
-
-### 1. Dynamic PGO 的核心威力：介面解虛擬化（Guarded Devirtualization）
-在傳統物件導向中，呼叫介面方法（如 `IOrderCalculator.Calculate()`）需要查詢虛擬方法表（vtable），編譯器無法對其進行內聯（Inlining）。
-- **Dynamic PGO 的突破**：在 Tier 0 階段，CLR 觀察到線上 99.8% 的呼叫傳入的都是 `StandardOrderCalculator`。升級至 Tier 1 時，JIT 會生成保護性跳轉：
-  `if (calculator is StandardOrderCalculator fast) { /* 直接內聯代碼，零虛擬呼叫開銷！ */ } else { /* 回退 vtable 查詢 */ }`
-
-### 2. ReadyToRun（R2R）與 JIT 的折衷
-ReadyToRun（AOT 預編譯為本機指令）能顯著縮短容器冷啟動時間，因為大部分代碼在打包 Docker 映像時已經編譯好。
-- **避坑細節**：即便使用了 ReadyToRun，.NET 依然會在背景利用 Dynamic PGO 重新編譯熱方法，以達到超越靜態編譯的峰值效能。若追求極速冷啟動，建議在 Docker 映像構建時開啟 `<PublishReadyToRun>true</PublishReadyToRun>`。
-
-### 3. Native AOT vs. JIT + Dynamic PGO 的吞吐量迷思
-許多人認為 Native AOT 一定比 JIT 快。
-- **真相**：Native AOT 擁有最極致的**冷啟動（毫秒級）與超低記憶體佔用**；但在**長效高吞吐量（穩態性能）**方面，具備 Dynamic PGO 的 JIT 引擎因為能根據真實生產流量做動態內聯與分支預測，其吞吐極限往往能超越或持平靜態編譯！
-
-## 線上排查指令
-
-針對生產環境中 JIT 編譯時間、方法編譯計數與延遲毛刺問題，使用下列指令排查：
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-# 1. 監控 JIT 編譯速率與在 JIT 中消耗的 CPU 時間比例
-dotnet-counters monitor --process-id <PID> \
-    --counters System.Runtime[jit-compilation-rate,methods-jitted-count,time-in-jit]
-
-# 2. 檢視分層編譯與動態 PGO 的執行期狀態（在除錯環境觀察）
-export DOTNET_TieredPGO=1
-export DOTNET_JITMinOpts=0
-
-# 3. 輸出特定熱路徑方法的底層反組譯彙編代碼（驗證是否已成功內聯與解虛擬化）
-export DOTNET_JitDisasm="*OrderPricingEngine*CalculateFinalPrice*"
-dotnet run --project src/OrderApi/
-
-# 4. 使用 dotnet-trace 採集啟動階段的 CPU Profile，排查 JIT 編譯是否佔用過多啟動時間
-dotnet-trace collect --process-id <PID> --profile cpu-sampling --output /tmp/jit_startup.nettrace
+# 新 Pod 的啟動時間：建立到 Ready 花了多久
+kubectl get pods -n shop -l app=order-api \
+  -o custom-columns=NAME:.metadata.name,CREATED:.metadata.creationTimestamp,READY:'.status.conditions[?(@.type=="Ready")].lastTransitionTime'
 ```
+
+### 託管服務層
+
+#### GKE
+
+在 Cloud Monitoring 把 `loadbalancing.googleapis.com/https/backend_latencies` 依後端分組，對照擴容與部署的時間：每次有新 Pod 加入就出現延遲尖峰，代表暖機不足。
+
+#### EKS
+
+CloudWatch `AWS/ApplicationELB` 的 `TargetResponseTime`（可看 p99）在部署或擴容時出現尖峰；搭配 ALB 目標群組的「慢啟動」設定，可以讓新目標在一段時間內逐步增加流量。
+
+### 應用程式層
+
+```bash
+dotnet-counters monitor --process-id 1 --counters System.Runtime
+```
+
+`dotnet.jit.compiled_methods` 在啟動後快速增加，然後趨於平緩；它還在快速增加時，程式仍在大量 JIT 編譯，延遲偏高是預期的。
