@@ -1,226 +1,161 @@
 ---
-title: "高併發 CRUD：正確結果、冪等與短交易"
-description: "把新增、查詢、更新與刪除拆成可驗證的業務契約，處理競爭、重送與未知提交。"
+title: "高併發 CRUD：重複送出的請求、同時寫入與結果不明的提交"
+description: "說明「先查再新增」為什麼擋不住重複資料、如何用唯一約束與 upsert 達成冪等、以流水帳記錄金額異動，以及 COMMIT 結果不明時該怎麼辦。"
 articleId: "data-access-concurrent-crud"
 topic: "data-access"
 category: "database-concurrency"
-order: 14
-tags:
-  - "CRUD"
-  - "高併發"
-  - "冪等"
-  - "庫存"
-  - "交易"
-  - "死鎖"
+order: 15
+tags: ["冪等", "唯一約束", "Upsert", "ON CONFLICT", "流水帳", "未知提交"]
+articleType: "deep-dive"
 difficulty: "advanced"
-prerequisites:
-  - "data-access-concurrency"
-  - "architecture-outbox-inbox"
-relatedArticles:
-  - "data-access-isolation-locking"
-  - "data-access-pool-capacity"
-  - "data-access-bulk-retention"
-applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
-lastReviewed: "2026-10-10"
-takeaway: "把新增、查詢、更新與刪除拆成可驗證的業務契約，處理競爭、重送與未知提交。"
+prerequisites: ["data-access-concurrency", "data-access-isolation-locking"]
+relatedArticles: ["aspnet-core-http-contracts", "architecture-outbox-inbox", "data-access-replication-recovery"]
+applicableVersions: "PostgreSQL 14～18、MySQL 8.0／8.4、Npgsql 8～10、Dapper 2.x。"
+lastReviewed: "2026-10-21"
+takeaway: "重複的判斷交給資料庫的唯一約束，不要靠「先查再寫」；金額異動以帶唯一編號的流水記錄；提交結果不明時，先用業務鍵查詢再決定要不要重試。"
 sources:
-  - title: "PostgreSQL 18：交易隔離"
-    url: "https://www.postgresql.org/docs/18/transaction-iso.html"
-  - title: "PostgreSQL 18：鎖定"
-    url: "https://www.postgresql.org/docs/18/explicit-locking.html"
-  - title: "MySQL 8.4：減少與處理死鎖"
-    url: "https://dev.mysql.com/doc/refman/8.4/en/innodb-deadlocks-handling.html"
+  - title: "PostgreSQL：INSERT ... ON CONFLICT"
+    url: "https://www.postgresql.org/docs/current/sql-insert.html#SQL-ON-CONFLICT"
+  - title: "PostgreSQL：Error Codes（23505 unique_violation）"
+    url: "https://www.postgresql.org/docs/current/errcodes-appendix.html"
+  - title: "MySQL 8.4：INSERT ... ON DUPLICATE KEY UPDATE"
+    url: "https://dev.mysql.com/doc/refman/8.4/en/insert-on-duplicate.html"
+  - title: "MySQL 8.4：AUTO_INCREMENT Handling in InnoDB"
+    url: "https://dev.mysql.com/doc/refman/8.4/en/innodb-auto-increment-handling.html"
+  - title: "Cloud SQL for PostgreSQL：Cloud Monitoring 指標"
+    url: "https://cloud.google.com/sql/docs/postgres/monitor-instance"
+  - title: "Amazon RDS：CloudWatch metrics for Amazon RDS"
+    url: "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-metrics.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-在高併發微服務或雲端架構中，看似基礎的 CRUD（增查改刪）操作往往是資安災難與資料損壞的溫床。
+手機網路切換的瞬間，App 送出了下單請求但沒收到回應，於是自動重送；買家又著急地多按了一次。伺服器在幾毫秒內收到三個一模一樣的請求。如果每個都建立一張訂單，買家就被扣了三次款。
 
-最常見的慘痛案例是**重複扣款與重複建立訂單**：
-使用者在手機 App 點擊「立即付款」，恰逢 4G/5G 網路瞬間切換抖動，前端發送了請求後未收到即時回傳，觸發了 SDK 的自動重試；與此同時，使用者焦慮地連點了兩次按鈕。後端 API 接收到了兩個幾乎完全相同的請求。
+**冪等**（idempotent）指的是：同一個操作執行一次或很多次，結果都一樣。下單、付款、加值這類操作必須設計成冪等。關鍵是：判斷「這個請求處理過了沒」必須由資料庫保證，而不是由程式先查一下。
 
-程式碼寫法如下：
-```csharp
-// 致命的 Check-then-Act 競態條件
-var existingOrder = await db.Orders.FirstOrDefaultAsync(o => o.PaymentId == req.PaymentId);
-if (existingOrder == null)
-{
-    db.Orders.Add(new Order { ... });
-    await db.SaveChangesAsync();
-}
+## 運作原理
+
+```mermaid
+sequenceDiagram
+    participant A as 請求 A
+    participant DB as 資料庫
+    participant B as 請求 B（重送）
+    A->>DB: SELECT 有沒有 idempotency_key = K？→ 沒有
+    B->>DB: SELECT 有沒有 idempotency_key = K？→ 沒有
+    A->>DB: INSERT 訂單（K）
+    B->>DB: INSERT 訂單（K）
+    Note over DB: 沒有唯一約束：兩筆都寫入<br/>有唯一約束：B 的 INSERT 失敗或被忽略
 ```
-在併發請求下，請求 A 與請求 B 同時執行了 `FirstOrDefaultAsync`，雙方都得到 `null`；隨後雙方都執行了 `Add` 並寫入成功。結果：**資料庫出現了兩筆扣款紀錄與兩張一模一樣的訂單**。
 
-另一種常見災難是**未知提交（Unknown Commit / In-doubt Transaction）**：
-應用程式向資料庫發送 `COMMIT`，但就在網路封包傳回的前一刻，雲端連線抖動中斷。.NET 拋出 `NpgsqlException: Connection reset by peer`。此時應用程式根本不知道該交易到底是在資料庫成功提交了、還是回滾了？若貿然重試，會造成二次執行；若直接報錯，使用者帳戶已被扣款卻顯示失敗。
+「先查再寫」在兩個請求同時進來時一定會失敗：兩邊查詢時都還沒有資料。程式裡無論怎麼檢查，都有這段時間差；部署成多個 Pod 時，記憶體裡的鎖也擋不住。
 
----
+**唯一約束**由資料庫在寫入時檢查，兩個 INSERT 一定會有一個違反約束。搭配 `INSERT ... ON CONFLICT`（PostgreSQL）或 `ON DUPLICATE KEY`（MySQL），可以在同一句 SQL 裡處理「已經存在」的情況。
 
-## 反模式與正確解法
+## 常見錯誤與正確寫法
 
-### 反模式一：將商業資料唯一性寄託於應用層查詢判斷
+### 1. 用「先查再新增」防重複
 
-在多行程、多 Pod 部署的架構中，「先查再插（Check-then-Insert）」**完全不具備執行緒安全性與原子性**。只要兩個請求跨過了查詢時間窗口，任何軟體層判斷都會失效。
-
-### 正確解法一：資料庫唯一鍵約束與原子 Upsert（ON CONFLICT / DUPLICATE KEY）
-
-真正的第一道防線必須是**資料庫層級的唯一索引（Unique Constraint）**，搭配原子 Upsert 語法：
+在 `orders.idempotency_key` 建立唯一約束，並用一句 SQL 完成「不存在才新增」：
 
 ```csharp
-// 正確解法：利用 PostgreSQL 的 ON CONFLICT 或 MySQL 的 ON DUPLICATE KEY 達成原子性
-public async Task<UpsertResult> CreateOrGetOrderAsync(CreateOrderCommand cmd, CancellationToken ct)
+// 套件：Dapper、Npgsql
+public async Task<OrderSummary> CreateOrGetAsync(PlaceOrder cmd, CancellationToken ct)
 {
-    // 利用 PostgreSQL 原生語法：若存在相同的 idempotency_key，則不做任何事或更新時間
-    const string sql = """
-        INSERT INTO orders (id, user_id, idempotency_key, amount, status, created_at)
-        VALUES (@Id, @UserId, @IdempotencyKey, @Amount, 'Created', NOW())
-        ON CONFLICT (idempotency_key) 
-        DO NOTHING
+    const string insert = """
+        INSERT INTO orders (id, buyer_id, idempotency_key, amount, status, created_at)
+        VALUES (@Id, @BuyerId, @IdempotencyKey, @Amount, 'Created', now())
+        ON CONFLICT (idempotency_key) DO NOTHING
         RETURNING id, status;
         """;
 
-    await using var conn = await _dataSource.OpenConnectionAsync(ct);
-    var order = await conn.QuerySingleOrDefaultAsync<OrderSummary>(
-        new CommandDefinition(sql, new 
-        { 
-            Id = Guid.NewGuid(),
-            cmd.UserId, 
-            cmd.IdempotencyKey, 
-            cmd.Amount 
-        }, cancellationToken: ct));
+    await using var conn = await dataSource.OpenConnectionAsync(ct);
+    var created = await conn.QuerySingleOrDefaultAsync<OrderSummary>(new CommandDefinition(
+        insert, new { Id = Guid.CreateVersion7(), cmd.BuyerId, cmd.IdempotencyKey, cmd.Amount }, cancellationToken: ct));
 
-    if (order is null)
-    {
-        // 代表發生衝突且被忽略，重新讀取既有訂單回傳（達成嚴格冪等性）
-        order = await conn.QuerySingleAsync<OrderSummary>(
-            new CommandDefinition(
-                "SELECT id, status FROM orders WHERE idempotency_key = @IdempotencyKey", 
-                new { cmd.IdempotencyKey }, 
-                cancellationToken: ct));
-
-        return UpsertResult.Existing(order);
-    }
-
-    return UpsertResult.Created(order);
+    // DO NOTHING 時不會回傳任何列：代表這個鍵已經處理過，讀出既有的結果回傳
+    return created ?? await conn.QuerySingleAsync<OrderSummary>(new CommandDefinition(
+        "SELECT id, status FROM orders WHERE idempotency_key = @IdempotencyKey",
+        new { cmd.IdempotencyKey }, cancellationToken: ct));
 }
 ```
 
----
+同一個冪等鍵卻帶著不同的內容（例如金額不同），代表用戶端的錯誤；比對既有訂單的內容，不一致就回 422，見 [HTTP 契約](/frameworks/aspnet-core/http-contracts/)。
 
-### 反模式二：無流水號的相對數值更新（缺乏防重標記）
+### 2. 直接加減餘額
 
-當更新帳戶餘額或點數時，若直接執行：
 ```sql
-UPDATE accounts SET balance = balance + 100 WHERE user_id = 1;
+-- 錯：逾時後重試，每執行一次就多加 100
+UPDATE accounts SET balance = balance + 100 WHERE id = 1;
 ```
-如果網路逾時觸發重試，該語句每執行一次餘額就增加 100，完全破壞了冪等性。
 
-### 正確解法二：流水帳模型（Ledger Model）與冪等表防護
-
-金融與電商的核心原則是：**餘額是計算出來的，所有異動必須以不可竄改的流水記錄（Ledger Entry）呈現**。
+金額異動先寫一筆帶有唯一編號的**流水記錄**，同一個交易裡再更新餘額。重送時，流水記錄的唯一約束會擋下第二次：
 
 ```csharp
-// 正確解法：透過唯一 TransactionId 流水記錄驅動帳戶餘額異動
-public async Task DepositAsync(DepositRequest req, CancellationToken ct)
+await using var conn = await dataSource.OpenConnectionAsync(ct);
+await using var tx = await conn.BeginTransactionAsync(ct);
+try
 {
-    await using var conn = await _dataSource.OpenConnectionAsync(ct);
-    await using var tx = await conn.BeginTransactionAsync(ct);
-
-    // 1. 寫入帳務交易流水（transaction_id 為唯一索引）
-    const string insertLedgerSql = """
-        INSERT INTO account_transactions (id, account_id, amount, source_ref, created_at)
-        VALUES (@TransactionId, @AccountId, @Amount, @SourceRef, NOW());
-        """;
-
-    try
-    {
-        await conn.ExecuteAsync(new CommandDefinition(
-            insertLedgerSql, 
-            req, 
-            transaction: tx, 
-            cancellationToken: ct));
-    }
-    catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") // 唯一鍵衝突
-    {
-        // 該筆加值已經成功處理過，安全直接返回（冪等保護）
-        await tx.RollbackAsync(ct);
-        return;
-    }
-
-    // 2. 更新當前餘額快取
-    const string updateBalanceSql = """
-        UPDATE accounts 
-        SET balance = balance + @Amount 
-        WHERE id = @AccountId;
-        """;
+    await conn.ExecuteAsync(new CommandDefinition(
+        "INSERT INTO account_entries (id, account_id, amount, source_ref) VALUES (@Id, @AccountId, @Amount, @SourceRef)",
+        req, tx, cancellationToken: ct)); // source_ref 有唯一約束
 
     await conn.ExecuteAsync(new CommandDefinition(
-        updateBalanceSql, 
-        req, 
-        transaction: tx, 
-        cancellationToken: ct));
+        "UPDATE accounts SET balance = balance + @Amount WHERE id = @AccountId", req, tx, cancellationToken: ct));
 
     await tx.CommitAsync(ct);
 }
+catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+{
+    // 這筆加值已經處理過：交易自動回滾，視為成功
+}
 ```
 
----
+餘額欄位是流水的彙總，可以隨時從流水重新計算核對。
 
-## 踩坑與避坑指南
+### 3. 提交逾時就直接重試
 
-### 1. MySQL ON DUPLICATE KEY UPDATE 的自增主鍵跳號
-- **踩坑點**：在 MySQL InnoDB 中，執行 `INSERT ... ON DUPLICATE KEY UPDATE` 時，無論最終是執行 INSERT 還是 UPDATE，InnoDB 都會預先向 `AUTO_INCREMENT` 計數器申請一個新的主鍵 ID。頻繁發生衝突時，自增 ID 會急劇跳號（Gap in auto-increment），若使用 32 位元 INT 主鍵可能迅速耗盡！
-- **解法**：高頻 Upsert 的資料表，主鍵務必使用 `BIGINT` 或業務唯一識別碼（UUIDv7）。
+`CommitAsync` 送出後連線中斷，你不知道交易到底提交了沒有。直接重試可能做兩次，直接回失敗可能讓已成功的訂單被當成失敗。正確做法是：用這次操作的業務鍵（訂單 ID、冪等鍵）查詢資料庫，存在就視為成功，不存在才重試。這也是為什麼每個寫入操作都應該有一個由用戶端或應用程式事先產生的唯一鍵。
 
-### 2. 未知提交（Unknown Commit）的客戶端應對準則
-- 當 `CommitAsync()` 拋出通訊中斷例外時：
-  1. **切勿直接重試寫入**。
-  2. 應用層應將此任務標記為 `Unknown / InDoubt`，或使用先前生成的唯一業務識別碼（如 `OrderId` / `IdempotencyKey`）反查資料庫確認狀態。
-  3. 若訂單已存在，視為成功；若不存在，再進行受控補發。
+## 使用邊界
 
-### 3. 多列更新時的死鎖順序陷阱
-- 若交易 A 同時更新訂單項目 1 與項目 2（順序：1 ➔ 2）；而交易 B 同時更新項目 2 與項目 1（順序：2 ➔ 1）。在高併發下兩者必定觸發死鎖。
-- **鐵律**：在批次更新或多列鎖定時，**所有交易必須對操作的主鍵進行全域一致排序**（例如 `orderItems.OrderBy(x => x.Id)`），從根源消除交叉死鎖。
+- MySQL 的 `INSERT ... ON DUPLICATE KEY UPDATE` 在衝突時仍可能消耗自動遞增的 ID，頻繁衝突的表用 `BIGINT` 主鍵，或改用應用程式產生的 ID（例如 UUIDv7）。
+- 冪等鍵要有保存期限與清理機制；保存期限至少要涵蓋用戶端可能重送的時間。
+- 跨服務的重複處理（例如訊息重送）用 Inbox，見 [Outbox 與 Inbox](/architecture/outbox-inbox/)。
 
----
+## 雲端排查
 
-## 線上排查指令
+### 叢集層（GKE 與 EKS 相同）
 
-### 1. 查找資料庫中重複建立的異常記錄
-
-```sql
--- 稽核是否存在違反業務唯一原則的重複訂單
-SELECT idempotency_key, COUNT(*)
-FROM orders
-GROUP BY idempotency_key
-HAVING COUNT(*) > 1;
-
--- 稽核帳務流水是否有重複的 source_ref
-SELECT source_ref, COUNT(*)
-FROM account_transactions
-GROUP BY source_ref
-HAVING COUNT(*) > 1;
+```bash
+# 冪等鍵衝突（重送被擋下）的次數；突然增加通常代表用戶端在大量重試
+kubectl logs -n shop -l app=order-api --since=1h | grep -c "idempotency_key"
 ```
 
-### 2. 即時觀測資料庫交易持續時間（識別未關閉的長交易）
+### 託管服務層
+
+#### 兩邊相同：稽核重複與長交易
 
 ```sql
--- PostgreSQL: 檢視目前執行中且超過 2 秒的交易
-SELECT pid, now() - xact_start AS tx_age, query, state
+-- 不應該有重複的業務資料；有就代表某條寫入路徑沒有唯一約束保護
+SELECT idempotency_key, count(*) FROM orders GROUP BY 1 HAVING count(*) > 1;
+SELECT source_ref, count(*) FROM account_entries GROUP BY 1 HAVING count(*) > 1;
+
+-- 持有交易超過 2 秒的連線
+SELECT pid, now() - xact_start AS age, state, left(query, 80)
 FROM pg_stat_activity
-WHERE state IN ('active', 'idle in transaction')
-  AND now() - xact_start > interval '2 seconds'
-ORDER BY tx_age DESC;
+WHERE xact_start IS NOT NULL AND now() - xact_start > interval '2 seconds'
+ORDER BY age DESC;
 ```
 
-### 3. Prometheus / Grafana 監控指標
+#### GKE
 
-```text
-# 唯一鍵衝突發生頻率（異常攀升代表前端防連點失效或惡意撞擊）
-rate(pg_stat_database_tuples_returned[1m]) 
+Cloud SQL Query Insights 中，`INSERT INTO orders` 的執行次數明顯多於實際成立的訂單數，代表用戶端重送很多；搭配 `cloudsql.googleapis.com/database/postgresql/num_backends` 觀察是否同時造成連線壓力。
 
-# 交易執行超過 1 秒的比例
-sum(rate(npgsql_transaction_duration_seconds_bucket{le="1.0"}[1m])) 
-/ 
-sum(rate(npgsql_transaction_duration_seconds_count[1m]))
-```
+#### EKS
+
+CloudWatch `AWS/RDS` 的 `DatabaseConnections` 與 `CPUUtilization` 在重試風暴時會同步上升；逐句統計用 `pg_stat_statements` 比較 INSERT 次數與成功建立的訂單數。
+
+### 應用程式層
+
+為「冪等命中」（請求是重送、回傳既有結果）建立計數指標。它的比例突然升高，往往是用戶端的重試策略或網路出了問題，而不是伺服器端的錯誤。

@@ -1,218 +1,155 @@
 ---
-title: "C# 與 MySQL：連線池、取消與 InnoDB"
-description: "用 MySqlConnector 理解短期連線、TLS、參數化 SQL 與 MySQL 的容量設定。"
+title: "C# 連 MySQL：選對 driver、設好連線與取消，避開閒置斷線"
+description: "說明為什麼優先使用 MySqlConnector、連線池與閒置逾時的關係、取消請求後如何讓 MySQL 停止查詢，以及 TINYINT 與布林的對應。"
 articleId: "data-access-mysql-dotnet"
 topic: "data-access"
 category: "database-connections"
 order: 11
-tags:
-  - "MySQL"
-  - "C#"
-  - "MySqlConnector"
-  - "InnoDB"
-  - "TLS"
-  - "ConnectionTimeout"
+tags: ["MySQL", "MySqlConnector", "連線池", "wait_timeout", "InnoDB"]
+articleType: "deep-dive"
 difficulty: "advanced"
-prerequisites:
-  - "data-access-csharp-connections"
-relatedArticles:
-  - "data-access-pool-capacity"
-  - "data-access-concurrent-crud"
-  - "data-access-isolation-locking"
-applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）說明；MySqlConnector 2.x+。"
-lastReviewed: "2026-10-10"
-takeaway: "用 MySqlConnector 理解短期連線、TLS、參數化 SQL 與 MySQL 的容量設定。"
+prerequisites: ["data-access-csharp-connections"]
+relatedArticles: ["data-access-postgresql-dotnet", "data-access-isolation-locking", "data-access-pool-capacity"]
+applicableVersions: "MySqlConnector 2.x、MySQL 8.0／8.4、.NET 8～10。"
+lastReviewed: "2026-10-21"
+takeaway: "用 MySqlConnector 並全程使用非同步 API；讓連線池的閒置回收時間短於伺服器與網路的閒置斷線時間；把 CancellationToken 傳下去，MySqlConnector 會替你取消伺服器上的查詢。"
 sources:
-  - title: "MySqlConnector：套件與目標框架"
-    url: "https://mysqlconnector.net/overview/installing/"
-  - title: "MySqlConnector：連線設定"
+  - title: "MySqlConnector：Connection Options"
     url: "https://mysqlconnector.net/connection-options/"
-  - title: "MySQL 8.4：InnoDB buffer pool"
-    url: "https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool.html"
-  - title: "MySQL 8.4：InnoDB 隔離層級"
-    url: "https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html"
+  - title: "MySqlConnector：與 MySql.Data 的差異"
+    url: "https://mysqlconnector.net/tutorials/migrating-from-connector-net/"
+  - title: "MySQL 8.4：wait_timeout"
+    url: "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_wait_timeout"
+  - title: "MySQL 8.4：Server Status Variables（Aborted_clients）"
+    url: "https://dev.mysql.com/doc/refman/8.4/en/server-status-variables.html"
+  - title: "Cloud SQL for MySQL：Cloud Monitoring 指標"
+    url: "https://cloud.google.com/sql/docs/mysql/monitor-instance"
+  - title: "Amazon RDS：CloudWatch metrics for Amazon RDS"
+    url: "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-metrics.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-在以 C# / .NET 搭配 MySQL（8.0 / 8.4 InnoDB）架構的電商後端系統中，每逢尖峰促銷或夜間批次排程時，常會突然爆發一波連線異常：
+.NET 連 MySQL 有兩個常見的 driver：Oracle 的 `MySql.Data`（Connector/NET）與開源的 **MySqlConnector**。MySqlConnector 從頭以非同步 I/O 實作，`await` 時真的會把執行緒還回去；這對高併發的 Web API 很重要，見 [async/await](/languages/csharp/async-await/)。EF Core 的 MySQL provider（Pomelo）也是建立在 MySqlConnector 之上。
 
-```text
-MySqlConnector.MySqlException (0x80004005): The connection was closed by the host.
-   at MySqlConnector.Core.ServerSession.ReceiveReplyAsync(...)
-   at MySqlConnector.Core.ConnectionPool.GetSessionAsync(...)
+這篇說明用 MySqlConnector 連 MySQL 時，最常遇到的三個問題：連線無故斷開、取消請求後查詢還在跑、型別對應不如預期。
+
+## 運作原理
+
+```mermaid
+sequenceDiagram
+    participant Pool as MySqlConnector 連線池
+    participant Net as 負載平衡器／NAT
+    participant DB as MySQL
+    Pool->>DB: 連線使用完畢，放回池中閒置
+    Note over Net: 閒置超過網路設備的逾時，<br/>連線被默默切斷
+    Note over DB: 閒置超過 wait_timeout，<br/>伺服器主動關閉
+    Pool->>DB: 下一個請求借出這條連線
+    DB-->>Pool: 連線已失效，查詢失敗
 ```
 
-伴隨而來的現象是：應用程式端出現大量逾時報錯，但在 MySQL 資料庫端觀察，CPU 卻持續飆高在 95% 以上，`SHOW PROCESSLIST` 發現大量執行緒處於 `Sending data` 或 `Locked` 狀態。即便用戶端 HTTP 請求早已逾時並中止連線，MySQL 伺服器端依然持續在背景計算這些被廢棄的巨量查詢。
+連線池裡的閒置連線，可能被兩方切斷：
 
-更嚴重的災難發生在雲端網路邊界：當應用程式與受管 MySQL（如 GCP Cloud SQL for MySQL 或 AWS RDS Aurora MySQL）之間經過負載平衡器或雲端 NAT 防火牆時，若連線處於空閒（Idle）狀態超過數分鐘，中間防火牆會默默丟棄 TCP 連線（Silent TCP Drop）。當 .NET 應用程式下一次從連線池拿出這條「半死連線（Half-open connection）」發送查詢時，請求會硬生生卡住直到作業系統 TCP 逾時（通常為數十秒），導致服務連鎖癱瘓。
+- **MySQL 伺服器**：閒置超過 `wait_timeout`（預設 8 小時）就關閉。
+- **中間的網路設備**：負載平衡器、NAT、防火牆對閒置連線也有逾時，常常比 8 小時短很多。
 
----
+MySqlConnector 用 `ConnectionIdleTimeout`（預設 180 秒）主動回收閒置太久的連線，借出連線時也會做重設檢查。只要池的回收時間短於網路與伺服器的逾時，就不容易借到已失效的連線。
 
-## 反模式與正確解法
+**取消**：MySQL 的通訊協定在查詢執行時不能插話。MySqlConnector 收到取消時，會另外開一條連線送出 `KILL QUERY`，讓伺服器停止那句查詢。
 
-### 反模式一：使用舊版 Oracle MySql.Data 驅動與同步阻塞呼叫
+## 常見錯誤與正確寫法
 
-在過去的歷史包袱中，部分專案仍引用 Oracle 官方的 `MySql.Data` 套件，該套件早期在非同步 I/O 上存在大量的 `Wait()` 與假非同步包裝，在高併發下極易造成 ThreadPool 飢餓。此外，舊驅動在非同步取消（`CancellationToken`）的支援度上不完整，導致 Client 斷線後 MySQL 無法得知。
-
-### 正確解法一：全面採用 MySqlConnector 並配置抗網路抖動參數
-
-生產環境強烈建議統一採用開源社群維護的 **`MySqlConnector`**（Pomelo.EntityFrameworkCore.MySql 的預設底層依賴）。它具備完整的真正的非同步 I/O，並提供強大的連線池管理與心跳檢查機制：
+### 1. 使用同步 API 或舊 driver
 
 ```csharp
-// Program.cs: 生產級 MySQL 連線字串最佳實踐設定
-var connStringBuilder = new MySqlConnectionStringBuilder
-{
-    Server = "mysql-primary.internal",
-    Port = 3306,
-    Database = "ecommerce_db",
-    UserID = "app_user",
-    Password = builder.Configuration["DbPassword"],
-
-    // 1. 連線池容量控制（依 Pod 數與 DB 承受力推算）
-    Pooling = true,
-    MinimumPoolSize = 5,
-    MaximumPoolSize = 30,
-
-    // 2. 解決中間防火牆 Silent Drop 與半死連線
-    ConnectionIdlePingInterval = 30, // 每 30 秒對空閒連線發送 Ping 心跳
-    ConnectionIdleTimeout = 60,      // 空閒超過 60 秒主動回收，低於 MySQL 的 wait_timeout
-    Keepalive = 30,                  // TCP Keepalive 保證底層 Socket 活性
-
-    // 3. 連線歸還池中時清理狀態，防止 Session 污染
-    ConnectionReset = true,
-
-    // 4. 超時防護
-    ConnectionTimeout = 5,           // 5 秒拿不到連線立即拋出例外，保護執行緒
-    DefaultCommandTimeout = 15       // 指令預設超時 15 秒
-};
-
-var dataSourceBuilder = new MySqlDataSourceBuilder(connStringBuilder.ConnectionString);
-var mysqlDataSource = dataSourceBuilder.Build();
-
-builder.Services.AddSingleton(mysqlDataSource);
-builder.Services.AddDbContextPool<AppDbContext>((sp, options) =>
-{
-    var ds = sp.GetRequiredService<MySqlDataSource>();
-    options.UseMySql(ds.CreateConnection(), ServerVersion.AutoDetect(connStringBuilder.ConnectionString));
-});
+// 錯：同步呼叫佔住執行緒
+using var conn = new MySqlConnection(cs);
+conn.Open();
+var count = (long)new MySqlCommand("SELECT COUNT(*) FROM orders", conn).ExecuteScalar()!;
 ```
 
-### 反模式二：用戶端取消（Cancellation）後放任 MySQL 燃燒 CPU
-
-在 .NET 呼叫資料庫時，如果只傳入 `CancellationToken`，但在 MySQL 驅動層未開啟取消協議，當使用者關閉瀏覽器或 Gateway 逾時取消時，.NET Task 雖然拋出 `OperationCanceledException`，但 MySQL 伺服器端該 Session 仍會繼續執行直到查詢結束！
-
-### 正確解法二：利用 MySqlCommand.CancelOnTimeout 或主動註冊取消處理
-
-`MySqlConnector` 支援在觸發 `CancellationToken` 時，於底層另開輕量連線向 MySQL 發送 `KILL QUERY <thread_id>`，立即停止伺服器端運算：
+改用 MySqlConnector 的 DataSource 與非同步 API：
 
 ```csharp
-// 生產級查詢：確保 Cancellation 觸發時能向 MySQL 伺服器發送 KILL QUERY
-public async Task<List<ProductDto>> SearchProductsAsync(
-    string keyword, 
-    CancellationToken cancellationToken)
+// 套件：MySqlConnector、MySqlConnector.DependencyInjection
+builder.Services.AddMySqlDataSource(builder.Configuration.GetConnectionString("Shop")!);
+
+public sealed class OrderCounter(MySqlDataSource dataSource)
 {
-    const string sql = """
-        SELECT id, name, price, stock
-        FROM products
-        WHERE category_code = @Keyword
-        ORDER BY created_at DESC
-        LIMIT 50;
-        """;
-
-    await using var conn = await _mysqlDataSource.OpenConnectionAsync(cancellationToken);
-    await using var cmd = new MySqlCommand(sql, conn);
-    cmd.Parameters.AddWithValue("@Keyword", keyword);
-
-    // 註冊 Token 取消回呼：當 HTTP 請求中斷時主動呼叫 cmd.CancelAsync()
-    await using var registration = cancellationToken.Register(() =>
+    public async Task<long> CountAsync(CancellationToken ct)
     {
-        try
-        {
-            // MySqlConnector 會發起 KILL QUERY，立即釋放 MySQL 端 CPU 與鎖！
-            cmd.Cancel();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "向 MySQL 發送取消命令失敗");
-        }
-    });
-
-    var results = new List<ProductDto>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    while (await reader.ReadAsync(cancellationToken))
-    {
-        results.Add(new ProductDto(
-            reader.GetInt64(0),
-            reader.GetString(1),
-            reader.GetDecimal(2),
-            reader.GetInt32(3)));
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
+        await using var cmd = new MySqlCommand("SELECT COUNT(*) FROM orders", conn);
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
-
-    return results;
 }
 ```
 
----
-
-## 踩坑與避坑指南
-
-### 1. MySQL wait_timeout 與連線池 ConnectionIdleTimeout 的時間差
-- **現象**：MySQL 伺服器預設的 `wait_timeout` 通常為 28800 秒（8 小時），但在許多生產環境與雲端資料庫（如 Cloud SQL / RDS）常被調整為 300 秒（5 分鐘）或 600 秒。
-- **踩坑點**：若應用程式連線池的 `ConnectionIdleTimeout` 設為大於 MySQL 的 `wait_timeout`，當夜間流量低時，MySQL 伺服器端已關閉連線，但 .NET 連線池毫不知情，隔天第一個請求拿取該連線時便會直接噴出 `The connection was closed by the host`。
-- **避坑規則**：用戶端 `ConnectionIdleTimeout` 必須**顯著小於**資料庫端的 `wait_timeout`（建議設為 60~120 秒），並啟用 `ConnectionIdlePingInterval=30`。
-
-### 2. TreatTinyAsBoolean 的型別映射陷阱
-- MySQL 的 `TINYINT(1)` 在歷史習慣上常被驅動預設映射為 C# `bool`。
-- **踩坑點**：若資料表欄位設計 `status TINYINT(1)`，原本預期存入 `0: 待處理, 1: 成功, 2: 失敗`，當 `TreatTinyAsBoolean=true`（預設）時，寫入值 2 會被強轉或在讀取時噴出型別轉換例外。
-- **解法**：若表中包含多值的 TINYINT 欄位，應在連線字串明確指定 `TreatTinyAsBoolean=false`，或在 EF Core Model 中明確指定 `.HasColumnType("tinyint")`。
-
-### 3. InnoDB Buffer Pool 命中率不足引起的磁碟 IOPS 瓶頸
-- MySQL 查詢效能嚴重依賴 `innodb_buffer_pool_size`。若 Buffer Pool 命中率低於 95%，代表大量查詢正穿透至磁碟讀取。在查詢時應避免 `SELECT *` 讀取無用的大欄位（如 TEXT/BLOB），以防 Buffer Pool 中的熱點頁面（Page）被冷資料污染淘汰。
-
----
-
-## 線上排查指令
-
-### 1. 查詢 MySQL 連線狀態與中斷客戶端計數
-
-```sql
--- 檢查目前連線數、活躍執行緒與被中斷連線數
-SHOW GLOBAL STATUS LIKE 'Threads_connected';
-SHOW GLOBAL STATUS LIKE 'Threads_running';
-SHOW GLOBAL STATUS LIKE 'Aborted_connects';
-SHOW GLOBAL STATUS LIKE 'Aborted_clients';
-
--- 檢查目前 InnoDB Buffer Pool 命中率
-SELECT 
-    (1 - (variable_value / (
-        SELECT variable_value 
-        FROM performance_schema.global_status 
-        WHERE variable_name = 'Innodb_buffer_pool_read_requests'
-    ))) * 100 AS buffer_pool_hit_rate_pct
-FROM performance_schema.global_status
-WHERE variable_name = 'Innodb_buffer_pool_reads';
-```
-
-### 2. 即時診斷長時間運行的卡頓 Query 與鎖等待
-
-```sql
--- 找出執行超過 10 秒的卡頓查詢並附帶 PROCESS ID
-SELECT ID, USER, HOST, DB, TIME, STATE, INFO
-FROM information_schema.PROCESSLIST
-WHERE COMMAND != 'Sleep' AND TIME > 10
-ORDER BY TIME DESC;
-
--- 必要時手動中斷卡死查詢
--- KILL QUERY <ID>;
-```
-
-### 3. Prometheus / Grafana 監控指標
+### 2. 沒有設定合理的連線選項
 
 ```text
-# MySQL 當前活躍連線數佔最大連線數比例告警
-(mysql_global_status_threads_connected / mysql_global_variables_max_connections) > 0.8
-
-# MySQL 慢查詢產生速率（每秒大於 5 筆）
-rate(mysql_global_status_slow_queries[1m]) > 5
+Server=10.0.0.5;Database=shop;User ID=order_api;SslMode=VerifyFull;MaximumPoolSize=20;ConnectionIdleTimeout=60;DefaultCommandTimeout=10;ConnectionTimeout=5
 ```
+
+| 選項 | 這裡的值 | 用途 |
+| --- | --- | --- |
+| `SslMode` | `VerifyFull` | 加密連線並驗證伺服器憑證 |
+| `MaximumPoolSize` | 20 | 依連線預算計算，不要用預設的 100 |
+| `ConnectionIdleTimeout` | 60 | 閒置 60 秒就回收，短於網路與伺服器的逾時 |
+| `DefaultCommandTimeout` | 10 | 單一 SQL 最多執行 10 秒 |
+| `ConnectionTimeout` | 5 | 建立連線最多等 5 秒 |
+
+密碼不要寫在連線字串的設定檔裡，由 Secret 注入。
+
+`MaximumPoolSize` 要和所有 Pod 的總數一起算，見 [連線池預算](/data-access/pool-capacity/)。
+
+### 3. 取消請求，卻沒把 CancellationToken 傳下去
+
+買家關掉頁面，但查詢沒有收到取消，MySQL 會繼續把它跑完，佔著 CPU 和連線。只要把 `CancellationToken` 傳給 `ExecuteReaderAsync`／`ExecuteScalarAsync`（EF Core 則是 `ToListAsync(ct)`），MySqlConnector 就會替你送出 `KILL QUERY`。
+
+### 4. TINYINT(1) 被讀成 bool
+
+MySqlConnector 預設 `TreatTinyAsBoolean=true`：`TINYINT(1)` 欄位會被讀成 `bool`。如果這個欄位其實存的是 0～9 的小數字（例如評分），讀出來會變成 true／false。小數字欄位用 `TINYINT UNSIGNED`（不加長度）或其他整數型別，或在連線字串關閉這個選項。
+
+## 使用邊界
+
+- MySQL InnoDB 預設隔離等級是 Repeatable Read，鎖的行為和 PostgreSQL 不同，見 [隔離與鎖](/data-access/isolation-locking/)。
+- InnoDB 的效能很依賴 buffer pool（記憶體中的資料頁快取）；工作集超過 buffer pool 時，查詢會大量讀磁碟。託管資料庫的機器規格決定 buffer pool 的大小。
+- 大量匯入用 `MySqlBulkCopy`，需要伺服器允許 `local_infile`，見 [大量寫入與保留](/data-access/bulk-retention/)。
+
+## 雲端排查
+
+### 叢集層（GKE 與 EKS 相同）
+
+```bash
+# 應用程式日誌中的連線中斷錯誤
+kubectl logs -n shop -l app=order-api --since=30m | grep -i -E "connection.*(reset|closed|lost)" | tail
+```
+
+### 託管服務層
+
+#### 兩邊相同：連線狀態與異常中斷
+
+```sql
+-- 被異常中斷的用戶端與連線
+SHOW GLOBAL STATUS LIKE 'Aborted_%';
+
+-- 目前連線，以及執行中的長查詢
+SELECT id, user, host, command, time, state, left(info, 80) AS query
+FROM information_schema.processlist
+WHERE command <> 'Sleep' ORDER BY time DESC LIMIT 20;
+```
+
+`Aborted_clients` 持續增加，代表用戶端沒有正常關閉連線就斷了，常見原因是網路逾時切斷閒置連線。
+
+#### GKE
+
+Cloud SQL for MySQL 的連線數指標是 `cloudsql.googleapis.com/database/network/connections`；CPU 與記憶體看 `database/cpu/utilization`、`database/memory/utilization`。
+
+#### EKS
+
+CloudWatch `AWS/RDS` 的 `DatabaseConnections`、`CPUUtilization`、`FreeableMemory`。`FreeableMemory` 持續偏低，代表執行個體的記憶體不足以容納工作集，讀取會落到磁碟（`ReadIOPS` 同時上升）。
+
+### 應用程式層
+
+連線失效的錯誤集中在「長時間沒有流量之後的第一批請求」，就是閒置連線被網路切斷；把 `ConnectionIdleTimeout` 調短。錯誤分散在所有時段，則要看網路或資料庫本身的狀況。

@@ -1,206 +1,160 @@
 ---
-title: "EF Core 樂觀並行與庫存競爭"
-description: "從兩人修改商品理解版本比對、衝突結果，以及交易和並行控制的分工。"
+title: "樂觀並行與庫存競爭：兩個人同時買最後一件，誰該成功"
+description: "說明「先讀再寫」為什麼會超賣、原子條件更新如何解決庫存競爭、EF Core 的樂觀並行權杖如何偵測衝突，以及熱門商品的衝突處理。"
 articleId: "data-access-concurrency"
 topic: "data-access"
 category: "transactions"
-order: 9
-tags:
-  - "EF Core 樂觀並行與庫存競爭"
-  - "data-access"
+order: 7
+tags: ["EF Core", "樂觀並行", "Concurrency Token", "條件更新", "超賣", "DbUpdateConcurrencyException"]
+articleType: "deep-dive"
 difficulty: "advanced"
-prerequisites:
-  - "data-access-tracking"
-  - "data-access-transactions"
-relatedArticles:
-  - "csharp-thread-safety"
-  - "kubernetes-autoscaling"
-applicableVersions: "以 C# 14／.NET 10 說明；框架與供應商差異見內文。"
-lastReviewed: "2026-10-10"
-takeaway: "從兩人修改商品理解版本比對、衝突結果，以及交易和並行控制的分工。"
+prerequisites: ["data-access-transactions"]
+relatedArticles: ["data-access-concurrent-crud", "data-access-isolation-locking", "architecture-domain-modeling"]
+applicableVersions: "EF Core 8～10、PostgreSQL 14～18、MySQL 8.0／8.4。"
+lastReviewed: "2026-10-21"
+takeaway: "扣庫存用一句帶條件的 UPDATE，檢查影響筆數；修改整個聚合時用並行權杖偵測衝突，衝突後重新讀取再決定，不要無限重試。"
 sources:
-  - title: "EF Core 並行控制"
-    url: "https://learn.microsoft.com/en-us/ef/core/saving/concurrency"
-  - title: "EF Core 交易"
-    url: "https://learn.microsoft.com/en-us/ef/core/saving/transactions"
+  - title: "Microsoft Learn：處理並行衝突"
+    url: "https://learn.microsoft.com/ef/core/saving/concurrency"
+  - title: "Microsoft Learn：EF Core 事件計數器"
+    url: "https://learn.microsoft.com/ef/core/logging-events-diagnostics/event-counters"
+  - title: "Npgsql EF Core：Concurrency tokens（xmin）"
+    url: "https://www.npgsql.org/efcore/modeling/concurrency.html"
+  - title: "Cloud SQL：Cloud Monitoring 指標"
+    url: "https://cloud.google.com/sql/docs/postgres/monitor-instance"
+  - title: "Amazon RDS：CloudWatch metrics for Amazon RDS"
+    url: "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-metrics.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-在電商活動中，商品庫存扣減是併發衝突最激烈的業務場景。假設某限量商品庫存僅剩 1 件，買家 A 與買家 B 在同一毫秒內點擊結帳：
+保溫杯剩 1 件，兩位買家同時按下購買。兩個請求各自讀到「庫存 1」，各自判斷「夠」，各自寫回「庫存 0」，結果賣出 2 件，超賣了。
 
-如果系統沒有並行防護，會發生經典的**丟失更新（Lost Update）**：
-1. 買家 A 讀取商品，庫存為 1。
-2. 買家 B 讀取商品，庫存也為 1。
-3. 買家 A 扣減 1 件，將庫存 0 寫回資料庫。
-4. 買家 B 扣減 1 件，將庫存 0 寫回資料庫。
-結果：兩筆訂單同時成交，庫存卻只扣了 1，造成嚴重的**商品超賣**。
+這種「兩個請求同時讀、同時寫」的問題叫**並行衝突**。處理方式有兩類：
 
-為了防止超賣，工程師在 EF Core 實體上加上了樂觀並行標記（`[Timestamp]` 或 `[ConcurrencyCheck]`）。然而在秒殺活動中，雖然超賣被擋下了，新的災難卻隨之爆發：
-```text
-Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException: The database operation was expected to affect 1 row(s), but actually affected 0 row(s); 
-data may have been modified or deleted since entities were loaded.
-   at Microsoft.EntityFrameworkCore.Update.AffectedDataModificationCommandBatch.Consume(...)
+- **悲觀**：先鎖住，別人等我做完再說（`SELECT ... FOR UPDATE`）。
+- **樂觀**：不先鎖，寫入時檢查「資料在我讀取之後有沒有被別人改過」，有就算衝突。
+
+對庫存這種「只是加減一個數字」的情況，還有更直接的做法：**把檢查和修改合併成一句 SQL**。
+
+## 運作原理
+
+```mermaid
+sequenceDiagram
+    participant A as 買家 A
+    participant DB as 資料庫
+    participant B as 買家 B
+    A->>DB: UPDATE stock SET available = available - 1<br/>WHERE product_id = 7 AND available >= 1
+    B->>DB: 同一句 UPDATE（等待 A 的列鎖）
+    DB-->>A: 影響 1 列 → 成功
+    DB-->>B: 重新檢查條件：available = 0，影響 0 列 → 庫存不足
 ```
-在高達數百 QPS 的搶購下，95% 的請求同時噴出 `DbUpdateConcurrencyException`。若後端代碼無腦加入「捕捉例外並重新讀取庫存再重試」的迴圈，所有請求將不斷刷新並撞擊資料庫，形成嚴重的**活鎖（Livelock）**，最終導致資料庫 CPU 100%、全站癱瘓。
 
----
+**條件更新**把「夠不夠」放進 `WHERE`。資料庫對同一列的更新會排隊執行，第二句執行時會看到第一句提交後的值，條件不成立就不更新。程式只要檢查「影響了幾列」：1 列代表成功，0 列代表庫存不足。
 
-## 反模式與正確解法
+**樂觀並行權杖**用在修改整個聚合的情況（例如管理者編輯商品資訊）。實體上有一個版本欄位，EF Core 產生的 UPDATE 會帶上 `WHERE id = @id AND version = @原本的版本`。版本不符代表別人改過，影響 0 列，EF Core 丟出 `DbUpdateConcurrencyException`。
 
-### 反模式一：在高衝突熱點上盲目採用樂觀鎖無限重試
+## 常見錯誤與正確寫法
 
-樂觀鎖（Optimistic Concurrency Control, OCC）的核心假設是：**衝突很少發生（Optimistic）**。當衝突罕見時，樂觀鎖無需任何資料庫鎖定，效能極高。
-但在限量秒殺、熱門票券等**衝突極度頻繁（Pessimistic）**的場景下，若仍採用樂觀鎖 + 自動重試，每 100 個併發請求只有 1 個能成功，其餘 99 個請求會進入重試，重新查詢 DB、重新比對版本，使資料庫運算量呈幾何級數暴增。
-
-### 正確解法一：原子條件扣減（Atomic Conditional Update）
-
-對於庫存扣減等單純的數量競爭，**不需要載入實體至 ChangeTracker，也不需要依賴版本號比對**，直接利用資料庫行級鎖與原子條件更新：
+### 1. 先讀庫存再判斷
 
 ```csharp
-// 正確解法：利用原子條件更新，單一 SQL 搞定庫存扣減防超賣
-public async Task<bool> DeductStockDirectlyAsync(
-    long productId, 
-    int quantity, 
-    CancellationToken ct)
-{
-    // 利用 ExecuteUpdateAsync 直接發送原子 SQL：
-    // UPDATE products 
-    // SET stock = stock - @quantity 
-    // WHERE id = @productId AND stock >= @quantity;
-    var affectedRows = await _dbContext.Products
-        .Where(p => p.Id == productId && p.Stock >= quantity)
-        .ExecuteUpdateAsync(s => s.SetProperty(p => p.Stock, p => p.Stock - quantity), ct);
-
-    // affectedRows == 1 代表扣減成功；affectedRows == 0 代表庫存不足或商品不存在
-    return affectedRows == 1;
-}
+// 錯：讀和寫之間有時間差，兩個請求可能都讀到 1
+var stock = await db.Stocks.SingleAsync(s => s.ProductId == productId, ct);
+if (stock.Available < quantity) return OutOfStock();
+stock.Available -= quantity;
+await db.SaveChangesAsync(ct);
 ```
-**優勢：**
-1. 無需版本號比對，零 `DbUpdateConcurrencyException` 例外開銷。
-2. 資料庫行級排隊：即使 1,000 個請求同時到達，InnoDB / Postgres 會對該列排隊執行，扣完為止，後續請求條件不符自動影響 0 列返回，絕不超賣。
 
----
-
-### 反模式二：樂觀鎖衝突後直接拋錯，未提供業務處理解析
-
-在後台管理系統（如商品編輯、價格修改）中，衝突罕見，適合使用 EF Core 樂觀鎖。但如果捕捉到衝突例外後只是單純拋錯，管理員輸入了半小時的商品文案就會直接丟失。
-
-### 正確解法二：EF Core 樂觀並行與衝突解決策略（Store Wins vs Client Wins）
-
-在 EF Core 中透過 Shadow Property 或實體屬性配置並行權杖（Concurrency Token），並在捕獲例外後取得資料庫現值（Database Values）進行智慧合併：
+改成一句條件更新：
 
 ```csharp
-// Entity 定義：使用 Version 作為樂觀鎖並行權杖
+var affected = await db.Stocks
+    .Where(s => s.ProductId == productId && s.Available >= quantity)
+    .ExecuteUpdateAsync(s => s.SetProperty(x => x.Available, x => x.Available - quantity), ct);
+
+if (affected == 0) return OutOfStock(); // 條件不成立：庫存不足
+```
+
+### 2. 編輯整個商品卻沒有衝突偵測
+
+兩位管理者同時開啟同一件商品的編輯頁，A 改了價格先存，B 改了描述後存，B 的存檔用舊價格把 A 的修改蓋掉了。加上版本欄位：
+
+```csharp
 public class Product
 {
-    public long Id { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public decimal Price { get; set; }
-    
-    [ConcurrencyCheck]
-    public int Version { get; set; }
+    public int Id { get; private set; }
+    public decimal Price { get; private set; }
+    public int Version { get; private set; } // 每次修改都加一
+
+    public void ChangePrice(decimal price) { Price = price; Version++; }
 }
 
-// 業務處理：實作 Store Wins 或欄位級合併
-public async Task<UpdateResult> UpdateProductWithConcurrencyAsync(
-    Product modifiedProduct, 
-    CancellationToken ct)
+builder.Property(p => p.Version).IsConcurrencyToken(); // UPDATE 時帶上 WHERE version = 原值
+```
+
+PostgreSQL 也可以用系統欄位 `xmin` 當作版本，不必自己維護，設定方式見 Npgsql 的文件。
+
+### 3. 衝突後自動無限重試
+
+```csharp
+try
 {
-    _dbContext.Products.Update(modifiedProduct);
-    modifiedProduct.Version++; // 版本號遞增
-
-    try
-    {
-        await _dbContext.SaveChangesAsync(ct);
-        return UpdateResult.Success();
-    }
-    catch (DbUpdateConcurrencyException ex)
-    {
-        var entry = ex.Entries.Single();
-        var databaseValues = await entry.GetDatabaseValuesAsync(ct);
-
-        if (databaseValues is null)
-        {
-            return UpdateResult.Failed("商品已被其他管理者刪除");
-        }
-
-        var dbProduct = (Product)databaseValues.ToObject();
-
-        // 策略一：回報衝突並提供資料庫現值給前端對比（最推薦的人工作法）
-        return UpdateResult.Conflict(
-            currentDbValues: dbProduct, 
-            message: $"商品已被其他使用者更新為版本 {dbProduct.Version}，請核對後重新提交。");
-    }
+    await db.SaveChangesAsync(ct);
+}
+catch (DbUpdateConcurrencyException)
+{
+    // 不要自動重試覆蓋：告訴使用者資料已被別人修改，讓他看到最新內容後再決定
+    return TypedResults.Problem(statusCode: 409, title: "商品已被其他人修改", detail: "請重新整理後再編輯");
 }
 ```
 
----
+衝突代表「你的修改是根據舊資料做的」。自動重試等於用舊資料硬蓋新資料。只有在修改本身與舊值無關時（例如「把狀態設為已讀」），才適合直接重試。
 
-## 踩坑與避坑指南
+## 使用邊界
 
-### 1. 各資料庫並行權杖（RowVersion）的底層實作差異
-- **SQL Server**：原生支援 `rowversion` / `byte[]`，資料庫在每次更新時自動遞增 8-byte 二進位值。
-- **PostgreSQL**：原生內建系統隱藏欄位 `xmin`（記錄修改該列的最後交易 ID）。在 EF Core 中可直接宣告：
-  ```csharp
-  modelBuilder.Entity<Product>().UseXminAsConcurrencyToken();
-  ```
-- **MySQL**：InnoDB 沒有隱藏的 rowversion。標準做法是在 Model 宣告 `int Version` 並在應用程式每次更新時主動遞增，或使用 `timestamp(6) on update current_timestamp(6)`。
+- **熱門商品的衝突很多時**，所有人排隊更新同一列，延遲會上升。可以把庫存拆成多個桶（例如 10 列各存一部分，隨機挑一列扣），或在流量入口限流。
+- 悲觀鎖（`FOR UPDATE`）適合「讀出來之後要做較複雜的判斷才寫入」、而且衝突機率高的情況；代價是鎖持有期間其他人必須等待，交易要很短。
+- 防止「同一個請求被送兩次」是另一個問題（冪等），見 [高併發 CRUD](/data-access/concurrent-crud/)。
 
-### 2. EF Core 樂觀鎖檢測的底層 SQL 機制
-- 當配置了並行權杖後，EF Core 在執行 `SaveChangesAsync()` 時產生的 SQL 會將原版本號加入 `WHERE` 條件：
-  ```sql
-  UPDATE Products SET Price = @p0, Version = @p1 
-  WHERE Id = @p2 AND Version = @originalVersion;
-  ```
-- EF Core 會檢查 ADO.NET 回傳的**受影響列數（Rows Affected）**。若為 0，即判定發生衝突，立即丟出 `DbUpdateConcurrencyException`。
+## 雲端排查
 
-### 3. 熱點庫存的分桶（Stock Sharding）進階技術
-- 若單一商品的搶購 QPS 達到 10,000+，即便使用原子條件更新，單一列的資料庫行鎖也會達到硬體極限。
-- **進階解法**：將 100 件庫存分散在 10 個庫存桶（Bucket 0 ~ 9，每桶 10 件）。請求依據 `UserId % 10` 路由至特定桶位扣減，將行鎖競爭降低至原本的十分之一。
+### 叢集層（GKE 與 EKS 相同）
 
----
+```bash
+# 庫存不足與並行衝突在日誌中的比例
+kubectl logs -n shop -l app=order-api --since=30m | grep -c "DbUpdateConcurrencyException"
+```
 
-## 線上排查指令
+### 託管服務層
 
-### 1. 即時監控資料庫受影響列數為 0 的異常更新
+#### 兩邊相同：稽核是否已經超賣
 
 ```sql
--- PostgreSQL: 檢視近期的更新衝突與回滾
-SELECT datname, xact_commit, xact_rollback
-FROM pg_stat_database
-WHERE datname = current_database();
+-- 可用量不應小於 0；出現就代表某條路徑沒有使用條件更新
+SELECT product_id, available FROM stock WHERE available < 0;
+
+-- 熱門商品的列鎖等待：同一個 product_id 的 UPDATE 大量排隊
+SELECT count(*) AS waiting, left(query, 80) AS query
+FROM pg_stat_activity
+WHERE wait_event_type = 'Lock'
+GROUP BY query ORDER BY waiting DESC;
 ```
 
-### 2. 檢測商品庫存負數（超賣稽核 SQL）
+#### GKE
 
-在任何高併發促銷結束後，第一時間執行超賣對帳腳本：
-```sql
--- 稽核是否存在庫存小於 0 的嚴重災難
-SELECT id, name, stock
-FROM products
-WHERE stock < 0;
+Cloud SQL 的 `cloudsql.googleapis.com/database/postgresql/deadlock_count` 與 CPU 使用率；大促時熱門商品的鎖等待會讓連線數（`database/postgresql/num_backends`）跟著上升。
 
--- 稽核實際訂單銷售總數與商品庫存變更是否一致
-SELECT 
-    p.id, 
-    p.name, 
-    p.initial_stock, 
-    p.stock AS current_stock,
-    COALESCE(SUM(oi.quantity), 0) AS total_sold
-FROM products p
-LEFT JOIN order_items oi ON oi.product_id = p.id
-GROUP BY p.id, p.name, p.initial_stock, p.stock
-HAVING (p.initial_stock - p.stock) != COALESCE(SUM(oi.quantity), 0);
+#### EKS
+
+CloudWatch `AWS/RDS` 的 `DatabaseConnections` 隨著鎖等待上升；搭配上面的 `pg_stat_activity` 查詢確認是否集中在同一個商品。
+
+### 應用程式層
+
+EF Core 事件計數器 `optimistic-concurrency-failures-per-second` 直接顯示每秒的並行衝突次數：
+
+```bash
+dotnet-counters monitor --process-id 1 --counters Microsoft.EntityFrameworkCore
 ```
 
-### 3. Prometheus / Grafana 監控指標
-
-```text
-# 應用端樂觀鎖衝突率（每秒衝突大於 5 次發出警告）
-rate(efcore_concurrency_exceptions_total[1m]) > 5
-
-# 資料庫交易回滾比率告警
-(rate(pg_stat_database_xact_rollback[1m]) / 
- (rate(pg_stat_database_xact_commit[1m]) + rate(pg_stat_database_xact_rollback[1m]))) > 0.05
-```
+衝突數在某個時段暴增，通常是同一筆資料被批次作業與線上請求同時修改。

@@ -1,262 +1,134 @@
 ---
-title: "連線池、交易、鎖與 Cloud SQL Proxy"
-description: "分清應用程式連線資源與資料庫一致性，估算多 Process / Pod 的連線總量。"
+title: "連線池、交易與鎖：三件常被混為一談的事"
+description: "分清連線池（重複使用連線）、交易（一起提交）與鎖（協調同時存取）各自解決什麼問題，說明為什麼加大連線池解決不了鎖等待，以及連線洩漏的成因。"
 articleId: "data-access-pools-locks"
 topic: "data-access"
 category: "database-runtime"
-order: 5
-tags:
-  - "連線池"
-  - "Process"
-  - "Pod"
-  - "Cloud SQL Auth Proxy"
-  - "transaction"
-  - "資料庫鎖"
-  - "pooling"
-  - "DbContext pooling"
-difficulty: "advanced"
-prerequisites:
-  - "data-access-transactions"
-  - "aspnet-core-dependency-injection"
-relatedArticles:
-  - "data-access-batch-updates"
-  - "engineering-metrics-tracing"
-  - "aspnet-core-dapr"
-  - "data-access-csharp-connections"
-  - "data-access-pool-capacity"
-  - "data-access-isolation-locking"
-applicableVersions: "以 .NET 10 生態系與本文列出的官方文件核對；套件及資料庫供應商的差異見內文。"
-lastReviewed: "2026-10-10"
-takeaway: "池解決連線重用，交易定義提交邊界，鎖協調資料存取；增加池大小不會解除鎖競爭。"
+order: 9
+tags: ["連線池", "交易", "鎖", "連線洩漏", "Cloud SQL Auth Proxy", "RDS Proxy"]
+articleType: "deep-dive"
+difficulty: "beginner"
+prerequisites: ["data-access-transactions"]
+relatedArticles: ["data-access-pool-capacity", "data-access-csharp-connections", "gke-data-services"]
+applicableVersions: "Npgsql 8～10、MySqlConnector 2.x、PostgreSQL 14～18、MySQL 8.0／8.4。"
+lastReviewed: "2026-10-21"
+takeaway: "連線池讓連線重複使用，交易決定哪些操作一起生效，鎖讓同時存取同一筆資料的人排隊；鎖等待造成的慢，加大連線池只會讓更多人一起排隊。"
 sources:
-  - title: "Microsoft Learn：SQL Server 連線池"
-    url: "https://learn.microsoft.com/en-us/dotnet/framework/data/adonet/sql-server-connection-pooling"
-  - title: "Google Cloud：Cloud SQL Auth Proxy"
-    url: "https://docs.cloud.google.com/sql/docs/mysql/sql-proxy?hl=en"
-  - title: "Microsoft Learn：EF Core pooling"
-    url: "https://learn.microsoft.com/en-us/ef/core/performance/advanced-performance-topics"
+  - title: "Npgsql：Connection String Parameters（Pooling）"
+    url: "https://www.npgsql.org/doc/connection-string-parameters.html#pooling"
+  - title: "Microsoft Learn：SQL Server 連線共用（ADO.NET 連線池觀念）"
+    url: "https://learn.microsoft.com/dotnet/framework/data/adonet/sql-server-connection-pooling"
+  - title: "PostgreSQL：pg_stat_activity"
+    url: "https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY-VIEW"
+  - title: "Cloud SQL Auth Proxy"
+    url: "https://cloud.google.com/sql/docs/postgres/sql-proxy"
+  - title: "Amazon RDS Proxy"
+    url: "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-proxy.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-在高併發促銷活動或流量突增期間，應用程式層最常爆發的錯誤之一是連線逾時：
+資料庫變慢時，最常聽到的建議是「把連線池開大一點」。這有時有效，有時讓情況更糟，因為慢的原因可能根本不是連線不夠。先分清三件事：
 
-```text
-System.InvalidOperationException: Timeout expired. The timeout elapsed prior to obtaining a connection from the pool.
-This may have occurred because all pooled connections were in use and max pool size was reached.
-   at System.Data.ProviderBase.DbConnectionFactory.TryGetConnection(...)
-   at Microsoft.EntityFrameworkCore.Storage.RelationalConnection.OpenInternalAsync(...)
+- **連線池**：建立資料庫連線很貴（TCP、TLS、登入），所以用完不關，放回池子給下一個請求用。它解決的是「建立連線的成本」。
+- **交易**：決定哪些操作要一起提交或一起取消。它解決的是「資料一致性」。
+- **鎖**：兩個交易要改同一筆資料時，讓後到的等前面的做完。它解決的是「同時修改的衝突」。
+
+## 運作原理
+
+```mermaid
+flowchart LR
+    Req["請求"] --> Pool{"連線池<br/>有空閒連線？"}
+    Pool -->|有| Conn["借出連線"]
+    Pool -->|沒有| Wait1["等待歸還<br/>（逾時就失敗）"]
+    Conn --> Tx["BEGIN 交易"]
+    Tx --> Lock{"要改的列<br/>被別人鎖住？"}
+    Lock -->|否| Work["執行 SQL"]
+    Lock -->|是| Wait2["等待鎖釋放"]
+    Work --> Commit["COMMIT：釋放鎖"]
+    Commit --> Return["歸還連線到池"]
 ```
 
-初階工程師看到這個錯誤，第一反應通常是「連線池不夠大」，於是直覺地在連線字串中將 `Max Pool Size` 從預設的 100 調高到 500 甚至 1000。然而，當部署上線後，資料庫卻在幾分鐘內 CPU 飆上 100%、記憶體耗盡，甚至 Cloud SQL Auth Proxy 或資料庫執行個體直接 Crash 重啟，災情反而急劇擴大。
+注意圖中有兩個「等待」，原因完全不同：
 
-問題的核心在於：**混淆了「用戶端連線池（Connection Pool）」、「資料庫交易（Transaction）」與「資料庫鎖（Database Lock）」的邊界與層次**。
+- **等連線**：池子裡的連線都被借走了。原因可能是池太小，也可能是每條連線被佔用太久。
+- **等鎖**：拿到了連線，但要改的資料被別的交易鎖住。這時加大連線池，只會讓更多連線一起卡在等鎖，還額外佔用資料庫的資源。
 
-連線池是應用程式 process 內部的連線快取機制；交易是跨操作的一致性邊界；而鎖是資料庫引擎內部協調多個交易並行修改同一筆資料的機制。當資料庫內部因為鎖競爭（Lock Contention）導致查詢變慢時，交易持有連線的時間會被無限拉長，使得用戶端連線池中的可用連線迅速耗盡。此時調大連線池，只會讓更多請求湧入資料庫爭搶資源，引發雪崩效應。
+連線在整個交易期間都被佔用。交易越長（例如中間呼叫外部 API），連線被佔越久，池子越快見底；同時鎖也持有越久，其他人等越久。兩個問題常常是同一個原因造成的。
 
----
+## 常見錯誤與正確寫法
 
-## 反模式與正確解法
+### 1. 慢就加大連線池
 
-### 反模式一：長耗時業務中持有資料庫連線與交易
+先判斷在等什麼：資料庫端大量連線的 `wait_event_type` 是 `Lock`，代表在等鎖，要找的是「誰持有鎖太久」；應用程式端出現「無法從連線池取得連線」的錯誤，而資料庫端連線大多是 `idle`（閒置），代表連線沒有被正確歸還。
 
-最致命的反模式是在交易或連線開啟的生命週期中，夾雜耗時的外部 I/O 呼叫（例如呼叫第三方金流 API、寄送簡訊或複雜的非同步處理）：
+### 2. 連線沒有歸還（連線洩漏）
 
 ```csharp
-// 致命反模式：在資料庫交易中執行耗時的外部網路請求
-public async Task<OrderResult> CheckoutAsync(OrderRequest request, CancellationToken ct)
-{
-    await using var connection = new NpgsqlConnection(_connectionString);
-    await connection.OpenAsync(ct);
-    await using var transaction = await connection.BeginTransactionAsync(ct);
-
-    // 1. 扣減庫存（此時已鎖定 Inventory 列）
-    await DeductStockAsync(connection, transaction, request.ItemId, request.Quantity, ct);
-
-    // 2. 呼叫第三方金流 API（外部 I/O 可能耗時 2~5 秒甚至發生逾時）
-    // 嚴重後果：在此期間連線無法歸還池中，且資料庫列鎖持續被持有，後續同商品結帳全部被卡住！
-    var paymentResult = await _paymentGateway.ChargeAsync(request.PaymentInfo, ct);
-
-    if (!paymentResult.IsSuccess)
-    {
-        await transaction.RollbackAsync(ct);
-        return OrderResult.Failed("付款失敗");
-    }
-
-    // 3. 建立訂單
-    await InsertOrderAsync(connection, transaction, request, ct);
-    await transaction.CommitAsync(ct);
-
-    return OrderResult.Success();
-}
+// 錯：例外發生時沒有關閉連線，這條連線永遠不會回到池子
+var conn = await dataSource.OpenConnectionAsync(ct);
+var cmd = new NpgsqlCommand("SELECT ...", conn);
+var result = await cmd.ExecuteScalarAsync(ct);
+await conn.CloseAsync();
 ```
 
-### 正確解法一：短交易原則與二階段解耦
-
-**連線與交易的生命週期必須壓縮到極致**。任何不依賴資料庫 ACID 保證的計算或外部網路呼叫，必須移至交易之外：
+用 `await using`，不管成功或例外都會歸還：
 
 ```csharp
-// 正確解法：將外部金流與資料庫交易完全隔離，落實短交易與狀態機設計
-public async Task<OrderResult> CheckoutAsync(OrderRequest request, CancellationToken ct)
+await using var conn = await dataSource.OpenConnectionAsync(ct);
+await using var cmd = new NpgsqlCommand("SELECT price FROM products WHERE id = $1", conn)
 {
-    // 步驟一：短交易 - 預建立待付款訂單與扣減預留庫存
-    var orderId = Guid.NewGuid();
-    await using (var scope = _serviceProvider.CreateAsyncScope())
-    {
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-
-        var inventory = await db.Inventories
-            .Where(x => x.ItemId == request.ItemId && x.AvailableStock >= request.Quantity)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(b => b.AvailableStock, b => b.AvailableStock - request.Quantity)
-                .SetProperty(b => b.LockedStock, b => b.LockedStock + request.Quantity), ct);
-
-        if (inventory == 0)
-        {
-            return OrderResult.Failed("庫存不足");
-        }
-
-        db.Orders.Add(new Order(orderId, request.UserId, OrderStatus.PendingPayment));
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-    } // 連線立即歸還連線池，列鎖立即釋放！
-
-    // 步驟二：執行外部金流請求（完全不佔用任何資料庫連線）
-    var paymentResult = await _paymentGateway.ChargeAsync(orderId, request.PaymentInfo, ct);
-
-    // 步驟三：短交易 - 依金流結果更新訂單狀態
-    await using (var scope = _serviceProvider.CreateAsyncScope())
-    {
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        if (paymentResult.IsSuccess)
-        {
-            await db.Orders
-                .Where(x => x.Id == orderId)
-                .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderStatus.Paid), ct);
-        }
-        else
-        {
-            await db.Orders
-                .Where(x => x.Id == orderId)
-                .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderStatus.PaymentFailed), ct);
-            // 釋放鎖定庫存
-            await db.Inventories
-                .Where(x => x.ItemId == request.ItemId)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(b => b.AvailableStock, b => b.AvailableStock + request.Quantity)
-                    .SetProperty(b => b.LockedStock, b => b.LockedStock - request.Quantity), ct);
-        }
-    }
-
-    return paymentResult.IsSuccess ? OrderResult.Success() : OrderResult.Failed("付款失敗");
-}
+    Parameters = { new() { Value = productId } },
+};
+var price = (decimal?)await cmd.ExecuteScalarAsync(ct);
 ```
 
-### 反模式二：忽略多 Pod / 多 Process 累加的總連線數
+使用 EF Core 時，`DbContext` 會自己管理連線，只要 `DbContext` 被正確釋放（由 DI 的 scope 管理）就不會洩漏。
 
-在 Kubernetes 或 GKE 環境中，單一 Pod 的連線池設定為 `Max Pool Size=100` 看似合理，但當 HPA（水平自動擴展）觸發並擴展至 20 個 Pod 時，系統對資料庫發起的潛在最大連線數為：
+### 3. 長交易同時拖垮連線池與鎖
 
-$$\text{Total Connections} = 20 \times 100 = 2000$$
+交易中只放資料庫操作，外部呼叫移到交易之外，見 [交易](/data-access/transactions/)。這同時縮短連線佔用時間與鎖持有時間。
 
-若後端使用的是 GCP Cloud SQL（例如 `db-custom-4-16`，預設 `max_connections` 通常約 200~500），且 Pod 是透過 Cloud SQL Auth Proxy Sidecar 連線，不僅資料庫端會因連線耗盡直接拒絕新連線，Proxy Sidecar 也會因連線數過多耗盡 Socket 與記憶體。
+## 使用邊界
 
-### 正確解法二：連線預算分配與集中式連線代理
+- **兩層池不要混淆。** EF Core 的 `AddDbContextPool` 重複使用的是 `DbContext` 物件，省的是建立物件的成本；資料庫連線池在 driver 層（Npgsql、MySqlConnector），兩者是不同的東西。
+- **Cloud SQL Auth Proxy 不是連線池。** 它負責 IAM 授權與加密連線，每個應用程式連線都對應一條資料庫連線；池仍然在 driver 裡。**RDS Proxy** 則是真正的連線池，可以讓多個應用程式連線共用較少的資料庫連線，見 [EKS 資料服務](/platforms/eks/data-services/)。
+- 池該設多大、所有 Pod 加起來會不會超過資料庫上限，見 [連線池預算](/data-access/pool-capacity/)。
 
-1. **嚴格連線預算分配**：計算單 Pod 池大小時，採用公式：
-   $$Pool_{max} \le \frac{DB_{max\_connections} \times 0.7}{Pod_{max\_replicas}}$$
-2. **引入集中式連線池代理**：對於 PostgreSQL，在高 Pod 數環境下強烈建議引入 PgBouncer（Transaction Pooling 模式）；對於 Cloud SQL，確保 Cloud SQL Auth Proxy 設定適當的連線上限，並限制 Pod 的最大副本數與連線池尺寸。
+## 雲端排查
 
-```csharp
-// Program.cs: 在 .NET 10 中配置精確的連線池上限與連線逾時
-builder.Services.AddNpgsqlDataSource(connectionString, builder =>
-{
-    builder.ConnectionStringBuilder.Pooling = true;
-    builder.ConnectionStringBuilder.MinPoolSize = 5;
-    builder.ConnectionStringBuilder.MaxPoolSize = 25; // 嚴格受控的單 Pod 連線池
-    builder.ConnectionStringBuilder.ConnectionIdleLifetime = 15; // 秒：空閒連線儘速回收
-    builder.ConnectionStringBuilder.Timeout = 5; // 5 秒取不到連線立即拋出背壓，避免請求無止盡堆積
-});
-```
+### 叢集層（GKE 與 EKS 相同）
 
----
-
-## 踩坑與避坑指南
-
-### 1. DbContextPool 與 ADO.NET Connection Pool 的本質差異
-- **ADO.NET Connection Pool**：快取實體 TCP Socket 連線，重用昂貴的網路握手與身份驗證開銷。
-- **EF Core DbContextPool**（`AddDbContextPool<T>`）：快取的是 C# 的 `DbContext` 物件執行個體，避免高頻配置物件造成的 GC 壓力。
-- **避坑點**：`AddDbContextPool` 並不會增加或減少實體資料庫連線數！兩者是在不同層次運作。啟用 `AddDbContextPool` 時，DbContext 不能持有自訂狀態或在內部解析 Scoped 依賴，否則會發生狀態污染。
-
-### 2. 連線未正確 Dispose 導致的連線洩漏（Connection Leak）
-- **現象**：系統在低流量下運行數小時後，突然開始報錯連線池耗盡。
-- **根本原因**：使用了自建的 `IDbConnection` 但在某些分支拋出例外時未正確執行 `DisposeAsync()`，或混用同步 `Dispose()` 導致執行緒被阻塞。
-- **規則**：永遠使用 `await using` 宣告連線與交易：
-  ```csharp
-  await using var conn = await dataSource.OpenConnectionAsync(cancellationToken);
-  await using var tx = await conn.BeginTransactionAsync(cancellationToken);
-  ```
-
-### 3. Cloud SQL Auth Proxy 連線限制與資源限制
-- Cloud SQL Auth Proxy 以 Sidecar 容器運行在 Pod 內時，若未設定合理的 Kubernetes `resources.limits`（尤其是 CPU 與 Memory），大量短期連線建立時的 TLS 握手會使 Proxy 的 CPU 飽和，進而引起整個 Pod 的資料庫呼叫逾時。
-
----
-
-## 線上排查指令
-
-### 1. 檢查資料庫端目前活躍連線與等待狀態
-
-**PostgreSQL 檢查活躍連線與等待事件：**
-```sql
--- 查看各狀態連線數與等待事件
-SELECT state, wait_event_type, wait_event, count(*)
-FROM pg_stat_activity
-WHERE datname = current_database()
-GROUP BY state, wait_event_type, wait_event
-ORDER BY count(*) DESC;
-
--- 查看執行超過 5 秒的長交易
-SELECT pid, now() - xact_start AS duration, query, state
-FROM pg_stat_activity
-WHERE state IN ('active', 'idle in transaction')
-  AND now() - xact_start > interval '5 seconds'
-ORDER BY duration DESC;
-```
-
-**MySQL 檢查當前連線與鎖等待：**
-```sql
--- 查看當前連線數與狀態
-SHOW GLOBAL STATUS LIKE 'Threads_connected';
-SHOW GLOBAL STATUS LIKE 'Threads_running';
-
--- 查詢當前阻擋中的交易與鎖等待
-SELECT 
-    r.trx_id waiting_trx_id,
-    r.trx_mysql_thread_id waiting_thread,
-    r.trx_query waiting_query,
-    b.trx_id blocking_trx_id,
-    b.trx_mysql_thread_id blocking_thread,
-    b.trx_query blocking_query
-FROM performance_schema.data_lock_waits w
-JOIN information_schema.innodb_trx b ON b.trx_id = w.blocking_engine_transaction_id
-JOIN information_schema.innodb_trx r ON r.trx_id = w.requesting_engine_transaction_id;
-```
-
-### 2. .NET 應用端即時觀測連線池指標
-
-在 Pod 內部或透過 dotnet-counters 診斷連線池狀態：
 ```bash
-# 監控 .NET 應用的連線池計數器
-dotnet-counters monitor -p $(pgrep -f "dotnet MyApp.dll") \
-  --counters Microsoft.Data.SqlClient,Npgsql,System.Data
+# 應用程式取不到連線時，Npgsql 會丟出連線池耗盡相關的逾時例外
+kubectl logs -n shop -l app=order-api --since=15m | grep -i -E "pool|timeout" | tail -20
 ```
 
-### 3. Prometheus / Grafana 告警指標
+### 託管服務層
 
-```text
-# 連線池使用率超過 80% 告警
-(npgsql_connections_in_use / npgsql_max_pool_size) > 0.8
+#### 兩邊相同：連線在做什麼
 
-# 資料庫連線數逼近 max_connections 上限告警
-(pg_stat_database_numbackends / pg_settings_max_connections) > 0.75
+```sql
+-- 依狀態與等待類型統計所有連線
+SELECT state, wait_event_type, count(*)
+FROM pg_stat_activity
+WHERE datname = 'shop'
+GROUP BY state, wait_event_type
+ORDER BY count(*) DESC;
 ```
+
+- `active` 且 `wait_event_type = 'Lock'` 很多：在等鎖，找出擋住它們的交易（`pg_blocking_pids`）。
+- `idle in transaction` 很多：交易開著沒在做事，程式在交易中做了別的事或忘了提交。
+- `idle` 很多、應用程式卻說取不到連線：應用程式的池上限太小，或連線被其他程序佔用。
+
+#### GKE
+
+Cloud SQL 的 `cloudsql.googleapis.com/database/postgresql/num_backends` 是目前的連線數。如果使用 Auth Proxy sidecar，記得每個 Pod 的連線都直接對應資料庫連線。
+
+#### EKS
+
+CloudWatch `AWS/RDS` 的 `DatabaseConnections`；使用 RDS Proxy 時，另外比較 Proxy 的 `ClientConnections`（應用程式連到 Proxy）與 `DatabaseConnections`（Proxy 連到資料庫）。
+
+### 應用程式層
+
+Npgsql 等待連線的時間上限由連線字串的 `Timeout` 決定（預設 15 秒）。請求在等連線時就逾時，日誌會出現連線池耗盡的訊息；這時對照資料庫端的連線狀態，判斷是池太小、連線洩漏，還是在等鎖。

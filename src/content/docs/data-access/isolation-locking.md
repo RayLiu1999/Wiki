@@ -1,246 +1,158 @@
 ---
-title: "MySQL／PostgreSQL 隔離、鎖與重試差異"
-description: "分清快照、鎖定讀、競爭更新與重試單位，避免跨資料庫照搬一致性假設。"
+title: "隔離等級與鎖：同一段程式在 MySQL 和 PostgreSQL 上為什麼行為不同"
+description: "用白話說明交易隔離等級、MySQL 與 PostgreSQL 預設行為的差異、死結與序列化失敗為什麼要重試整個交易，以及在沒有索引的欄位上鎖定的風險。"
 articleId: "data-access-isolation-locking"
 topic: "data-access"
 category: "database-concurrency"
-order: 15
-tags:
-  - "MySQL"
-  - "PostgreSQL"
-  - "MVCC"
-  - "Repeatable Read"
-  - "Read Committed"
-  - "SKIP LOCKED"
+order: 14
+tags: ["隔離等級", "鎖", "死結", "Read Committed", "Repeatable Read", "SKIP LOCKED"]
+articleType: "deep-dive"
 difficulty: "advanced"
-prerequisites:
-  - "data-access-transactions"
-relatedArticles:
-  - "data-access-concurrent-crud"
-  - "architecture-outbox-inbox"
-applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
-lastReviewed: "2026-10-10"
-takeaway: "分清快照、鎖定讀、競爭更新與重試單位，避免跨資料庫照搬一致性假設。"
+prerequisites: ["data-access-transactions"]
+relatedArticles: ["data-access-concurrent-crud", "data-access-concurrency", "architecture-outbox-inbox"]
+applicableVersions: "PostgreSQL 14～18、MySQL 8.0／8.4（InnoDB）、EF Core 8～10。"
+lastReviewed: "2026-10-21"
+takeaway: "PostgreSQL 預設 Read Committed，MySQL 預設 Repeatable Read，鎖的範圍也不同；死結與序列化失敗都要重試「整個交易」，而且鎖定條件一定要走索引。"
 sources:
-  - title: "MySQL 8.4：InnoDB 隔離層級"
+  - title: "PostgreSQL：Transaction Isolation"
+    url: "https://www.postgresql.org/docs/current/transaction-iso.html"
+  - title: "PostgreSQL：Explicit Locking"
+    url: "https://www.postgresql.org/docs/current/explicit-locking.html"
+  - title: "MySQL 8.4：Transaction Isolation Levels"
     url: "https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html"
-  - title: "PostgreSQL 18：交易隔離"
-    url: "https://www.postgresql.org/docs/18/transaction-iso.html"
-  - title: "PostgreSQL 18：鎖定"
-    url: "https://www.postgresql.org/docs/18/explicit-locking.html"
-  - title: "MySQL 8.4：減少與處理死鎖"
-    url: "https://dev.mysql.com/doc/refman/8.4/en/innodb-deadlocks-handling.html"
+  - title: "MySQL 8.4：InnoDB Locking（next-key locks）"
+    url: "https://dev.mysql.com/doc/refman/8.4/en/innodb-locking.html"
+  - title: "MySQL 8.4：Deadlocks in InnoDB"
+    url: "https://dev.mysql.com/doc/refman/8.4/en/innodb-deadlocks.html"
+  - title: "Cloud SQL for PostgreSQL：Cloud Monitoring 指標"
+    url: "https://cloud.google.com/sql/docs/postgres/monitor-instance"
 ---
 
-## 案發現場
+## 這是什麼
 
-在多資料庫架構演進或從 MySQL 遷移至 PostgreSQL 的專案中，開發團隊常遭遇令人困惑的行為差異與併發例外。
+兩個交易同時在跑時，一個交易能看到另一個交易多少變更？這由**隔離等級**決定。隔離越嚴格，越不容易讀到不一致的資料，但等待與衝突也越多。
 
-最經典的現場之一是**序列化失敗（Serialization Failure）**：
-在 PostgreSQL 中開啟 `Repeatable Read` 隔離層級處理併發訂單扣減，原本在 MySQL 能順利排隊等待的交易，在 PostgreSQL 下卻直接噴出：
-```text
-Npgsql.PostgresException (0x80004005): 40001: could not serialize access due to concurrent update
-   at Npgsql.Internal.NpgsqlConnector.ReadExpecting[T](...)
+常見的兩個等級：
+
+- **Read Committed**：每一句 SQL 都看到「這句開始時已經提交」的資料。同一個交易裡查兩次，結果可能不同。
+- **Repeatable Read**：整個交易看到同一份快照，查幾次結果都一樣。
+
+PostgreSQL 預設 Read Committed，MySQL（InnoDB）預設 Repeatable Read。不只預設值不同，兩者在 Repeatable Read 下的鎖定行為也不同。同一段程式換一種資料庫，衝突與等待的情況就會改變。
+
+## 運作原理
+
+```mermaid
+sequenceDiagram
+    participant A as 交易 A
+    participant DB as 資料庫
+    participant B as 交易 B
+    A->>DB: 鎖住商品 1 的庫存列
+    B->>DB: 鎖住商品 2 的庫存列
+    A->>DB: 想鎖商品 2（等 B）
+    B->>DB: 想鎖商品 1（等 A）
+    Note over DB: 互相等待：死結
+    DB-->>B: 選一個交易回滾（錯誤碼 40P01／1213）
+    DB-->>A: 取得鎖，繼續執行
 ```
 
-另一個經典現場是 **MySQL 中的間隙鎖（Gap Lock）死鎖**：
-兩個併發執行的使用者在 MySQL 中嘗試插入新訂單：
-- 交易 A 執行 `SELECT * FROM orders WHERE user_id = 101 FOR UPDATE;`（假設目前該用戶無任何訂單）。
-- 交易 B 也執行同語句。
-- 接著雙方同時執行 `INSERT INTO orders (user_id, ...) VALUES (101, ...);`。
-此時 MySQL 立即判定死鎖並回滾其中一方：
-```text
-MySqlConnector.MySqlException: Deadlock found when trying to get lock; try restarting transaction (Error 1213)
-```
+**死結**：兩個交易各自持有對方需要的鎖。資料庫會偵測到，並強制回滾其中一個。被回滾的交易所做的一切都不算數，所以要**整個交易重新執行**，而不是只重送失敗的那一句。
 
-問題的根源在於：**MySQL（InnoDB）與 PostgreSQL 在實現 MVCC（多版本併發控制）與隔離層級（Repeatable Read / Read Committed）時，底層哲學與鎖定機制存在根本性的差異！**
+**序列化失敗**：PostgreSQL 在 Repeatable Read 或 Serializable 下，如果你要修改的列在快照之後被別人改過，會回傳錯誤碼 `40001`，同樣要重試整個交易。
 
----
+**MySQL 的 next-key lock**：InnoDB 在 Repeatable Read 下，鎖定讀取（`SELECT ... FOR UPDATE`）與更新不只鎖住符合的列，還會鎖住索引上的「間隙」，防止其他交易插入新資料。條件沒有走索引時，掃描過的列都會被鎖，範圍可能大到整張表。
 
-## 反模式與正確解法
+## 常見錯誤與正確寫法
 
-### 1. 隔離機制根本差異對照
+### 1. 遇到死結就回錯誤給使用者
 
-| 隔離層級與行為 | MySQL (InnoDB) | PostgreSQL |
-| :--- | :--- | :--- |
-| **預設隔離層級** | **Repeatable Read** | **Read Committed** |
-| **Repeatable Read 實作機制** | **悲觀行鎖 + 間隙鎖（Next-Key Lock）**：鎖定讀會阻擋其他交易的寫入與間隙插入。 | **樂觀快照（Snapshot Isolation）**：不加間隙鎖。若偵測到欲更新的資料列已被其他交易提交，**直接拋出 40001 錯誤！** |
-| **競爭同一列更新時** | 後到的交易進入等待鎖釋放（直到 lock wait timeout）。 | `Read Committed` 下會重新評估（EPQ 機制）；`Repeatable Read` 下直接失敗中斷。 |
-| **解決幻讀（Phantom Read）** | 使用 **Gap Locks** 鎖定不存在的區間，防止插入。 | 仰賴交易開始時的快照（Snapshot），看不到新插入列；若要完全序列化則使用 SSI（Serializable）。 |
-
-### 反模式一：跨資料庫套用相同假設且未實作交易重試
-
-在 PostgreSQL 的 `Repeatable Read` 或 `Serializable` 層級下，或者在 MySQL 高併發鎖競爭下，**死鎖（Deadlock）與序列化失敗（Serialization Failure 40001）不是軟體 Bug，而是引擎維持 ACID 特性的正常表現！**
-若將這些錯誤當作系統致命例外直接拋出給使用者，是非常嚴重的反模式。
-
-### 正確解法一：實作具備退避（Backoff）與抖動（Jitter）的交易重試器
-
-針對資料庫可重試的瞬態錯誤（Transient Faults）：
-- MySQL：Error 1213 (`ER_LOCK_DEADLOCK`)
-- PostgreSQL：Error 40001 (`serialization_failure`)、40P01 (`deadlock_detected`)
-應用層必須將整筆交易作為一個不可分割的單位進行冪等重試：
+死結與序列化失敗都是暫時性的，重試通常就會成功。EF Core 的 PostgreSQL provider 開啟重試策略後，會把這類錯誤當作暫時性錯誤，在執行策略內整段重試：
 
 ```csharp
-// 生產級交易重試器：處理 MySQL 死鎖與 PostgreSQL 40001 序列化衝突
-public static class TransactionRetryPolicy
+options.UseNpgsql(dataSource, npgsql => npgsql.EnableRetryOnFailure(maxRetryCount: 3));
+
+// 交易要放在執行策略內，重試時整段重新執行
+var strategy = db.Database.CreateExecutionStrategy();
+await strategy.ExecuteAsync(async () =>
 {
-    private static readonly HashSet<string> RetriableSqlStates = new()
-    {
-        "40001", // PostgreSQL: serialization_failure
-        "40P01", // PostgreSQL: deadlock_detected
-    };
+    await using var tx = await db.Database.BeginTransactionAsync(ct);
+    // ... 讀取、修改、SaveChanges
+    await tx.CommitAsync(ct);
+});
+```
 
-    private const int MySqlDeadlockErrorCode = 1213;
+重試的內容不能包含外部副作用（例如寄信、呼叫付款），否則會做兩次。
 
-    public static async Task<T> ExecuteWithRetryAsync<T>(
-        Func<CancellationToken, Task<T>> unitOfWork,
-        int maxRetries = 3,
-        CancellationToken ct = default)
-    {
-        for (int attempt = 1; attempt <= maxRetries; attempt++)
-        {
-            try
-            {
-                return await unitOfWork(ct);
-            }
-            catch (Exception ex) when (IsRetriableException(ex) && attempt < maxRetries)
-            {
-                // 指數退避加上隨機抖動（Full Jitter），避免所有競爭執行緒在同時間重試引發二次衝突
-                var delayMs = Random.Shared.Next(10, (int)Math.Pow(2, attempt) * 50);
-                await Task.Delay(delayMs, ct);
-            }
-        }
+### 2. 多筆更新的順序不一致
 
-        // 超過最大重試次數後依舊失敗，執行最後一次拋出
-        return await unitOfWork(ct);
-    }
+一張訂單有多個商品，有的請求先鎖商品 1 再鎖商品 2，有的反過來，就會死結。所有交易都依同一個順序（例如商品 ID 由小到大）鎖定：
 
-    private static bool IsRetriableException(Exception ex)
-    {
-        if (ex is Npgsql.PostgresException pgEx && RetriableSqlStates.Contains(pgEx.SqlState))
-            return true;
-
-        if (ex is MySqlConnector.MySqlException myEx && myEx.Number == MySqlDeadlockErrorCode)
-            return true;
-
-        if (ex is Microsoft.EntityFrameworkCore.DbUpdateException dbEx && dbEx.InnerException is not null)
-            return IsRetriableException(dbEx.InnerException);
-
-        return false;
-    }
+```csharp
+foreach (var line in order.Lines.OrderBy(l => l.ProductId)) // 固定順序，避免交叉等待
+{
+    var affected = await db.Stocks
+        .Where(s => s.ProductId == line.ProductId && s.Available >= line.Quantity)
+        .ExecuteUpdateAsync(s => s.SetProperty(x => x.Available, x => x.Available - line.Quantity), ct);
+    if (affected == 0) throw new OutOfStockException(line.ProductId);
 }
 ```
 
-### 反模式二：在未建索引的欄位上執行 `SELECT ... FOR UPDATE`
-
-在 MySQL InnoDB 中，若對沒有索引的欄位執行鎖定讀：
-```sql
-SELECT * FROM orders WHERE remark = 'VIP' FOR UPDATE;
-```
-InnoDB 無法透過 B+Tree 索引鎖定特定列，鎖會直接退化為**鎖定主鍵叢集索引上的所有記錄與所有間隙（相當於全表鎖）**！這會讓全系統所有寫入請求徹底停擺。
-
-### 正確解法二：精確主鍵/唯一鍵鎖定與利用 `SKIP LOCKED` 實作工作佇列
-
-1. `SELECT ... FOR UPDATE` 必須確保 `WHERE` 條件完全命中唯一索引或主鍵。
-2. 在處理搶單、消費任務或佇列情境時，善用現代 SQL 的 **`FOR UPDATE SKIP LOCKED`**（MySQL 8.0+ 與 PostgreSQL 均原生支援），讓不同 Worker 自動跳過已被鎖定的列，達成零鎖等待的極致吞吐：
-
-```csharp
-// 正確解法：利用 FOR UPDATE SKIP LOCKED 實作無鎖等待的任務領取
-public async Task<TaskEntity?> ClaimNextPendingTaskAsync(CancellationToken ct)
-{
-    const string sql = """
-        SELECT id, payload, status
-        FROM background_tasks
-        WHERE status = 'Pending'
-        ORDER BY created_at ASC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED;
-        """;
-
-    await using var conn = await _dataSource.OpenConnectionAsync(ct);
-    await using var tx = await conn.BeginTransactionAsync(ct);
-
-    var task = await conn.QuerySingleOrDefaultAsync<TaskEntity>(
-        new CommandDefinition(sql, transaction: tx, cancellationToken: ct));
-
-    if (task is not null)
-    {
-        await conn.ExecuteAsync(
-            "UPDATE background_tasks SET status = 'Processing' WHERE id = @Id",
-            new { task.Id },
-            transaction: tx);
-        await tx.CommitAsync(ct);
-    }
-
-    return task;
-}
-```
-
----
-
-## 踩坑與避坑指南
-
-### 1. PostgreSQL Read Committed 下的 EvalPlanQual (EPQ) 機制
-- 在 PostgreSQL 的預設 `Read Committed` 隔離層級下，若交易 A 正在更新列 1，交易 B 也嘗試更新列 1，交易 B 會等待交易 A 提交。當交易 A 提交後，PostgreSQL 會對列 1 **重新評估 WHERE 條件**（EPQ 機制）。若條件仍成立則執行更新，若條件不再成立（例如 A 把庫存扣成 0），B 的更新會自動影響 0 列而不是出錯。理解這點能大幅簡化高併發業務邏輯。
-
-### 2. 交易重試的邊界安全原則
-- **避坑點**：傳入重試器的 `unitOfWork` 委派**必須具備冪等性**。
-- 若委派內部在呼叫資料庫前發送了外部信用卡扣款 HTTP 請求，當資料庫交易提交死鎖時，重試器再次執行將導致「扣款兩次」的嚴重災難！
-- **規則**：重試單元必須僅包含純資料庫操作，外部通訊必須移至交易外部並使用 Outbox 模式。
-
-### 3. MySQL 唯一鍵衝突時的隱式 S 鎖
-- 當兩個交易併發執行 `INSERT INTO table (unique_col) VALUES (1)` 時，若發生衝突，後執行的交易會對該列加上共享讀鎖（Shared Lock）。若有三個以上交易同時發生此情況，極易形成循環依賴直接觸發死鎖。
-
----
-
-## 線上排查指令
-
-### 1. MySQL 即時排查最近一次死鎖日誌
+### 3. 在沒有索引的欄位上鎖定
 
 ```sql
--- 查看 InnoDB 引擎狀態，輸出中包含 LATEST DETECTED DEADLOCK 的詳細交易與鎖資訊
-SHOW ENGINE INNODB STATUS\G
+-- 錯：status 沒有索引，MySQL 會掃描並鎖住大量列（含間隙），擋住其他人的寫入
+SELECT * FROM jobs WHERE status = 'pending' LIMIT 10 FOR UPDATE;
 ```
-重點檢查日誌中的：
-- `(1) WAITING FOR THIS LOCK TO BE GRANTED`：交易 1 等待的鎖。
-- `(2) HOLDS THE LOCK(S)`：交易 2 持有的鎖。
-- `WE ROLL BACK TRANSACTION (1)`：被 MySQL 犧牲回滾的交易。
 
-### 2. PostgreSQL 即時排查鎖阻擋（Blocking & Blocked）
+確保鎖定條件有索引；如果是「多個工作者搶工作」，加上 `SKIP LOCKED`，跳過已被別人鎖住的列，而不是等待：
 
 ```sql
--- 找出誰阻擋了誰（Blocking PID vs Blocked PID）
-SELECT 
-    blocked_locks.pid     AS blocked_pid,
-    blocked_activity.usename  AS blocked_user,
-    blocking_locks.pid    AS blocking_pid,
-    blocking_activity.usename AS blocking_user,
-    blocked_activity.query    AS blocked_statement,
-    blocking_activity.query   AS current_statement_in_blocking_process
-FROM  pg_catalog.pg_locks         blocked_locks
-JOIN pg_catalog.pg_stat_activity blocked_activity ON blocked_activity.pid = blocked_locks.pid
-JOIN pg_catalog.pg_locks         blocking_locks 
-    ON blocking_locks.locktype = blocked_locks.locktype
-    AND blocking_locks.DATABASE IS NOT DISTINCT FROM blocked_locks.DATABASE
-    AND blocking_locks.relation IS NOT DISTINCT FROM blocked_locks.relation
-    AND blocking_locks.page IS NOT DISTINCT FROM blocked_locks.page
-    AND blocking_locks.tuple IS NOT DISTINCT FROM blocked_locks.tuple
-    AND blocking_locks.virtualxid IS NOT DISTINCT FROM blocked_locks.virtualxid
-    AND blocking_locks.transactionid IS NOT DISTINCT FROM blocked_locks.transactionid
-    AND blocking_locks.classid IS NOT DISTINCT FROM blocked_locks.classid
-    AND blocking_locks.objid IS NOT DISTINCT FROM blocked_locks.objid
-    AND blocking_locks.objsubid IS NOT DISTINCT FROM blocked_locks.objsubid
-    AND blocking_locks.pid != blocked_locks.pid
-JOIN pg_catalog.pg_stat_activity blocking_activity ON blocking_activity.pid = blocking_locks.pid
-WHERE NOT blocked_locks.GRANTED;
+SELECT id FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 10 FOR UPDATE SKIP LOCKED;
 ```
 
-### 3. Prometheus / Grafana 死鎖告警指標
+## 使用邊界
 
-```text
-# MySQL 死鎖發生率（大於 0 即需注意）
-rate(mysql_global_status_innodb_deadlocks[1m]) > 0.1
+- 大多數電商操作在預設隔離等級下，搭配條件更新與唯一約束就能正確運作，見 [樂觀並行](/data-access/concurrency/)。提高隔離等級會增加衝突與重試。
+- Serializable 提供最強的保證，但衝突時一定要重試，而且在高衝突的情境下效能下降明顯。
+- 從 MySQL 換到 PostgreSQL（或反過來）時，重新檢查所有依賴「同一個交易內重複讀取結果不變」或依賴間隙鎖的邏輯。
 
-# PostgreSQL 死鎖發生率
-rate(pg_stat_database_deadlocks[1m]) > 0.1
+## 雲端排查
+
+### 叢集層（GKE 與 EKS 相同）
+
+```bash
+# 死結與序列化失敗的錯誤次數
+kubectl logs -n shop -l app=order-api --since=1h | grep -c -E "40P01|40001|Deadlock"
 ```
+
+### 託管服務層
+
+#### 兩邊相同：誰在等誰、最近一次死結
+
+```sql
+-- PostgreSQL：被擋住的連線與擋住它的連線
+SELECT pid, pg_blocking_pids(pid) AS blocked_by, wait_event_type, left(query, 80) AS query
+FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid)) > 0;
+
+-- PostgreSQL：各資料庫累計的死結次數
+SELECT datname, deadlocks FROM pg_stat_database WHERE datname = 'shop';
+```
+
+```sql
+-- MySQL：最近一次偵測到的死結（看輸出中的 LATEST DETECTED DEADLOCK）
+SHOW ENGINE INNODB STATUS;
+
+-- MySQL 8：目前的鎖等待
+SELECT * FROM performance_schema.data_lock_waits;
+```
+
+#### GKE
+
+Cloud SQL for PostgreSQL 的 `cloudsql.googleapis.com/database/postgresql/deadlock_count` 可以設定告警；死結次數在某次發布後增加，檢查新程式的鎖定順序。
+
+#### EKS
+
+RDS PostgreSQL 以上面的 `pg_stat_database.deadlocks` 追蹤累計次數；開啟 `log_lock_waits` 參數後，等待鎖超過 `deadlock_timeout` 的語句會寫進資料庫日誌，可發布到 CloudWatch Logs 查詢。
+
+### 應用程式層
+
+在追蹤中為交易重試加上事件或計數；重試率突然上升，代表衝突變多，通常和熱門商品、批次作業與線上流量同時修改同一批資料有關。

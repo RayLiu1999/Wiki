@@ -1,219 +1,135 @@
 ---
-title: "連線池預算、背壓與高併發容量"
-description: "用持有時間與系統總量推算候選池大小，分清 session 上限和安全的資料庫工作量。"
+title: "連線池預算：所有 Pod 加起來，資料庫撐得住嗎"
+description: "用利特爾法則估算需要多少連線，計算所有 API、Worker 與 rolling update 額外 Pod 的連線總量，並在應用程式端限制同時進行的資料庫工作（背壓）。"
 articleId: "data-access-pool-capacity"
 topic: "data-access"
 category: "database-connections"
 order: 13
-tags:
-  - "連線池"
-  - "高併發"
-  - "Little’s Law"
-  - "背壓"
-  - "HPA"
-  - "SemaphoreSlim"
+tags: ["連線池", "容量規劃", "利特爾法則", "背壓", "HPA", "max_connections"]
+articleType: "deep-dive"
 difficulty: "advanced"
-prerequisites:
-  - "data-access-pools-locks"
-  - "data-access-csharp-connections"
-relatedArticles:
-  - "kubernetes-autoscaling"
-  - "redis-reliability"
-  - "data-access-load-validation"
-applicableVersions: "以 .NET 10、MySQL 8.4（InnoDB）、PostgreSQL 18 說明；driver／EF provider 的主版相容性須各自核對。"
-lastReviewed: "2026-10-10"
-takeaway: "用持有時間與系統總量推算候選池大小，分清 session 上限和安全的資料庫工作量。"
+prerequisites: ["data-access-pools-locks"]
+relatedArticles: ["kubernetes-autoscaling", "eks-data-services", "data-access-load-validation"]
+applicableVersions: "Npgsql 8～10、MySqlConnector 2.x、Kubernetes 1.29 以上、PostgreSQL 14～18、MySQL 8.0／8.4。"
+lastReviewed: "2026-10-21"
+takeaway: "需要的連線數約等於「每秒查詢數 × 每次佔用秒數」；所有 Pod 的池上限加總（含擴容上限與 rolling update 多出來的 Pod）要小於資料庫上限並保留餘裕。"
 sources:
-  - title: "Npgsql：DataSource 與借還連線"
-    url: "https://www.npgsql.org/doc/basic-usage.html"
-  - title: "MySqlConnector：連線設定"
-    url: "https://mysqlconnector.net/connection-options/"
-  - title: "PostgreSQL 18：連線容量"
-    url: "https://www.postgresql.org/docs/18/runtime-config-connection.html"
-  - title: "Kubernetes：Deployment 與終止中 Pod"
-    url: "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/"
+  - title: "PostgreSQL：max_connections"
+    url: "https://www.postgresql.org/docs/current/runtime-config-connection.html"
+  - title: "Npgsql：Connection String Parameters（Pooling）"
+    url: "https://www.npgsql.org/doc/connection-string-parameters.html#pooling"
+  - title: "Kubernetes：Deployment rolling update（maxSurge）"
+    url: "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#max-surge"
+  - title: "Microsoft Learn：ASP.NET Core 中的速率限制中介軟體（並行限制）"
+    url: "https://learn.microsoft.com/aspnet/core/performance/rate-limit"
+  - title: "Microsoft Learn：ASP.NET Core 內建指標（aspnetcore.rate_limiting）"
+    url: "https://learn.microsoft.com/aspnet/core/log-mon/metrics/built-in"
+  - title: "Cloud SQL：配額與限制（最大連線數）"
+    url: "https://cloud.google.com/sql/docs/postgres/quotas"
+  - title: "Amazon RDS：CloudWatch metrics for Amazon RDS"
+    url: "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-metrics.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-每逢雙十一或限時搶購活動，後端工程師常會目睹一場典型的「水平擴展引發的系統自殘」：
+每個 API Pod 的 Npgsql 連線池上限是 50，看起來不多。但 HPA 在大促時把 API 擴到 20 個 Pod，加上 4 個 Worker、rolling update 期間多出來的 Pod，所有池子加起來可能要 1,300 條連線，而資料庫的上限只有 500。結果是新的連線被拒絕，或資料庫因為太多連線而變慢。
 
-流量如潮水般湧入，Kubernetes 的 HPA（Horizontal Pod Autoscaler）迅速響應，將 API 服務從平時的 5 個 Pod 自動擴容至 40 個 Pod。每個 Pod 的連線池採用了網路上常見的設定 `Max Pool Size=100`。
+**連線池預算**就是把整個系統可能開出的連線總數算清楚，確保它在資料庫承受得住的範圍內。
 
-幾秒鐘之內，資料庫後端（如 Cloud SQL 或 RDS）的連線數如火箭般飆破 2,000。然而，資料庫實體的 `max_connections` 上限僅配置為 600。資料庫開始無差別拒絕新連線：
-```text
-Npgsql.NpgsqlException: FATAL: remaining connection slots are reserved for non-replication superuser connections
-   at Npgsql.Internal.NpgsqlConnector.ReadExpecting[T](...)
+## 運作原理
+
+**需要多少連線：利特爾法則。** 系統中同時在處理的工作數 = 到達速率 × 每件工作停留的時間。套用到連線：
+
+> 同時需要的連線數 ≈ 每秒資料庫操作數 × 每次操作佔用連線的秒數
+
+每秒 2,000 次查詢、每次佔用 5 毫秒，同時只需要約 10 條連線。如果每次佔用 50 毫秒（例如交易裡做了太多事），就需要 100 條。縮短佔用時間，比加大池子更有效。
+
+**最多會開出多少連線：**
+
+```mermaid
+flowchart TB
+    API["API：HPA 上限 20 Pod × 池上限 20 = 400"]
+    Surge["rolling update 多出的 Pod：maxSurge 25% → 5 × 20 = 100"]
+    Worker["Worker：4 Pod × 池上限 10 = 40"]
+    Ops["migration Job、管理工具、監控：約 20"]
+    API --> Sum["最壞情況合計 560"]
+    Surge --> Sum
+    Worker --> Sum
+    Ops --> Sum
+    Sum --> Check{"小於資料庫上限 × 安全係數？"}
 ```
 
-由於新啟動的 Pod 無法取得資料庫連線，Kubernetes 的 Startup / Readiness Probe 紛紛失敗；K8s 判定 Pod 不健康並予以重啟。重啟中的 Pod 再次瘋狂發送 TLS 握手與連線請求，形成了致命的**連線重試風暴（Thundering Herd）**，最終導致 API Gateway 504 逾時、全站癱瘓。
+資料庫的連線上限不是越大越好。PostgreSQL 每條連線一個程序，連線太多時記憶體與排程成本會拖慢所有查詢。託管資料庫的預設上限通常依機器規格決定。
 
-根本原因在於：**未以數學模型推算容量預算，且誤將「連線數」等同於「處理能力」，缺乏應用層背壓防護。**
+## 常見錯誤與正確寫法
 
----
+### 1. 每個服務用預設的池上限
 
-## 反模式與正確解法
+Npgsql 和 MySqlConnector 的 `Maximum Pool Size` 預設都是 100。每個服務都不設定，系統一大就超過上限。依上面的算法，為每個服務明確設定池上限，並把算式寫在部署設定旁邊。
 
-### 反模式一：盲信「開大連線池能提高系統吞吐量」
+### 2. 讓所有請求都去搶連線
 
-很多工程師認為：「我有 1000 個併發請求，所以連線池應該開到 1000」。這是致命的誤解！
+尖峰時，500 個請求同時進來，每個都去借連線。池滿了，後來的請求在池裡排隊，直到 `Timeout`（Npgsql 預設 15 秒）才失敗。這 15 秒裡，請求佔著執行緒和記憶體，用戶端也在等。
 
-資料庫伺服器的運算核心是 CPU。假設你的資料庫主機擁有 16 核心 CPU，同一微秒內硬體最多只能平行運算 16 個執行緒。當有 500 個查詢同時在資料庫內部運行時，作業系統必須在 500 個執行緒/行程之間進行極其頻繁的**上下文切換（Context Switch）**，CPU 大量時間浪費在記憶體切換與快取失效（Cache Miss）上，導致整體吞吐量斷崖式下跌，查詢延遲從 2ms 惡化至數秒。
-
-### 正確解法一：利特爾法則（Little's Law）與連線預算公式
-
-根據排隊理論的利特爾法則（Little's Law）：
-$$N = \lambda \times W$$
-其中：
-- $N$：系統平均需要的並行連線數（Concurrent Connections）。
-- $\lambda$：每秒到達的查詢率（Queries Per Second, QPS）。
-- $W$：單次查詢的平均持有連線時間（Latency in seconds）。
-
-**實務算例：**
-若單一 Pod 承載的 QPS 為 1,000，且在良好優化下平均查詢延遲為 5ms（0.005 秒）：
-$$N = 1000 \times 0.005 = 5 \text{ 條連線}$$
-這意味著：**一個每秒處理 1,000 次查詢的 Pod，平均只需要 5 條活動連線！**
-加上 3 倍的安全峰值抖動餘裕，單 Pod 的 `Max Pool Size` 設定為 **15 ~ 20** 便綽綽有餘。
-
-全系統安全容量公式約束：
-$$\sum (\text{Pod 數量} \times \text{單 Pod Max Pool Size}) \le \text{DB max\_connections} \times 0.7$$
-（保留 30% 連線給管理工具、備份排程與主從複製）。
-
----
-
-### 反模式二：無限量接收請求並讓資料庫承受連線超載
-
-當資料庫遭遇慢查詢抖動時，查詢時間 $W$ 拉長，導致需要的連線數 $N$ 瞬間激增。如果應用程式無限制地讓請求去搶資料庫連線，只會讓連線池瞬間乾涸，所有執行緒卡在 `GetConnectionAsync` 逾時。
-
-### 正確解法二：在應用層使用 SemaphoreSlim 建立連線背壓（Backpressure）
-
-應用層應實作「快速失敗（Fail-fast）」與「主動背壓」：當進入資料庫的併發請求達到單 Pod 安全上限時，立即排隊或回傳 HTTP 429 / 503，保護資料庫不被擊垮：
+在應用程式入口限制同時處理的數量，超過就快速拒絕（回 503 或 429），讓用戶端稍後重試，而不是讓所有人一起慢：
 
 ```csharp
-// 生產級背壓資料存取閘門：保護底層連線池不被瞬間突波擊潰
-public class DatabaseBackpressureGate
+// 同時最多 64 個下單請求在處理，另外最多 100 個排隊；再多就直接回 503
+builder.Services.AddRateLimiter(options =>
 {
-    private readonly SemaphoreSlim _semaphore;
-    private readonly TimeSpan _acquireTimeout;
-    private readonly ILogger<DatabaseBackpressureGate> _logger;
-
-    public DatabaseBackpressureGate(
-        int maxConcurrentDbOperations, 
-        TimeSpan acquireTimeout,
-        ILogger<DatabaseBackpressureGate> logger)
+    options.RejectionStatusCode = StatusCodes.Status503ServiceUnavailable;
+    options.AddConcurrencyLimiter("orders-db", limiter =>
     {
-        // 限制本 Pod 同一時間最多只能有 N 個非同步工作進入資料庫層
-        _semaphore = new SemaphoreSlim(maxConcurrentDbOperations, maxConcurrentDbOperations);
-        _acquireTimeout = acquireTimeout;
-        _logger = logger;
-    }
-
-    public async Task<T> ExecuteWithBackpressureAsync<T>(
-        Func<CancellationToken, Task<T>> action, 
-        CancellationToken ct)
-    {
-        // 1. 嘗試獲取進入許可，若超過時間未排到，立即快速失敗拋出背壓例外
-        var acquired = await _semaphore.WaitAsync(_acquireTimeout, ct);
-        if (!acquired)
-        {
-            _logger.LogWarning("資料庫背壓閘門已滿，主動拒絕請求以保護資料庫！");
-            throw new DatabaseOverloadedException("系統繁忙，請稍後再試。");
-        }
-
-        try
-        {
-            // 2. 獲准進入：執行資料庫操作
-            return await action(ct);
-        }
-        finally
-        {
-            // 3. 釋放閘門許可
-            _semaphore.Release();
-        }
-    }
-}
-```
-
-在 ASP.NET Core 的 Minimal API 或 Controller 中使用：
-```csharp
-app.MapGet("/api/products/{id}", async (
-    int id, 
-    DatabaseBackpressureGate gate, 
-    AppDbContext db, 
-    CancellationToken ct) =>
-{
-    try
-    {
-        var product = await gate.ExecuteWithBackpressureAsync(
-            async token => await db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id, token),
-            ct);
-
-        return product is not null ? Results.Ok(product) : Results.NotFound();
-    }
-    catch (DatabaseOverloadedException)
-    {
-        // 回傳 503 Service Unavailable 並提示重試時間
-        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
-    }
+        limiter.PermitLimit = 64;
+        limiter.QueueLimit = 100;
+    });
 });
+
+app.UseRateLimiter();
+app.MapPost("/orders", PlaceOrder).RequireRateLimiting("orders-db");
 ```
 
----
+`Timeout` 也要調短（例如 3～5 秒），借不到連線就早點失敗，不要讓請求堆積。
 
-## 踩坑與避坑指南
+### 3. 只算 API，忘了 rolling update
 
-### 1. HPA 滾動發布（Rolling Update）期間的連線翻倍
-- **現象**：設定了 `maxSurge: 50%` 的 Deployment，在部署新版時，新舊 Pod 同時存活，Pod 總數短暫達到平常的 1.5 倍。
-- **踩坑點**：若平常連線數已達到資料庫上限的 80%，滾動發布時連線數會直接衝破 120%，瞬間癱瘓整個生產環境。
-- **規則**：在規劃連線預算時，**Pod 最大數必須計入 `maxSurge` 的尖峰重疊數量**。
+部署新版本時，Deployment 會先建立新 Pod，再刪除舊 Pod。`maxSurge` 決定最多多出幾個 Pod，這段時間的連線數會比平常高。預算要用「HPA 上限 + maxSurge」計算。
 
-### 2. K8s Pod 終止中的連線清理與 Graceful Shutdown
-- 當 Pod 收到 `SIGTERM` 訊號開始終止時，若未妥善處理 Graceful Shutdown，正在執行的長查詢可能被硬生生中斷，導致連線在資料庫端處於無主或卡死狀態數十秒。
-- **避坑規則**：在 `Program.cs` 設定 `HostOptions.ShutdownTimeout`（如 15 秒），確保現有 HTTP 請求完成並主動關閉連線。
+## 使用邊界
 
-### 3. 連線借用逾時（Connection Timeout）絕不能過長
-- 預設的連線逾時常為 15 秒或 30 秒。在高流量下，若取不到連線讓每個 Request 等待 15 秒，Kestrel 的工作執行緒池（ThreadPool）會瞬間被卡滿，連不受資料庫影響的靜態請求、Health Check 都會連帶逾時。
-- **規則**：在微服務架構中，連線字串的 `Connection Timeout` 應縮減至 **3 ~ 5 秒**。
+- Pod 數量大、而且隨流量大幅變動時，考慮在中間加連線池代理（RDS Proxy、PgBouncer），讓很多應用程式連線共用較少的資料庫連線。GKE 上的 Cloud SQL Auth Proxy 不提供連線共用，見 [連線池、交易與鎖](/data-access/pools-locks/)。
+- 上面的計算是起點；實際的值要用接近真實的負載驗證，見 [容量驗證](/data-access/load-validation/)。
+- HPA 的上限要和資料庫預算一起決定，見 [自動擴縮](/platforms/kubernetes/autoscaling/)。
 
----
+## 雲端排查
 
-## 線上排查指令
-
-### 1. 即時計算全叢集 Pod 消耗的資料庫連線分佈
-
-```sql
--- PostgreSQL: 依據客戶端 IP 統計當前連線數（識別哪個 Pod 連線最多）
-SELECT client_addr, count(*) AS connection_count
-FROM pg_stat_activity
-WHERE client_addr IS NOT NULL
-GROUP BY client_addr
-ORDER BY connection_count DESC;
-```
-
-```sql
--- MySQL: 依據主機來源 IP 統計連線數
-SELECT SUBSTRING_INDEX(host, ':', 1) AS client_ip, count(*) AS connection_count
-FROM information_schema.processlist
-GROUP BY client_ip
-ORDER BY connection_count DESC;
-```
-
-### 2. Kubernetes 快速排查異常連線數的 Pod
+### 叢集層（GKE 與 EKS 相同）
 
 ```bash
-# 觀察當前運行的 Pod 數量
-kubectl get pods -l app=ecommerce-api --no-headers | wc -l
-
-# 查看是否有 Pod 處於 CrashLoopBackOff 或健康檢查失敗
-kubectl get pods -l app=ecommerce-api | grep -E 'CrashLoop|0/'
+# 各服務目前與上限的 Pod 數：乘上各自的池上限，就是可能的最大連線數
+kubectl get hpa -n shop
+kubectl get deployment -n shop -o custom-columns=NAME:.metadata.name,READY:.status.readyReplicas,SURGE:.spec.strategy.rollingUpdate.maxSurge
 ```
 
-### 3. Prometheus / Grafana 容量告警指標
+### 託管服務層
 
-```text
-# 全叢集 Pod 連線數佔 DB 最大連線數超過 75%
-(sum(npgsql_active_connections) / pg_settings_max_connections) > 0.75
+#### 兩邊相同：連線上限與目前用量
 
-# 應用端背壓觸發次數（每秒大於 1 次即代表資料庫已達飽和邊界）
-rate(dotnet_backpressure_rejections_total[1m]) > 1
+```sql
+-- PostgreSQL：上限、保留給管理者的連線，以及目前各服務的連線數
+SHOW max_connections;
+SHOW superuser_reserved_connections;
+SELECT application_name, count(*) FROM pg_stat_activity GROUP BY 1 ORDER BY 2 DESC;
 ```
+
+#### GKE
+
+Cloud SQL 的 `cloudsql.googleapis.com/database/postgresql/num_backends` 對照 `max_connections` 設定告警，例如超過 80% 時通知。MySQL 執行個體看 `database/network/connections`。
+
+#### EKS
+
+CloudWatch `AWS/RDS` 的 `DatabaseConnections` 對照執行個體的連線上限設定告警；使用 RDS Proxy 時再看 `DatabaseConnectionsBorrowLatency`，它升高代表 Proxy 拿不到底層連線，見 [EKS 資料服務](/platforms/eks/data-services/)。
+
+### 應用程式層
+
+ASP.NET Core 的限流中介軟體提供 `aspnetcore.rate_limiting.*` 指標（例如被拒絕的請求數與排隊時間）。被拒絕的數量持續上升，代表入口限制比實際容量小，或資料庫操作的佔用時間變長了。

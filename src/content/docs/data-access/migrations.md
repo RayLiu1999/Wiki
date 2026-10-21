@@ -1,265 +1,175 @@
 ---
-title: "EF Core 資料庫遷移（Migrations）：生產自動遷移死鎖與零停機發布（Expand/Contract）"
-description: "深入剖析 Pod 啟動自動 Migrate 死鎖災難、零停機擴展與收縮（Expand/Contract）模式、冪等 SQL 腳本生成與 CI/CD 最佳實務。"
+title: "Migration：改資料表結構時，怎麼不讓服務停下來"
+description: "說明 EF Core Migration 的用途、為什麼不要在 Pod 啟動時自動執行、Expand／Contract 如何讓新舊版本同時運作，以及大表加索引與 DDL 鎖的處理。"
 articleId: "data-access-migrations"
 topic: "data-access"
 category: "database-runtime"
-order: 1
-tags: ["EF Core", "Migrations", "零停機發布", "Expand-Contract", "DDL", "CI/CD", "Kubernetes"]
+order: 8
+tags: ["EF Core", "Migration", "Expand/Contract", "零停機", "CREATE INDEX CONCURRENTLY"]
 articleType: "deep-dive"
-prerequisites: ["data-access-ef-core", "dotnet-sdk-packages"]
-relatedArticles: ["data-access-pools-locks", "kubernetes-workloads"]
-applicableVersions: "EF Core 8 / 10、.NET 8 / 10"
 difficulty: "advanced"
-lastReviewed: "2026-10-10"
-takeaway: "生產環境嚴禁在 Pod 啟動時自動 Migrate；架構變更一律遵循 Expand/Contract 模式；透過 CI/CD 或 InitContainer 執行冪等 SQL 腳本。"
+prerequisites: ["data-access-ef-core"]
+relatedArticles: ["engineering-ci-cd", "data-access-bulk-retention", "kubernetes-workloads"]
+applicableVersions: "EF Core 8～10、PostgreSQL 14～18、MySQL 8.0／8.4。"
+lastReviewed: "2026-10-21"
+takeaway: "Migration 由部署流程在發布前執行一次，不要讓每個 Pod 啟動時自己跑；破壞性變更拆成「先擴充、後收縮」兩次發布；大表的 DDL 要設鎖等待上限。"
 sources:
-  - title: "Microsoft Learn：在生產環境中套用移轉 (Migrations) - EF Core"
-    url: "https://learn.microsoft.com/zh-tw/ef/core/managing-schemas/migrations/applying"
-  - title: "Microsoft Learn：平行移轉與零停機部署"
-    url: "https://learn.microsoft.com/zh-tw/ef/core/managing-schemas/migrations/teams"
+  - title: "Microsoft Learn：套用移轉"
+    url: "https://learn.microsoft.com/ef/core/managing-schemas/migrations/applying"
+  - title: "Microsoft Learn：移轉套件組合（bundles）"
+    url: "https://learn.microsoft.com/ef/core/managing-schemas/migrations/applying#bundles"
+  - title: "PostgreSQL：CREATE INDEX（CONCURRENTLY）"
+    url: "https://www.postgresql.org/docs/current/sql-createindex.html"
+  - title: "PostgreSQL：lock_timeout"
+    url: "https://www.postgresql.org/docs/current/runtime-config-client.html"
+  - title: "MySQL 8.4：Online DDL Operations"
+    url: "https://dev.mysql.com/doc/refman/8.4/en/innodb-online-ddl-operations.html"
+  - title: "MySQL 8.4：Metadata Locking"
+    url: "https://dev.mysql.com/doc/refman/8.4/en/metadata-locking.html"
+  - title: "Kubernetes：Jobs"
+    url: "https://kubernetes.io/docs/concepts/workloads/controllers/job/"
 ---
 
-## 案發現場
+## 這是什麼
 
-某電商核心微服務在週末夜間進行 Kubernetes 滾動發布（Rolling Update）。發布啟動後僅僅 30 秒，維運監控警報狂響，所有新版本 Pod 紛紛進入 `CrashLoopBackOff` 死迴圈，全站對外服務隨之劇烈中斷！
+程式改版常常伴隨資料表結構的變更：加一個欄位、改欄位名稱、加一個索引。EF Core 的 **Migration** 會比對模型的變化，產生對應的 SQL（DDL），並在資料庫的 `__EFMigrationsHistory` 表記錄已經套用到哪一版。
 
-排查小組調取新 Pod 的終端日誌，赫然看見了致命的 DDL 死鎖與資料表毀損紀錄：
-`System.InvalidOperationException: The database operation failed due to a lock timeout or deadlock... Table '__EFMigrationsHistory' is locked.`
-原因在於：開發者在 `Program.cs` 的頂層啟動代碼中，寫入了便利但在生產環境極端危險的指令：
-```csharp
-await dbContext.Database.MigrateAsync();
-```
-當 Kubernetes 依據滾動發布策略同時拉起 4 個新 Pod 時，這 4 個 Pod 幾乎在同一毫秒向資料庫發送了 `CREATE TABLE` 與 `ALTER TABLE` 語句，並試圖向遷移歷史表（`__EFMigrationsHistory`）插入紀錄。多個 Pod 的並行連線在資料庫元資料鎖（Metadata Lock）層級爆發了慘烈的死鎖，部分 Pod 逾時崩潰，導致資料庫結構處於半套用、半殘缺的不可逆損壞狀態！
+問題在「怎麼套用到正式環境」。服務有好幾個 Pod，部署時新舊版本會同時存在一段時間；資料表很大時，一句 DDL 可能要鎖住表好幾分鐘。這篇說明如何在不停機的情況下改結構。
 
-雪上加霜的是隨後的「修復性事故」：該團隊本次改版包含了一項資料庫欄位重構——將會員表中的 `Phone` 欄位重新命名為 `MobilePhone`。在發布期間，由於 Kubernetes 滾動更新是逐步替換 Pod，線上環境必然存在「新版 Pod 與舊版 Pod 同時承接流量」的 10 分鐘過渡窗口。結果：新版 Pod 將資料寫入 `MobilePhone`，而仍在服務的舊版 Pod 卻在持續發送 `SELECT Phone FROM Members`，線上連續噴發數萬筆 `Column 'Phone' does not exist` 錯誤，大量消費者被強制登出且無法下單！
-
-這起典型慘劇揭露了現代雲原生架構下資料庫架構演進的兩大核心死穴：**執行期多實例並行套用遷移的併發衝突**，以及**違反零停機發布（Zero-Downtime Deployment）向前相容原則的破壞性變更（Breaking Changes）**。
+## 運作原理
 
 ```mermaid
-flowchart TD
-    subgraph MultiPodRaceCrash["多 Pod 並行啟動自動遷移死鎖災難"]
-        direction TB
-        K8sDeploy["Kubernetes 滾動更新發布新版本"] --> Spawn["同時啟動 4 個新版 Pod 副本"]
-        Spawn --> P1["Pod 1: 執行 MigrateAsync()"]
-        Spawn --> P2["Pod 2: 執行 MigrateAsync()"]
-        Spawn --> P3["Pod 3: 執行 MigrateAsync()"]
-        Spawn --> P4["Pod 4: 執行 MigrateAsync()"]
-        
-        P1 & P2 & P3 & P4 --> LockCollision["💥 同時競爭 __EFMigrationsHistory 排他鎖與 DDL MDL 鎖定！"]
-        LockCollision --> Crash["引發 Metadata Lock 死鎖！Pod 啟動超時崩潰 ──► CrashLoopBackOff"]
+flowchart LR
+    subgraph R1["發布 1：擴充（Expand）"]
+        A1["新增 shipping_note 欄位<br/>（可為 null）"] --> A2["新程式同時寫新舊欄位，<br/>讀新欄位、沒有就讀舊欄位"]
     end
-
-    subgraph ExpandContractPhases["零停機 Expand / Contract (擴展與收縮) 三階段演進"]
-        direction TB
-        Phase1["階段一: Expand (擴展)<br/>新增欄位 MobilePhone (允許 NULL)<br/>舊版 Pod 讀寫 Phone，新版 Pod 雙寫或漸進讀取"]
-        Phase2["階段二: Migrate (遷移與回填)<br/>全量切換至新版 Pod<br/>背景 Worker 批次將舊資料回填 (Backfill) 至新欄位"]
-        Phase3["階段三: Contract (收縮)<br/>下次版本發布確認無舊代碼相依<br/>安全下達 DDL 移除廢棄舊欄位 Phone"]
-        
-        Phase1 --> Phase2 --> Phase3
+    subgraph Fill["回填"]
+        B1["分批把舊資料搬到新欄位"]
     end
+    subgraph R2["發布 2：收縮（Contract）"]
+        C1["程式只用新欄位"] --> C2["確認沒人使用後，<br/>刪除舊欄位"]
+    end
+    R1 --> Fill --> R2
 ```
 
----
+rolling update 期間，舊版 Pod 和新版 Pod 同時連到同一個資料庫。所以任何結構變更都必須讓**舊程式**也能正常運作。直接改欄位名稱，舊版 Pod 會立刻因找不到欄位而出錯。
 
-## 致命反模式 vs. 正確解法
+**Expand／Contract** 把一個破壞性變更拆成兩次發布：第一次只「加」，新舊程式都能運作；確認舊版完全下線、資料回填完成後，第二次才「刪」。
 
-### 反模式一：在多實例 Pod 啟動階段直接執行 `Database.Migrate()`
+DDL 需要取得資料表的鎖。PostgreSQL 的 `ALTER TABLE` 要等表上所有進行中的交易結束，等待期間，後面所有讀寫這張表的請求也會排在它後面。一個長交易沒結束，整張表的流量就可能被卡住。
 
-將資料庫結構變更（DDL）綁定在應用程式的啟動流程中，存在三大隱患：
-1. **多節點死鎖與競爭條件**：多個 Pod 同時執行遷移，極易引發 DDL 死鎖與 `__EFMigrationsHistory` 寫入衝突。
-2. **容器探針超時死鎖**：若遷移包含對數百萬行歷史大表新增索引，DDL 執行可能耗時數分鐘。在此期間，HTTP 伺服器尚未就緒，Kubernetes 的 Startup / Liveness 探針會判定容器超時並直接發送 SIGKILL，使資料庫停留在中斷的危險狀態。
-3. **權限過大違背最小權限原則**：應用程式的連線帳號被迫擁有 `ALTER`、`CREATE`、`DROP` 等 DDL 高危權限，增加被 SQL 注入攻擊時的資料庫風險。
+## 常見錯誤與正確寫法
 
-### 反模式二：在生產環境直接執行破壞性變更（如直接 Rename 或 Drop Column）
-
-直接在單次發布中重新命名欄位（Rename Column）或刪除欄位（Drop Column），徹底破壞了向後相容性。在 Kubernetes 滾動發布、金絲雀發布（Canary）或發生故障需要緊急回滾（Rollback）時，舊版代碼將因欄位丟失而全數拋出異常。
-
-### 正確解法：遷移與應用程式生命週期脫鉤，實踐 Expand/Contract 模式
-
-1. **架構變更遵循 Expand/Contract 模式**：
-   - **擴展（Expand）**：新增非破壞性欄位（允許 NULL 或具備預設值）。
-   - **遷移（Migrate）**：全量部署新版代碼並在背景回填資料。
-   - **收縮（Contract）**：確認無舊版依賴後，在後續獨立發布中刪除舊欄位。
-2. **獨立遷移管線（Migration Bundles / CI/CD 冪等腳本）**：
-   遷移一律由 CI/CD Pipeline、Kubernetes `InitContainer` 或獨立 `Job` 單點執行，絕不在業務 Pod 內部並行執行。
+### 1. 每個 Pod 啟動時自動 Migrate
 
 ```csharp
-using System;
-using System.Diagnostics;
-using System.Threading.Tasks;
-
-namespace DotNetPerformance.DataAccess;
-
-/// <summary>
-/// 零停機 Expand / Contract 雙向過渡相容實體
-/// </summary>
-public sealed class UserProfileTransitionEntity
-{
-    public int UserId { get; set; }
-    
-    // 舊版欄位 (Phase 1/2 期間保留供向後相容)
-    public string? Phone { get; set; }
-
-    // 新版欄位 (Phase 1 新增之擴展欄位)
-    public string? MobilePhone { get; set; }
-
-    /// <summary>
-    /// 取得有效聯絡電話（向下相容過渡屬性）
-    /// </summary>
-    public string GetEffectiveContactNumber()
-    {
-        // 優先讀取新版欄位，若尚未回填則優雅降級讀取舊版欄位
-        return !string.IsNullOrWhiteSpace(MobilePhone) ? MobilePhone : (Phone ?? string.Empty);
-    }
-}
-
-/// <summary>
-/// 生產級安全遷移發布展示
-/// </summary>
-public static class ZeroDowntimeMigrationDemo
-{
-    public static void DisplayProductionStrategy()
-    {
-        Console.WriteLine("[零停機資料庫發布規範]");
-        Console.WriteLine("  1. 生成冪等 SQL 腳本 (Idempotent Script)：");
-        Console.WriteLine("     指令: dotnet ef migrations script --idempotent -o /ci/migrate.sql");
-        Console.WriteLine("     優勢: 為每段 DDL 自動包裝 IF NOT EXISTS，支援重複執行與 DBA 審查。");
-
-        Console.WriteLine("\n  2. 獨立單點執行 (Kubernetes InitContainer / CI Job)：");
-        Console.WriteLine("     絕不讓 10 個應用程式 Pod 並行執行 DDL；由 InitContainer 單一執行確保無競爭死鎖。");
-
-        Console.WriteLine("\n  3. 驗證過渡相容模型 (Expand/Contract)：");
-        var user = new UserProfileTransitionEntity
-        {
-            UserId = 1001,
-            Phone = "0912-345-678", // 舊欄位有值
-            MobilePhone = null      // 新欄位尚未回填
-        };
-
-        Console.WriteLine($"     過渡期相容提取電話: {user.GetEffectiveContactNumber()} (舊版本完全正常工作)");
-
-        user.MobilePhone = "+886-912345678"; // 完成回填
-        Console.WriteLine($"     回填後相容提取電話: {user.GetEffectiveContactNumber()} (新版本完全生效)");
-    }
-}
-
-public static class Program
-{
-    public static void Main()
-    {
-        Console.WriteLine("=== EF Core 資料庫遷移與零停機 Expand/Contract 實測 ===");
-
-        ZeroDowntimeMigrationDemo.DisplayProductionStrategy();
-
-        Console.WriteLine("\n遷移部署策略通過檢驗：已徹底杜絕多 Pod 並行 Migrate 死鎖與破壞性欄位下線。");
-    }
-}
+// 錯：十個 Pod 同時啟動，同時嘗試套用 migration；某個 Pod 失敗會反覆重啟
+using var scope = app.Services.CreateScope();
+scope.ServiceProvider.GetRequiredService<ShopDbContext>().Database.Migrate();
 ```
 
-預期控制台輸出：
-
-```text
-=== EF Core 資料庫遷移與零停機 Expand/Contract 實測 ===
-[零停機資料庫發布規範]
-  1. 生成冪等 SQL 腳本 (Idempotent Script)：
-     指令: dotnet ef migrations script --idempotent -o /ci/migrate.sql
-     優勢: 為每段 DDL 自動包裝 IF NOT EXISTS，支援重複執行與 DBA 審查。
-
-  2. 獨立單點執行 (Kubernetes InitContainer / CI Job)：
-     絕不讓 10 個應用程式 Pod 並行執行 DDL；由 InitContainer 單一執行確保無競爭死鎖。
-
-  3. 驗證過渡相容模型 (Expand/Contract)：
-     過渡期相容提取電話: 0912-345-678 (舊版本完全正常工作)
-     回填後相容提取電話: +886-912345678 (新版本完全生效)
-
-遷移部署策略通過檢驗：已徹底杜絕多 Pod 並行 Migrate 死鎖與破壞性欄位下線。
-```
-
----
-
-## 踩坑與避坑指南
-
-### 1. 產生冪等 SQL 腳本（Idempotent Scripts）的 CI/CD 實踐
-
-在自動化流水線中，切勿依賴環境中的 .NET 運行時動態執行遷移。使用以下命令產出純 SQL 腳本：
+應用程式的帳號也因此需要 DDL 權限，權限過大。改成由部署流程在發布前執行一次。EF Core 可以產生**冪等的 SQL 腳本**（每一段都先檢查是否已套用），或產生一個可執行的 **migration bundle**：
 
 ```bash
-# 產出從第一版到最新版、且每個段落皆包含存在性檢查的冪等 SQL
-dotnet ef migrations script --idempotent --output /artifacts/bundle.sql
-```
-生成的 SQL 範例：
-```sql
-IF NOT EXISTS (SELECT 1 FROM [__EFMigrationsHistory] WHERE [MigrationId] = '20261010_AddMobilePhone')
-BEGIN
-    ALTER TABLE [Members] ADD [MobilePhone] nvarchar(32) NULL;
-    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion]) VALUES ('20261010_AddMobilePhone', '10.0.0');
-END;
+# 冪等腳本：給 DBA 審核，或由 CI 執行
+dotnet ef migrations script --idempotent --output migrate.sql
+
+# 或產生單一執行檔，在 Kubernetes Job 中執行
+dotnet ef migrations bundle --self-contained --runtime linux-x64 --output efbundle
+./efbundle --connection "$MIGRATION_CONNECTION_STRING"
 ```
 
-### 2. PostgreSQL 事務性 DDL vs MySQL 非事務性 DDL 天坑
+Kubernetes 上用一個 `Job` 執行 migration，成功後才更新 Deployment，見 [CI/CD](/engineering/ci-cd/)。
 
-- **PostgreSQL 支援事務性 DDL（Transactional DDL）**：
-  若某個 `ALTER TABLE` 語法在中途因約束違規失敗，PostgreSQL 會**完全回滾整筆事務**，資料庫結構完好無損，極具安全韌性。
-- **MySQL 不支援事務性 DDL**：
-  MySQL 的 DDL 指令會隱式提交（Implicit Commit）當前事務！一旦執行到第二道 `ALTER TABLE` 發生錯誤崩潰，第一道已變更的結構**永遠無法自動回滾**，資料庫會停留在殘缺的半成品狀態，迫使工程師手動下達 SQL 搶修。
-- **防禦原則**：在 MySQL 環境執行遷移時，每個 Migration 應儘量維持微型化，並事先於 Staging 環境進行演練驗證。
+### 2. 直接改名或刪除欄位
 
-### 3. 大表新增索引防鎖表：PostgreSQL `CONCURRENTLY` 實踐
+```csharp
+// 錯：舊版 Pod 還在查詢 note 欄位，立刻出錯
+migrationBuilder.RenameColumn(name: "note", table: "orders", newName: "shipping_note");
+```
 
-在數千萬筆資料的歷史大表上新增索引時，預設的 `CREATE INDEX` 會阻斷所有並行寫入：
-- 在 EF Core 遷移中，應宣告啟用並發無鎖建立：
-  ```csharp
-  migrationBuilder.CreateIndex(
-      name: "IX_Orders_CustomerId",
-      table: "Orders",
-      column: "CustomerId")
-      .Annotation("Npgsql:CreatedConcurrently", true); // PostgreSQL 並發無鎖建立索引
-  ```
+照 Expand／Contract 分兩次發布：先加 `shipping_note`、程式雙寫、回填資料；下一次發布再刪 `note`。
 
----
+### 3. 大表加索引鎖住寫入
 
-## 線上排查指令
+PostgreSQL 一般的 `CREATE INDEX` 會擋住整張表的寫入直到建好。用 `CONCURRENTLY` 可以邊建邊允許寫入，但它不能在交易裡執行，所以要關閉 migration 的交易：
 
-### 1. 檢視 PostgreSQL 當前持有 DDL 排他鎖的連線
+```csharp
+protected override void Up(MigrationBuilder migrationBuilder)
+{
+    migrationBuilder.Sql(
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_orders_buyer_created ON orders (buyer_id, created_at DESC);",
+        suppressTransaction: true);
+}
+```
 
-定位是哪條連線阻塞了結構遷移：
+`CONCURRENTLY` 失敗時會留下一個標記為無效的索引，要先刪掉再重建，見 [大量寫入與保留](/data-access/bulk-retention/)。
+
+### 4. DDL 無限等待鎖，卡住所有流量
+
+在 DDL 前設定鎖等待上限，等不到就失敗，稍後重試，而不是讓整張表的流量排在它後面：
 
 ```sql
--- 查詢當前持有 AccessExclusiveLock（DDL 專屬排他鎖）的連線與查詢
-SELECT 
-    l.pid, 
-    a.usename, 
-    l.mode, 
-    l.granted, 
-    a.query_start, 
-    a.query 
-FROM pg_locks l 
-JOIN pg_stat_activity a ON l.pid = a.pid 
-WHERE l.mode = 'AccessExclusiveLock';
+SET lock_timeout = '5s';
+ALTER TABLE orders ADD COLUMN shipping_note text;
 ```
 
-### 2. 檢測 MySQL 當前元資料鎖（Metadata Lock）等待狀況
+MySQL 的 DDL 需要 metadata lock，長交易同樣會讓它等待；可以用 `lock_wait_timeout` 限制等待時間，並優先使用支援 `ALGORITHM=INPLACE, LOCK=NONE` 的線上 DDL。
 
-排查 MySQL 的 DDL 是否被未提交的長查詢卡死：
+## 使用邊界
+
+- PostgreSQL 的 DDL 可以放在交易裡，失敗會整個回滾；MySQL 的 DDL 會隱含提交，一個 migration 中途失敗，前面的步驟已經生效，要手動處理。
+- 加欄位並給預設值，在 PostgreSQL 11 以上不需要改寫整張表；但加 `NOT NULL` 約束、改欄位型別仍可能需要掃描或重寫，先在相同資料量的環境測試耗時。
+- 回滾程式不會回滾資料表結構。發布前先確認：新結構下舊版程式還能不能跑。
+
+## 雲端排查
+
+### 叢集層（GKE 與 EKS 相同）
+
+```bash
+# migration Job 的狀態與輸出
+kubectl get job -n shop db-migrate
+kubectl logs -n shop job/db-migrate
+```
+
+Job 一直沒有完成，先看輸出是否停在某一句 DDL 上，再到資料庫查是誰擋住它。
+
+### 託管服務層
+
+#### 兩邊相同：DDL 在等誰
 
 ```sql
--- 檢視正在等待元資料鎖的執行緒 (MySQL 8.0+)
-SELECT 
-    object_type, 
-    object_schema, 
-    object_name, 
-    lock_type, 
-    lock_status, 
-    owner_thread_id 
-FROM performance_schema.metadata_locks 
-WHERE lock_status = 'PENDING';
+-- PostgreSQL：正在等待鎖的 DDL，以及擋住它的交易
+SELECT pid, wait_event_type, now() - query_start AS waiting, left(query, 80) AS query,
+       pg_blocking_pids(pid) AS blocked_by
+FROM pg_stat_activity
+WHERE query ILIKE 'ALTER TABLE%' OR query ILIKE 'CREATE INDEX%';
 ```
-
-### 3. 檢查 `__EFMigrationsHistory` 最新遷移紀錄
-
-在資料庫終端驗證當前實際套用的遷移版本：
 
 ```sql
-SELECT * FROM "__EFMigrationsHistory" ORDER BY "MigrationId" DESC LIMIT 5;
+-- MySQL 8：metadata lock 的持有與等待
+SELECT OBJECT_NAME, LOCK_TYPE, LOCK_STATUS, OWNER_THREAD_ID
+FROM performance_schema.metadata_locks
+WHERE OBJECT_SCHEMA = 'shop';
 ```
+
+```sql
+-- 已套用到哪一版 migration
+SELECT "MigrationId", "ProductVersion" FROM "__EFMigrationsHistory" ORDER BY "MigrationId" DESC LIMIT 5;
+```
+
+#### GKE
+
+Cloud SQL 會把資料庫日誌送到 Cloud Logging，可以查詢 migration 期間的錯誤：
+
+```bash
+gcloud logging read 'resource.type="cloudsql_database" AND severity>=ERROR' --freshness=1h --limit=20
+```
+
+#### EKS
+
+CloudWatch `AWS/RDS` 的 `DatabaseConnections` 在 DDL 等待期間會快速上升（請求排隊、連線無法歸還）；RDS 的資料庫日誌可以發布到 CloudWatch Logs 查詢錯誤。
+
+### 應用程式層
+
+新版 Pod 啟動後出現「欄位不存在」的錯誤，代表程式比 migration 先上線；舊版 Pod 出現同樣錯誤，代表 migration 做了舊程式不相容的變更，要回頭檢查是否違反 Expand／Contract。

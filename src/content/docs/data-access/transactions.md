@@ -1,260 +1,153 @@
 ---
-title: ".NET 資料庫交易實務：本地交易、分散式交易陷阱與 TransactionScope 避坑"
-description: "深入剖析 TransactionScope 在 Linux 容器環境升級 DTC 崩潰原因、持鎖範圍過大災難、單一連線本機交易與 Outbox 最終一致性架構。"
+title: "資料庫交易：哪些步驟要一起成功，交易裡為什麼不能呼叫外部 API"
+description: "說明交易保證什麼、SaveChanges 何時已經是交易、什麼時候需要明確開交易，以及 TransactionScope 跨連線升級、交易內做外部 I/O、重試策略與交易衝突這三個陷阱。"
 articleId: "data-access-transactions"
 topic: "data-access"
 category: "transactions"
-order: 1
-tags: [".NET", "交易", "Transactions", "TransactionScope", "DTC", "分散式交易", "Outbox"]
+order: 5
+tags: ["交易", "EF Core", "TransactionScope", "Execution Strategy", "長交易"]
 articleType: "deep-dive"
-prerequisites: ["data-access-ef-core", "csharp-cancellation-disposable"]
-relatedArticles: ["data-access-batch-updates", "architecture-outbox-inbox"]
-applicableVersions: "EF Core 8 / 10、.NET 8 / 10"
-difficulty: "advanced"
-lastReviewed: "2026-10-10"
-takeaway: "Linux 容器嚴禁跨多連線使用 TransactionScope；持交易期間禁執行外部 I/O；跨微服務一律採用 Outbox 與 Saga 最終一致性。"
+difficulty: "beginner"
+prerequisites: ["data-access-ef-core"]
+relatedArticles: ["architecture-outbox-inbox", "data-access-isolation-locking", "csharp-cancellation-disposable"]
+applicableVersions: "EF Core 8～10、.NET 8～10、PostgreSQL 14～18、MySQL 8.0／8.4。"
+lastReviewed: "2026-10-21"
+takeaway: "一次 SaveChanges 本身就是交易；跨多次 SaveChanges 才需要明確交易。交易要短，裡面只放資料庫操作；跨服務的一致性用 Outbox，不用分散式交易。"
 sources:
-  - title: "Microsoft Learn：EF Core 中的交易"
-    url: "https://learn.microsoft.com/zh-tw/ef/core/saving/transactions"
-  - title: "Microsoft Learn：使用 TransactionScope 實作隱含交易"
-    url: "https://learn.microsoft.com/zh-tw/dotnet/framework/data/transactions/implementing-an-implicit-transaction-using-transaction-scope"
+  - title: "Microsoft Learn：EF Core 交易"
+    url: "https://learn.microsoft.com/ef/core/saving/transactions"
+  - title: "Microsoft Learn：連線復原（執行策略與交易）"
+    url: "https://learn.microsoft.com/ef/core/miscellaneous/connection-resiliency"
+  - title: "Microsoft Learn：.NET 中的分散式交易（Windows 限定）"
+    url: "https://learn.microsoft.com/dotnet/core/whats-new/dotnet-7#distributed-transactions"
+  - title: "PostgreSQL：idle_in_transaction_session_timeout"
+    url: "https://www.postgresql.org/docs/current/runtime-config-client.html"
+  - title: "Cloud SQL：設定資料庫旗標"
+    url: "https://cloud.google.com/sql/docs/postgres/flags"
+  - title: "Amazon RDS：使用參數群組"
+    url: "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_WorkingWithParamGroups.html"
 ---
 
-## 案發現場
+## 這是什麼
 
-某擁有十年歷史的金融交易系統在由舊版 Windows Server 實體機遷移至 Linux Kubernetes 容器叢集後，迎來了一場災難性的生產事故：在週末夜間批次扣款與帳務對帳作業啟動時，應用程式日誌以每秒上千次的頻率瘋狂拋出致命例外：
-`System.PlatformNotSupportedException: This platform does not support distributed transactions.`
+建立訂單時要做三件事：寫入訂單、扣庫存保留量、寫入 outbox 事件。這三件事要嘛全部成功，要嘛全部不算數；如果訂單寫進去了但庫存沒扣，就會超賣。
 
-系統所有涉及多模組協同的寫入操作全數中斷，數千筆交易被卡在未定狀態。經過緊急逆向排查，發現歷史程式碼大量依賴了 .NET Framework 時代的隱式交易語法：
-```csharp
-using (var scope = new TransactionScope())
-{
-    await userAccountService.DeductBalanceAsync(userId, amount);
-    await orderRepository.CreateOrderAsync(order);
-    scope.Complete();
-}
-```
-在 Windows 環境下，當這兩段業務各自從連線集區開啟了獨立的 `DbConnection` 時，Windows 核心的 **MSDTC（微軟分散式交易協調器）** 會在背後默默將本機交易自動升級為基於兩階段提交（2PC）的分散式交易；然而，在現代 Linux 容器環境中，.NET Core / .NET 8 / 10 的底層實作**根本不存在 MSDTC 支援**！只要在同一個 Scope 內開啟第二條連線，CLR 便會毫不留情地拋出例外直接崩潰。
+**交易**（transaction）就是把多個資料庫操作包成一個不可分割的單位：提交（COMMIT）時一起生效，回滾（ROLLBACK）時一起取消。交易期間，資料庫會對修改的資料加鎖，其他交易要改同一筆資料就得等。
 
-屋漏偏逢連夜雨，在同系統的線上即時結帳流程中，另一名開發者為了保證「絕對一致」，在資料庫交易區塊內部直接呼叫了第三方簡訊發送與銀行金流請款 API：
-```csharp
-await using var tx = await dbContext.Database.BeginTransactionAsync();
-// 1. 扣減庫存 (獲取行級排他鎖)
-await dbContext.Orders.AddAsync(order);
-await dbContext.SaveChangesAsync();
-
-// 2. 致命錯誤：在交易持鎖期間發起遠端 HTTP 呼叫！
-var paymentResult = await paymentHttpClient.PostAsync("https://bank.gateway/pay", content);
-
-// 3. 提交交易
-await tx.CommitAsync();
-```
-當天下午，銀行金流閘道遭遇網路微抖動，HTTP 回應延遲由平時的 50ms 飆升至 18 秒。在這漫長的 18 秒間，資料庫中被該交易更新的商品庫存行鎖被死死扣押。隨後湧入的所有並行結帳請求全部被卡死在鎖等待隊列中，資料庫連線池在短短 5 秒內被徹底抽乾，引發全站雪崩式癱瘓！
+## 運作原理
 
 ```mermaid
-flowchart TD
-    subgraph DistributedTxCrash["Linux 容器 TransactionScope 崩潰機制"]
-        direction TB
-        Scope["using var scope = new TransactionScope()"] --> ConnA["開啟連線 A (扣款操作)"]
-        ConnA --> ConnB["開啟連線 B (建單操作)"]
-        ConnB --> AttemptEscalate["試圖向作業系統請求 MSDTC 協調兩階段提交 (2PC)"]
-        AttemptEscalate --> CrashLinux["💥 Linux 核心無 MSDTC！拋出 PlatformNotSupportedException 崩潰！"]
-    end
-
-    subgraph LockHoldingDisaster["交易內夾雜遠端 I/O 引發雪崩"]
-        direction TB
-        TxStart["BEGIN TRANSACTION (獲取商品庫存排他行鎖 X-Lock)"] --> SlowHTTP["外部 HTTP 呼叫 (遇到網路抖動阻塞 18 秒)"]
-        SlowHTTP --> LockQueue["後續數百個使用者的結帳交易全數卡死等待該行鎖！"]
-        LockQueue --> PoolDrain["💥 資料庫連線集區耗盡 ──► 全站 504 崩潰"]
-    end
+sequenceDiagram
+    participant App as 訂單 API
+    participant DB as 資料庫
+    App->>DB: BEGIN
+    App->>DB: INSERT orders
+    App->>DB: UPDATE stock（這一列被鎖住）
+    App->>DB: INSERT outbox
+    App->>DB: COMMIT（三件事一起生效，釋放鎖）
+    Note over App,DB: 中間任一步失敗 → ROLLBACK，三件事都不算數
 ```
 
----
+EF Core 的 `SaveChangesAsync` 會自動把這一次要送出的所有變更包在一個交易裡。所以「載入、修改多個實體、呼叫一次 SaveChanges」本身就是原子的，不需要另外開交易。
 
-## 致命反模式 vs. 正確解法
+需要明確開交易的情況是：一個用例要呼叫**多次** `SaveChanges`，或是混用 EF Core 與原生 SQL（例如 `ExecuteUpdateAsync`），而且它們要一起成功。
 
-### 反模式一：在 Linux 容器環境跨多連線使用 `TransactionScope`
+**鎖會一直持有到交易結束。** 交易越長，其他請求等待越久。交易裡如果還做了外部 API 呼叫，對方慢 3 秒，這段期間被鎖住的庫存列就讓所有人等 3 秒。
 
-在 .NET 8+ / .NET 10 的 Linux 執行階段中，`System.Transactions` 僅支援在**單一連線（Single Connection）**內部運作。一旦同一個 `TransactionScope` 內部開啟了第二個實體連線（例如調用兩個不同連線字串的 DbContext，或在關閉前重新開鎖新連線），系統試圖進行分散式交易升級時必定拋出 `PlatformNotSupportedException`。
+## 常見錯誤與正確寫法
 
-### 反模式二：在資料庫交易持鎖區塊內部執行遠端外部 I/O
-
-關聯式資料庫交易的本質是**排他性資源鎖定**。在 `BeginTransaction` 與 `Commit` 之間執行任何非資料庫本機的操作（如 HTTP 請求、發送 Email、RPC 呼叫、甚至耗時的磁碟讀寫），會將資料庫持有行鎖的時間由極速的 2 毫秒拉長數千倍至數十秒，極易癱瘓資料庫連線集區與整張資料表。
-
-### 正確解法：單一連線顯式本地交易、持鎖時間最小化與 Transactional Outbox
-
-1. **嚴格單一連線本機交易**：使用 `await using var tx = await dbContext.Database.BeginTransactionAsync()`，確保整個單元工作嚴格運行在同一條連線上。
-2. **持鎖範圍最小化**：所有耗時的記憶體資料準備、外部驗證一律在交易前完成；交易區塊內只執行純粹的資料庫 SQL 寫入；外部發布事件一律在 `CommitAsync()` 之後執行。
-3. **跨微服務分散式架構解法：Transactional Outbox 模式**：
-   在同一個本地交易中，將「業務變更」與「待發布事件」原子性寫入同一張資料庫的 `Outbox` 表。交易極速提交釋放鎖定後，再由獨立的背景 Worker 或 CDC 異步推播至 Kafka / RabbitMQ，達成最終一致性（Eventual Consistency）。
+### 1. 交易裡呼叫外部服務
 
 ```csharp
-using System;
-using System.Data;
-using System.Diagnostics;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore;
-
-namespace DotNetPerformance.DataAccess;
-
-/// <summary>
-/// 交易外待發布領域事件載體 (Transactional Outbox)
-/// </summary>
-public sealed record OutboxMessage(string Id, string EventType, string Payload, DateTime CreatedAtUtc);
-
-/// <summary>
-/// 生產級本機交易管理器
-/// </summary>
-public static class ResilientOrderTransactionCoordinator
-{
-    /// <summary>
-    /// 執行訂單結帳原子交易（落實最小持鎖範圍與零外部 I/O 阻塞）
-    /// </summary>
-    public static async Task ExecuteOrderPlacementAsync(string orderId, decimal amount, CancellationToken cancellationToken = default)
-    {
-        // 階段一：交易前的「純記憶體前置計算」（絕不在交易內執行！）
-        var sw = Stopwatch.StartNew();
-        Console.WriteLine($"[前置準備] 驗證訂單 {orderId} 參數合法性，產生 Outbox 訊息...");
-
-        var outboxEvent = new OutboxMessage(
-            Id: Guid.CreateVersion7().ToString(),
-            EventType: "OrderCreated",
-            Payload: $"{{\"orderId\":\"{orderId}\",\"amount\":{amount}}}",
-            CreatedAtUtc: DateTime.UtcNow);
-
-        // 階段二：極速本機資料庫交易區塊（持鎖時間目標 < 5ms）
-        Console.WriteLine("[開啟交易] 單一連線 Database.BeginTransactionAsync(IsolationLevel.ReadCommitted)...");
-
-        // 實務語法範例：
-        // await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
-        // try
-        // {
-        //     await dbContext.Orders.AddAsync(newOrder, cancellationToken);
-        //     await dbContext.OutboxMessages.AddAsync(outboxEvent, cancellationToken);
-        //     await dbContext.SaveChangesAsync(cancellationToken);
-        //     await transaction.CommitAsync(cancellationToken);
-        // }
-        // catch
-        // {
-        //     await transaction.RollbackAsync(cancellationToken);
-        //     throw;
-        // }
-
-        // 模擬極速 SQL 執行與提交 (僅耗時 3ms)
-        await Task.Delay(3, cancellationToken);
-        sw.Stop();
-
-        Console.WriteLine($"[交易提交] 成功提交本機交易！行鎖已安全釋放，持鎖耗時僅: {sw.ElapsedMilliseconds} ms");
-
-        // 階段三：交易完成後的「非同步外部外呼」
-        Console.WriteLine("[後續發布] 在交易外部安全觸發非同步 HTTP 通知與 RabbitMQ 事件推播 (零資料庫卡死風險)。");
-    }
-}
-
-public static class Program
-{
-    public static async Task Main()
-    {
-        Console.WriteLine("=== .NET 資料庫本機交易與 Transactional Outbox 實測 ===");
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await ResilientOrderTransactionCoordinator.ExecuteOrderPlacementAsync("ORD-2026-9999", 3200.0m, cts.Token);
-
-        Console.WriteLine("本機交易防禦驗證通過：無分散式 MSDTC 依賴、無長時間外部持鎖。");
-    }
-}
+// 錯：付款閘道回應前，庫存列一直被鎖著；閘道逾時，交易也跟著拖住連線
+await using var tx = await db.Database.BeginTransactionAsync(ct);
+stock.Reserve(quantity);
+await db.SaveChangesAsync(ct);
+var payment = await paymentGateway.AuthorizeAsync(order, ct); // 外部 I/O
+order.MarkAuthorized(payment.Id);
+await db.SaveChangesAsync(ct);
+await tx.CommitAsync(ct);
 ```
 
-預期控制台輸出：
+把外部呼叫移出交易，用狀態記錄進度：先在一個短交易中建立「待付款」訂單並保留庫存，提交；再呼叫付款；最後用另一個短交易記錄結果。付款的結果要靠冪等鍵與狀態查詢處理「呼叫成功但沒收到回應」的情況，見 [取消與資源釋放](/languages/csharp/cancellation-disposable/)。
 
-```text
-=== .NET 資料庫本機交易與 Transactional Outbox 實測 ===
-[前置準備] 驗證訂單 ORD-2026-9999 參數合法性，產生 Outbox 訊息...
-[開啟交易] 單一連線 Database.BeginTransactionAsync(IsolationLevel.ReadCommitted)...
-[交易提交] 成功提交本機交易！行鎖已安全釋放，持鎖耗時僅: 3 ms
-[後續發布] 在交易外部安全觸發非同步 HTTP 通知與 RabbitMQ 事件推播 (零資料庫卡死風險)。
-本機交易防禦驗證通過：無分散式 MSDTC 依賴、無長時間外部持鎖。
-```
+### 2. 開了重試策略，又自己開交易
 
----
-
-## 踩坑與避坑指南
-
-### 1. 非同步情境下使用 `TransactionScope` 的必填參數
-
-若在既有舊專案中必須使用 `TransactionScope` 封裝單一連線的本地交易，在非同步方法中其建構子**必須傳入 `TransactionScopeAsyncFlowOption.Enabled`**：
+使用 `EnableRetryOnFailure()` 時，EF Core 會在暫時性錯誤時重試。但它無法只重試交易中的某一句，因此直接開交易會丟出例外：「執行策略不支援使用者發起的交易」。把整個交易放進執行策略裡，讓它整段重試：
 
 ```csharp
-// 正確配置：允許交易上下文跨 await 執行緒切換傳播
-using var scope = new TransactionScope(
-    TransactionScopeOption.Required,
-    new TransactionOptions { IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted },
-    TransactionScopeAsyncFlowOption.Enabled); // 關鍵！缺少此參數將引發交易丟失或例外
+var strategy = db.Database.CreateExecutionStrategy();
+await strategy.ExecuteAsync(async () =>
+{
+    await using var tx = await db.Database.BeginTransactionAsync(ct);
+    db.Orders.Add(order);
+    await db.SaveChangesAsync(ct);
+    var reserved = await db.Stocks.Where(s => s.ProductId == order.ProductId && s.Available >= order.Quantity)
+        .ExecuteUpdateAsync(s => s.SetProperty(x => x.Available, x => x.Available - order.Quantity), ct);
+    if (reserved == 0) throw new OutOfStockException(order.ProductId); // 沒有更新到任何列：庫存不足，交易回滾
+    await tx.CommitAsync(ct);
+});
 ```
-若缺少該選項，一旦非同步方法中遇到 `await`，非同步狀態機將執行緒切換至其他 ThreadPool Worker 時，`Transaction.Current` 將無法被正確複製流動，導致後續操作脫離交易保護。
 
-### 2. 資料庫隔離等級（Isolation Level）的權衡與代價
+整段會被重新執行，所以裡面不能有「執行兩次會出問題」的外部動作。
 
-| 隔離等級 | 防範髒讀 (Dirty Read) | 防範不可重複讀 (Non-Repeatable) | 防範幻讀 (Phantom Read) | 效能開銷與鎖競爭 | 適用場景 |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Read Uncommitted** | 否 | 否 | 否 | 最低 | **線上交易嚴禁使用**。 |
-| **Read Committed** (預設) | **是** | 否 | 否 | 較低（行級讀鎖即用即放，或 MVCC 快照讀） | 95% 以上微服務與 OLTP 交易的最佳平衡點。 |
-| **Repeatable Read** | **是** | **是** | 否（MySQL 靠 Gap Lock 可防） | 中等（讀鎖持有至交易結束，或 MVCC 一致性視圖） | 嚴格要求同交易內多次讀取數據必須完全一致。 |
-| **Serializable** | **是** | **是** | **是** | **極高（頻繁表鎖或大量並發死結回滾）** | 金融高敏感批次結算（需搭配重試機制）。 |
-| **Snapshot** (SQL Server) | **是** | **是** | **是** | 依賴 tempdb 版本鏈，無讀寫鎖爭搶 | 需高並發讀寫且允許 tempdb 空間開銷。 |
+### 3. 用 TransactionScope 跨兩個資料庫
 
-### 3. 何時不該顯式開啟交易？
+`TransactionScope` 裡開了第二個連線（另一個資料庫，甚至同一個資料庫的第二條連線），交易會嘗試升級成分散式交易。.NET 只在 Windows 上支援分散式交易；在 Linux 容器裡會直接丟出例外。跨資料庫、跨服務的一致性用 [Outbox 與 Inbox](/architecture/outbox-inbox/)。
 
-- **單一 SQL 語句自動提交（Single Statement Auto-Commit）**：
-  若操作僅包含單道具備原子性的條件更新語句（例如：`UPDATE Products SET Stock = Stock - 1 WHERE Id = @id AND Stock >= 1`），關聯式資料庫引擎本身就會保證單語句的原子性。此時不需要顯式包裹 `BeginTransactionAsync`，可省下兩次網路往返（Round-trip）。
+如果仍要使用 `TransactionScope`（例如包住同一條連線的多個操作），非同步程式要加上 `TransactionScopeAsyncFlowOption.Enabled`，否則 `await` 之後交易不會跟著流動。
 
----
+## 使用邊界
 
-## 線上排查指令
+- **隔離等級**決定交易之間看得到彼此多少變更，以及何時會衝突。PostgreSQL 預設 Read Committed，MySQL 預設 Repeatable Read，行為不同，見 [隔離與鎖](/data-access/isolation-locking/)。
+- `COMMIT` 送出後連線中斷，你無法知道交易到底有沒有成功。重試前先用業務唯一鍵查詢結果，見 [高併發 CRUD](/data-access/concurrent-crud/)。
+- 純查詢不需要交易；開了交易反而延長連線持有時間。
 
-### 1. 檢測 PostgreSQL 中執行超過 5 秒的危險長交易
+## 雲端排查
 
-找出處於 `idle in transaction` 或長時間持鎖的慢交易：
+### 叢集層（GKE 與 EKS 相同）
+
+```bash
+# 交易卡住時，API 請求會跟著逾時；先看哪些 Pod 的錯誤日誌在增加
+kubectl logs -n shop -l app=order-api --since=10m | grep -i -E "timeout|deadlock|could not serialize"
+```
+
+### 託管服務層
+
+#### 兩邊相同：找出執行太久或閒置在交易中的連線
 
 ```sql
--- 查詢 PostgreSQL 目前持續超過 5 秒的未結束交易與對應 SQL
-SELECT 
-    pid, 
-    usename, 
-    client_addr,
-    now() - xact_start AS transaction_duration, 
-    state, 
-    query 
-FROM pg_stat_activity 
-WHERE state IN ('active', 'idle in transaction') 
-  AND now() - xact_start > interval '5 seconds'
-ORDER BY transaction_duration DESC;
+-- PostgreSQL：持有交易超過 5 秒的連線；state 為 idle in transaction 代表交易開著卻沒在做事
+SELECT pid, usename, state, now() - xact_start AS xact_age, left(query, 100) AS last_query
+FROM pg_stat_activity
+WHERE xact_start IS NOT NULL AND now() - xact_start > interval '5 seconds'
+ORDER BY xact_age DESC;
 ```
-
-### 2. 檢測 MySQL 當前持有鎖超過 5 秒的 InnoDB 交易
 
 ```sql
--- 查詢當前阻塞中的 InnoDB 交易與持鎖時長
-SELECT 
-    trx_id, 
-    trx_state, 
-    trx_started, 
-    TIMESTAMPDIFF(SECOND, trx_started, NOW()) AS duration_seconds, 
-    trx_rows_locked,
-    trx_query 
-FROM information_schema.innodb_trx 
-WHERE TIMESTAMPDIFF(SECOND, trx_started, NOW()) > 5;
+-- MySQL：執行超過 5 秒的 InnoDB 交易
+SELECT trx_id, trx_started, TIMESTAMPDIFF(SECOND, trx_started, NOW()) AS age_s, trx_mysql_thread_id
+FROM information_schema.innodb_trx
+WHERE trx_started < NOW() - INTERVAL 5 SECOND
+ORDER BY trx_started;
 ```
 
-### 3. 即時強制終止卡死的殭屍長交易行程
+`idle in transaction` 很多，通常是程式在交易中等待外部 I/O，或忘了提交。PostgreSQL 可以設定 `idle_in_transaction_session_timeout`，讓閒置太久的交易自動結束。
 
-當確認某個交易因外部 HTTP 超時卡死並造成資料表全鎖時，緊急中斷連線：
+#### GKE
 
-```sql
--- PostgreSQL 中斷特定阻塞 PID
-SELECT pg_terminate_backend(<blocking_pid>);
+Cloud SQL 用資料庫旗標設定逾時。`--database-flags` 會**取代**所有既有旗標，執行前先用 `describe` 確認目前的旗標並一併列出：
 
--- MySQL 終止特定阻塞執行緒
-KILL <blocking_thread_id>;
+```bash
+gcloud sql instances describe shop-db --format='value(settings.databaseFlags)'
+gcloud sql instances patch shop-db \
+  --database-flags=idle_in_transaction_session_timeout=60000   # 毫秒；記得加上原有旗標
 ```
+
+#### EKS
+
+RDS 透過自訂的參數群組設定 `idle_in_transaction_session_timeout`，套用到執行個體後生效。長交易也會讓 CloudWatch `AWS/RDS` 的 `DatabaseConnections` 居高不下，因為連線被交易佔著無法歸還。
+
+### 應用程式層
+
+在 OpenTelemetry 的追蹤裡，找出同一個請求中「資料庫 span 之間夾著一個很長的 HTTP span」的模式，那就是交易內呼叫了外部服務。
