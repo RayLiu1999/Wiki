@@ -1,218 +1,112 @@
 ---
-title: "ASP.NET Core API 風格決策：Controllers vs. Minimal APIs 與 Native AOT"
-description: "深入對比 Controllers 與 Minimal APIs 吞吐量差異、Request Delegate Generator 編譯期生成，以及 Native AOT 冷啟動與剪裁相容實戰。"
+title: "Controller 與 Minimal API：怎麼選，什麼時候值得用 Native AOT"
+description: "比較 Controller 與 Minimal API 的寫法與適用情境，說明 Native AOT 如何加快啟動、減少記憶體，以及它對 JSON 序列化與反射的限制。"
 articleId: "aspnet-core-api-styles-aot"
 topic: "aspnet-core"
 category: "web-api"
-order: 6
-tags: ["ASP.NET Core", "Minimal APIs", "Controllers", "Native AOT", "RDG", "Serverless", "冷啟動"]
+order: 8
+tags: ["ASP.NET Core", "Minimal API", "Controller", "Native AOT", "JSON Source Generator"]
 articleType: "deep-dive"
-prerequisites: ["aspnet-core-http-contracts"]
-relatedArticles: ["aspnet-core-model-binding", "dotnet-clr-jit"]
-applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
 difficulty: "advanced"
-lastReviewed: "2026-10-10"
-takeaway: "極限效能、高吞吐或 Serverless 首選 Minimal APIs 與 Native AOT；大型既有單體可保留 Controllers；AOT 必須搭配 JSON Source Generator。"
+prerequisites: ["aspnet-core-http-contracts"]
+relatedArticles: ["aspnet-core-filters", "dotnet-clr-jit", "dotnet-reflection"]
+applicableVersions: ".NET 8～10、ASP.NET Core 8～10。"
+lastReviewed: "2026-10-21"
+takeaway: "新服務用 Minimal API 搭配路由群組即可；只有在啟動時間或記憶體用量真的重要時才用 Native AOT，並且要用 JSON 來源產生器、避開反射。"
 sources:
-  - title: "Microsoft Learn：最小 API 概觀"
-    url: "https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/minimal-apis"
-  - title: "Microsoft Learn：針對原生 AOT 的 ASP.NET Core 支援"
-    url: "https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/native-aot"
+  - title: "Microsoft Learn：在 Minimal API 與 Controller 之間選擇"
+    url: "https://learn.microsoft.com/aspnet/core/fundamentals/apis"
+  - title: "Microsoft Learn：ASP.NET Core 對原生 AOT 的支援"
+    url: "https://learn.microsoft.com/aspnet/core/fundamentals/native-aot"
+  - title: "Microsoft Learn：System.Text.Json 來源產生"
+    url: "https://learn.microsoft.com/dotnet/standard/serialization/system-text-json/source-generation"
+  - title: "Microsoft Learn：Request Delegate Generator"
+    url: "https://learn.microsoft.com/aspnet/core/fundamentals/aot/request-delegate-generator/rdg"
 ---
 
-## 案發現場
+## 這是什麼
 
-某快速成長的金融科技服務將核心扣款與身分認證微服務遷移至無伺服器架構（AWS Lambda / GCP Cloud Run），以因應整點高並發的秒殺搶購。然而，在上線首日的促銷活動中，雲端平台觸發了大量容器冷啟動（Cold Start），客戶端監控拉響高危警報：平均冷啟動耗時高達驚人的 3,800 毫秒，數千筆連線因超過 API Gateway 3 秒逾時限制而被判定為 `HTTP 504 Gateway Timeout`，導致大批使用者結帳失敗。
+ASP.NET Core 有兩種寫 API 的方式：
 
-事後架構團隊透過 APM 追蹤啟動期的 CPU 消耗分佈，發現該微服務採用了傳統的 ASP.NET Core MVC Controllers 架構。在主機啟動時，MVC 框架必須在運行期遍歷所有載入的組件（Assemblies）、利用反射掃描包含 `[ApiController]` 的類別、動態分析數百個 Action 方法的參數中繼資料、建構全域模型繫結器（ModelBinderProvider）與過濾器管線（Filter Pipeline）。光是這一系列的反射掃描與 JIT 即時編譯，就吞噬了近 3 秒的啟動時間！
+- **Controller**：把端點寫成類別的方法，用屬性（`[HttpGet]`、`[Route]`）標註。功能完整，有 MVC Filter、模型驗證、慣例等機制。
+- **Minimal API**：用 `app.MapGet(...)` 直接把網址對應到一個委派，程式碼少、啟動快，是新專案的預設範本。
 
-為了解決冷啟動問題，一名工程師在未修改程式碼的情況下，嘗試在 `.csproj` 中直接加入 `<PublishAot>true</PublishAot>` 發布 Native AOT（提前編譯為機器碼）。結果上線部署後，服務在處理第一筆包含 JSON 酬載的 POST 請求時直接引發全站崩潰，伺服器日誌充斥著：
-`System.InvalidOperationException: Reflection-based serialization has been disabled for this application. Either use the source generator APIs...`，更有多個路由拋出 `MissingMethodException`。
+**Native AOT** 是另一個獨立的選擇：在發布時把整個程式預先編譯成機器碼，不需要在執行時才由 JIT 編譯。好處是啟動快、記憶體少、執行檔小；代價是不能使用依賴執行期反射的功能。
 
-這起事故揭示了：從傳統 Controllers 邁向 Minimal APIs 與 Native AOT，並非僅是語法糖或編譯參數的切換，而是整個底層派發架構從「執行期動態反射」向「編譯期靜態代碼生成」的典範轉移。
+## 運作原理
 
 ```mermaid
-flowchart TD
-    subgraph TraditionalMVC["傳統 MVC Controllers (執行期動態反射模型)"]
-        direction TB
-        Boot1["應用程式啟動"] --> Scan["反射掃描所有 Assemblies (耗時 2~4 秒)"]
-        Scan --> BuildMeta["動態建立 ActionDescriptor 與 ModelMetadata"]
-        BuildMeta --> JITHit["JIT 編譯器即時將 IL 轉為機器碼"]
-        JITHit --> HandleReq["處理 HTTP 請求 (冷啟動延遲極高，記憶體佔用 150MB+)"]
+flowchart LR
+    subgraph JIT["一般發布（JIT）"]
+        IL["IL 程式碼"] --> Start1["啟動時載入"] --> Jit["執行時才編譯成機器碼"]
     end
-
-    subgraph NativeAOTMinimal["Minimal APIs + Native AOT (編譯期靜態代碼生成)"]
-        direction TB
-        Roslyn["Roslyn 編譯器 (RDG + JSON Source Generator)"] --> StaticGen["編譯期生成靜態 RequestDelegate 與序列化代碼"]
-        StaticGen --> NativeBin["提前編譯為單一原生 Linux ELF 機器碼"]
-        NativeBin --> InstantBoot["冷啟動 15ms ~ 30ms，記憶體佔用僅 25MB，零執行期反射！"]
+    subgraph AOT["Native AOT 發布"]
+        IL2["IL 程式碼"] --> Trim["發布時修剪沒用到的程式碼"] --> Native["預先編譯成機器碼"]
+        Native --> Start2["啟動即可執行"]
     end
 ```
 
----
+Native AOT 在發布時要「看得到」所有會被執行的程式碼，才能編譯並修剪掉用不到的部分。執行時才用反射決定要呼叫什麼的程式碼（例如 Controller 的探索、依型別動態序列化 JSON），編譯器看不到，就無法支援。
 
-## 致命反模式 vs. 正確解法
+因此 ASP.NET Core 的 AOT 支援以 Minimal API 為主：
 
-### 反模式一：在極致冷啟動與極限高吞吐環境中堅持使用傳統全量 MVC
+- **Request Delegate Generator（RDG）**：在編譯時為每個 `MapGet`／`MapPost` 產生參數綁定的程式碼，取代執行時反射。
+- **JSON 來源產生器**：在編譯時為你的 DTO 產生序列化程式碼。
 
-MVC Controller 框架擁有龐大的歷史中繼資料模型（如 `IActionModelConvention`, `IModelBinder`, `IActionFilter`）。在長生命週期的肥大單體系統中尚可接受，但在自動擴縮容（Serverless / K8s HPA）高頻啟動的微服務中，每次啟動都重跑一遍反射分析，直接扼殺系統的敏捷彈性。
+Controller 目前不支援 Native AOT。
 
-### 反模式二：啟用 Native AOT 卻未配置 JSON 來源產生器（Source Generator）
+## 常見錯誤與正確寫法
 
-Native AOT 會利用 IL 剪裁器（ILLink Trimmer）將所有未在靜態呼叫圖中被明確引用的程式碼與型別中繼資料徹底刪除。若在 Minimal APIs 或 Controller 中依賴預設的反射式 `JsonSerializer.Deserialize<T>()`，在 AOT 執行環境下將無法找到 DTO 的中繼資料，直接拋出例外中斷服務。
+### 1. 開了 AOT，JSON 卻還依賴反射
 
-### 正確解法：運用 Minimal APIs 搭配 RDG、路由群組與編譯期 JsonSerializerContext
-
-在 .NET 8+ / .NET 10 中，官方引入了**請求委派產生器（Request Delegate Generator, RDG）**。透過將 API 宣告為 Minimal APIs，RDG 會在編譯期自動生成參數綁定與相依性注入程式碼。結合 `MapGroup` 進行領域模組化切分，並以 `[JsonSerializable]` 宣告編譯期序列化情境，即可達成 100% Native AOT 相容與極速冷啟動。
+發布時出現修剪警告（IL2026、IL3050），執行時某些型別序列化失敗。原因是沒有告訴來源產生器有哪些型別要序列化：
 
 ```csharp
-using System;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Routing;
+// 列出所有會出現在請求或回應中的型別
+[JsonSerializable(typeof(ProductDto))]
+[JsonSerializable(typeof(List<ProductDto>))]
+[JsonSerializable(typeof(PlaceOrderRequest))]
+internal partial class ShopJsonContext : JsonSerializerContext;
 
-namespace DotNetPerformance.ApiStyles;
-
-/// <summary>
-/// 建立訂單請求酬載（強型別 DTO）
-/// </summary>
-public sealed record CreateOrderRequest(string CustomerId, decimal Amount, string Currency);
-
-/// <summary>
-/// 建立訂單回應酬載
-/// </summary>
-public sealed record CreateOrderResponse(string OrderId, string Status, DateTime CreatedAtUtc);
-
-/// <summary>
-/// Native AOT 編譯期 JSON 序列化情境（零反射、完全免除中繼資料剪裁風險）
-/// </summary>
-[JsonSourceGenerationOptions(WriteIndented = false)]
-[JsonSerializable(typeof(CreateOrderRequest))]
-[JsonSerializable(typeof(CreateOrderResponse))]
-public sealed partial class OrderApiJsonContext : JsonSerializerContext
+var builder = WebApplication.CreateSlimBuilder(args); // 精簡版的建構器，預設只含 AOT 相容的元件
+builder.Services.ConfigureHttpJsonOptions(options =>
 {
-}
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, ShopJsonContext.Default);
+});
+```
 
-/// <summary>
-/// 訂單領域路由群組模組化擴充（取代臃腫 Controller 類別）
-/// </summary>
-public static class OrderEndpointModule
+在專案檔加上 `<PublishAot>true</PublishAot>` 後，建置時就會出現 AOT 相容性警告。把警告當成錯誤處理，不要忽略。
+
+### 2. 為了「比較快」把所有服務都改成 AOT
+
+AOT 改善的是**啟動時間**與**記憶體**，不一定改善長時間執行的吞吐量；JIT 可以依實際執行情況做最佳化（例如動態 PGO），長時間執行的服務用 JIT 可能更快，見 [JIT 與分層編譯](/platforms/dotnet/clr-jit/)。
+
+適合 AOT 的情況：需要快速擴容、冷啟動頻繁的服務（例如縮到零的無伺服器環境）、或記憶體很受限的環境。核心的訂單 API 常駐執行、用了 EF Core 等大量依賴反射的套件，用 AOT 的收益小、限制多。
+
+### 3. Minimal API 全部寫在 Program.cs
+
+端點一多，`Program.cs` 就變得難以維護。用路由群組與擴充方法依功能分檔：
+
+```csharp
+// Features/Orders/OrderEndpoints.cs
+public static class OrderEndpoints
 {
-    public static RouteGroupBuilder MapOrderEndpoints(this RouteGroupBuilder group)
+    public static RouteGroupBuilder MapOrders(this IEndpointRouteBuilder app)
     {
-        // 註冊 POST /api/orders 端點（RDG 編譯期靜態解析）
-        group.MapPost("/", (CreateOrderRequest request) =>
-        {
-            if (request.Amount <= 0)
-            {
-                return Results.BadRequest(new { error = "訂單金額必須大於 0" });
-            }
-
-            var response = new CreateOrderResponse(
-                OrderId: Guid.CreateVersion7().ToString(),
-                Status: "Accepted",
-                CreatedAtUtc: DateTime.UtcNow);
-
-            return Results.Ok(response);
-        })
-        .WithName("CreateOrder")
-        .WithDescription("建立新交易訂單");
-
+        var group = app.MapGroup("/orders").RequireAuthorization().WithTags("Orders");
+        group.MapGet("/{id:guid}", GetById);
+        group.MapPost("/", PlaceOrder);
         return group;
     }
 }
 
-public static class Program
-{
-    public static void Main()
-    {
-        Console.WriteLine("=== ASP.NET Core Minimal APIs 與 Native AOT 語法驗證 ===");
-
-        // 模擬使用 Source Generator 序列化與反序列化
-        var req = new CreateOrderRequest("CUST-8888", 2999.0m, "TWD");
-        string json = JsonSerializer.Serialize(req, OrderApiJsonContext.Default.CreateOrderRequest);
-        Console.WriteLine($"[AOT 序列化輸出] {json}");
-
-        CreateOrderRequest? deserialized = JsonSerializer.Deserialize(json, OrderApiJsonContext.Default.CreateOrderRequest);
-        Console.WriteLine($"[AOT 反序列化驗證] 客戶代碼: {deserialized?.CustomerId}, 金額: {deserialized?.Amount}");
-        Console.WriteLine("Minimal APIs 模組化群組已通過 RDG 編譯期相容檢驗。");
-    }
-}
+// Program.cs
+app.MapOrders();
 ```
 
-預期控制台輸出：
+## 使用邊界
 
-```text
-=== ASP.NET Core Minimal APIs 與 Native AOT 語法驗證 ===
-[AOT 序列化輸出] {"CustomerId":"CUST-8888","Amount":2999.0,"Currency":"TWD"}
-[AOT 反序列化驗證] 客戶代碼: CUST-8888, 金額: 2999.0
-Minimal APIs 模組化群組已通過 RDG 編譯期相容檢驗。
-```
-
----
-
-## 踩坑與避坑指南
-
-### 1. Controllers vs. Minimal APIs vs. FastEndpoints 深度選型矩陣
-
-| 特性維度 | 傳統 MVC Controllers | Minimal APIs (.NET 8/10) | FastEndpoints (REPR 模式) |
-| :--- | :--- | :--- | :--- |
-| **派發機制** | 執行期反射 + ActionDescriptor | RDG 編譯期委派生成 | 基於 Minimal API 之強型別類別封裝 |
-| **啟動開銷** | 慢（反射掃描整個 Assembly） | **極快（純函數指標註冊）** | **極快** |
-| **記憶體佔用** | 較高（維護大量中繼資料緩存） | **極低（~20MB 原生基準）** | 極低 |
-| **Native AOT 支援** | 極差（大量剪裁警告，不支援 AOT） | **100% 原生相容** | 良好支援 |
-| **團隊組織結構** | 依賴單一大型 Controller 集中管理 | 使用 `MapGroup` 模組化擴展 | 一請求一檔案（REPR），架構極清晰 |
-| **適用場景** | 大型歷史單體、重度依賴 MVC 視圖 | 微服務、Serverless、極限高吞吐 | 中大型微服務且偏好檔案隔離之團隊 |
-
-### 2. Request Delegate Generator（RDG）如何加速 Minimal APIs？
-
-在常規 JIT 模式下，Minimal API 原先依賴 `Expression.Compile()` 動態解析參數。而在 .NET 8+ 中：
-- 當專案啟用 `<PublishAot>true</PublishAot>` 或明確開啟 `<EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>` 時，Roslyn C# 來源產生器會在編譯期掃描所有 `MapGet`/`MapPost` 呼叫。
-- RDG 為每個路由自動生成具備強型別參數綁定的靜態 `RequestDelegate` 實作。
-- **優勢**：完全消除 JIT 預熱延遲與中繼資料分配，記憶體佔用降低 25%，冷啟動速度提升一個數量級。
-
-### 3. Native AOT 發布的兩大實戰限制
-
-1. **不支援執行期動態程式碼生成（No Runtime Emit）**：
-   任何依賴 `System.Reflection.Emit`、動態 Castle DynamicProxy（常見於某些老舊 AOP 套件）、或動態生成 IL 的 ORM 在 Native AOT 下皆無法運作。ORM 必須使用支援編譯期模型的框架（如 EF Core 搭配 Compiled Models 或 Dapper 靜態映射）。
-2. **跨平台交叉編譯限制**：
-   .NET Native AOT 編譯器依賴本地平台的 C++ 連結器（Linker）。在 macOS 上無法直接產出 Linux ELF 二進位檔。在 CI/CD 中必須使用 Docker 多階段建置（Multi-stage Build），在 `mcr.microsoft.com/dotnet/sdk` Linux 容器內完成最終的 AOT 發布。
-
----
-
-## 線上排查指令
-
-### 1. 執行 Native AOT 發布並分析剪裁相容性警告
-
-在 CI/CD 流程中加入 AOT 建置命令，並強制將警告視為錯誤（TreatWarningsAsErrors）：
-
-```bash
-# 針對 Linux x64 目標發布 Native AOT 原生執行檔
-dotnet publish src/YourApi/YourApi.csproj \
-  -c Release \
-  -r linux-x64 \
-  --self-contained true \
-  /p:PublishAot=true \
-  /p:StripSymbols=true
-
-# 若存在未支援 AOT 的反射代碼，編譯器將明確指出警告編號：
-# IL2026: Using member which has RequiresUnreferencedCodeAttribute
-# IL3050: Using member which has RequiresDynamicCodeAttribute
-```
-
-### 2. 檢驗原生執行檔尺寸與動態函式庫相依性
-
-進入發布目錄確認產物是否為純淨的獨立原生執行檔：
-
-```bash
-# 1. 檢視編譯生成的單一原生二進位檔案大小 (通常僅 15MB ~ 30MB)
-ls -lh bin/Release/net10.0/linux-x64/publish/YourApi
-
-# 2. 檢查二進位檔案的動態鏈結相依 (確保僅依賴 libc 與 libm)
-ldd bin/Release/net10.0/linux-x64/publish/YourApi
-
-# 3. 測量冷啟動執行耗時
-time ./bin/Release/net10.0/linux-x64/publish/YourApi --help
-```
+- **既有的 Controller 專案不需要改寫。** 兩者可以在同一個專案共存，新功能用 Minimal API 即可。
+- 大量依賴 MVC 特有功能（例如自訂 Model Binder、OData、複雜的 Filter 管線）的系統，留在 Controller。
+- EF Core 對 Native AOT 的支援仍有限制（例如需要預先編譯的查詢），使用前以官方文件確認目前的狀態。
+- 反射對效能與 AOT 的影響，見 [反射與來源產生器](/platforms/dotnet/reflection/)。

@@ -1,241 +1,103 @@
 ---
-title: "ASP.NET Core 組態選項（Options）：IOptions 三劍客與啟動期驗證"
-description: "深入剖析 IOptions、IOptionsSnapshot 與 IOptionsMonitor 生命週期差異、ValidateOnStart 啟動期防禦，以及熱重載陷阱。"
+title: "Options：設定寫錯時，讓服務在啟動時就失敗"
+description: "說明 ASP.NET Core 如何把設定綁定成強型別物件、IOptions／IOptionsSnapshot／IOptionsMonitor 的差別，以及 ValidateOnStart 如何擋下帶著錯誤設定上線。"
 articleId: "aspnet-core-options"
 topic: "aspnet-core"
 category: "services"
 order: 2
-tags: ["ASP.NET Core", "Options", "IOptions", "組態驗證", "ValidateOnStart", "熱重載", "ConfigMap"]
+tags: ["ASP.NET Core", "Options", "IOptionsMonitor", "ValidateOnStart", "組態"]
 articleType: "deep-dive"
+difficulty: "beginner"
 prerequisites: ["aspnet-core-dependency-injection"]
-relatedArticles: ["dotnet-hosting", "kubernetes-configuration-security"]
-applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-difficulty: "advanced"
-lastReviewed: "2026-10-10"
-takeaway: "Singleton 服務用 IOptions 或 IOptionsMonitor，Scoped 用 IOptionsSnapshot；一律啟用 ValidateOnStart() 阻斷帶病上線。"
+relatedArticles: ["dotnet-hosting", "kubernetes-configuration-security", "aspnet-core-http-client-factory"]
+applicableVersions: ".NET 8～10、ASP.NET Core 8～10。"
+lastReviewed: "2026-10-21"
+takeaway: "設定綁定成強型別類別，並加上 ValidateDataAnnotations 與 ValidateOnStart；Singleton 用 IOptions 或 IOptionsMonitor，不要注入 IOptionsSnapshot。"
 sources:
   - title: "Microsoft Learn：ASP.NET Core 中的選項模式"
-    url: "https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/configuration/options"
+    url: "https://learn.microsoft.com/aspnet/core/fundamentals/configuration/options"
   - title: "Microsoft Learn：選項驗證"
-    url: "https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/configuration/options#options-validation"
+    url: "https://learn.microsoft.com/dotnet/core/extensions/options#options-validation"
+  - title: "Microsoft Learn：選項驗證的編譯時期來源產生"
+    url: "https://learn.microsoft.com/dotnet/core/extensions/options-validation-generator"
 ---
 
-## 案發現場
+## 這是什麼
 
-某跨境電商核心支付微服務在大促前夕進行了一次緊湊的發布。維運團隊在 Kubernetes ConfigMap 中配置金流閘道參數時，誤將連線逾時秒數打成了負數（`-15`），且金流 API 端點網址的通訊協定漏打了前綴（寫成 `prod.payment.internal` 而非 `https://...`）。
+付款閘道的網址、逾時秒數、重試次數，這些都放在設定檔或環境變數裡。如果在程式裡到處寫 `configuration["Payment:TimeoutSeconds"]`，打錯一個字就拿到 null，而且要等到真的有人付款時才會發現。
 
-令人驚訝的是，新版本的 Pod 順利啟動並通過了 Kubernetes 的 Liveness 與 Readiness 健康探針，所有 Pod 均顯示為綠色 Running 狀態，發布流程被判定為「完美成功」。直到半夜 00:00 促銷開跑、首批上萬筆顧客扣款請求湧入時，系統在深層的 HTTP 客戶端建立邏輯處，突然連續爆發大量的 `System.ArgumentOutOfRangeException: Timeout must be greater than zero` 以及 `System.UriFormatException: Invalid URI: The format of the URI could not be determined`！全站扣款通道瞬間癱瘓，造成了數千萬元的直接營收損失。
+**Options 模式**把一組設定綁定成一個 C# 類別，透過 DI 注入使用。搭配驗證，設定不合法時，服務在啟動時就失敗，而不是上線後才出錯。
 
-雪上加霜的是，在該團隊試圖緊急修改組態時，一名工程師在一個長壽命的 Singleton 背景清算服務中注入了 `IOptionsSnapshot<PaymentOptions>`。服務在重啟的第一秒鐘直接崩潰，伺服器日誌狂噴：
-`System.InvalidOperationException: Cannot consume scoped service 'Microsoft.Extensions.Options.IOptionsSnapshot<PaymentOptions>' from singleton 'SettlementBackgroundService'.`
-
-這起典型慘劇揭露了 .NET 系統在處理應用程式組態時最容易觸發的兩大盲區：
-1. **缺乏啟動期「快速失敗（Fail-Fast）」驗證**：錯誤的設定潛伏在系統內部，直到流量抵達特定的深層業務邏輯才引爆。
-2. **對 Options 模式三大介面的生命週期與邊界混淆**：在 Singleton 服務中誤用 Scoped 選項介面引發 Captive Dependency 崩潰。
+## 運作原理
 
 ```mermaid
-flowchart TD
-    subgraph TraditionalDelayFailure["傳統反模式：組態錯誤延遲引爆"]
-        direction TB
-        BadCM["ConfigMap 注入非法參數 (Timeout: -15)"] --> PodStart["Pod 啟動 (無啟動期驗證，無感知)"]
-        PodStart --> ProbePass["K8s 就緒探針通過 (帶病上線)"]
-        ProbePass --> Traffic["促銷尖峰流量湧入 (半夜 00:00)"]
-        Traffic --> Crash["💥 執行期崩潰 ArgumentOutOfRangeException (全站癱瘓)"]
-    end
-
-    subgraph ValidateOnStartSafe["正確防禦：ValidateOnStart() 快速失敗 (Fail-Fast)"]
-        direction TB
-        BadCM2["ConfigMap 注入非法參數"] --> AppBuild["Host.Build() 啟動驗證"]
-        AppBuild --> Validate["ValidateOnStart() 執行 DataAnnotations & IValidateOptions"]
-        Validate -->|"驗證不通過"| FailFast["🚨 立即拋出 OptionsValidationException 自行終止"]
-        FailFast --> K8sRollback["Kubernetes 偵測啟動失敗 ──► 暫停滾動更新並自動回滾！"]
-    end
+flowchart LR
+    Sources["appsettings.json<br/>環境變數<br/>Secret"] --> Config["IConfiguration<br/>（後面的來源覆蓋前面的）"]
+    Config -->|"Bind(\"Payment\")"| Options["PaymentOptions 類別"]
+    Options --> Validate{"ValidateOnStart<br/>啟動時驗證"}
+    Validate -->|通過| Inject["注入到服務"]
+    Validate -->|失敗| Fail["啟動失敗，<br/>Pod 不會變成 Ready"]
 ```
 
----
+三種注入方式的差別在「設定改了以後，拿到的值會不會變」：
 
-## 致命反模式 vs. 正確解法
+| 介面 | 生命週期 | 設定檔變更後 |
+| --- | --- | --- |
+| `IOptions<T>` | Singleton | 不變，啟動時讀一次 |
+| `IOptionsSnapshot<T>` | Scoped | 下一個請求拿到新值 |
+| `IOptionsMonitor<T>` | Singleton | `CurrentValue` 拿到新值，也可以訂閱變更 |
 
-### 反模式一：缺少啟動期驗證，將組態錯誤留至運行期爆發
+在 Kubernetes 上，設定通常來自環境變數或掛載的檔案。環境變數在 Pod 啟動後不會變；掛載的 ConfigMap 檔案會更新，但要確認應用程式有監看檔案變更。
 
-若未開啟 `ValidateOnStart()`，即使組態值（如連線字串、金鑰、逾時）為 `null` 或嚴重非法，ASP.NET Core 也能正常構建並開啟 HTTP 監聽埠。這會使本可在部署流水線中被攔截的組態缺陷，延遲到生產尖峰流量時全面暴雷。
+## 常見錯誤與正確寫法
 
-### 反模式二：在 Singleton 服務中直接注入 Scoped 的 `IOptionsSnapshot<T>`
-
-`IOptionsSnapshot<T>` 是專為每個 HTTP 請求獨立重新計算設計的 **Scoped 服務**。若在單例服務（如 `BackgroundService` 或全域記憶體快取管理器）的建構函式中注入它，在開啟 DI 範圍驗證（`ValidateScopes = true`）時，應用程式將在構建階段直接因 Captive Dependency 宣告崩潰。
-
-### 正確解法：啟用 `ValidateOnStart()`，並依生命週期精確選用 Options 三劍客
-
-1. **生命週期分工**：
-   - `IOptions<T>`（Singleton）：讀取一次後固定，效能最極致，無動態重載開銷。
-   - `IOptionsSnapshot<T>`（Scoped）：每個 HTTP 請求重新讀取，專門用於 Controller / Minimal API 請求管線。
-   - `IOptionsMonitor<T>`（Singleton）：全域單例，支援動態熱更新與 `OnChange` 監聽器，專門用於 Singleton 服務。
-2. **啟動驗證防禦**：使用 `.ValidateDataAnnotations().ValidateOnStart()` 將驗證提前至服務啟動的第 1 秒。
+### 1. 沒有驗證，錯誤設定上線後才爆炸
 
 ```csharp
-using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
-
-namespace DotNetPerformance.OptionsPattern;
-
-/// <summary>
-/// 金流閘道強型別組態物件
-/// </summary>
-public sealed class PaymentGatewayOptions
+public sealed class PaymentOptions
 {
-    public const string SectionName = "PaymentGateway";
+    public const string Section = "Payment";
 
-    [Required(ErrorMessage = "金流服務端點（GatewayUrl）為必填項目")]
-    [Url(ErrorMessage = "金流服務端點必須為合法 HTTP/HTTPS 網址")]
-    public string GatewayUrl { get; set; } = string.Empty;
+    [Required, Url]
+    public required string BaseUrl { get; init; }
 
-    [Range(1, 60, ErrorMessage = "逾時時間必須介於 1 到 60 秒之間")]
-    public int TimeoutSeconds { get; set; } = 30;
-
-    public bool EnableSandboxMock { get; set; }
-
-    public string? MerchantSecretKey { get; set; }
+    [Range(1, 30)]
+    public int TimeoutSeconds { get; init; } = 10;
 }
 
-/// <summary>
-/// 自訂進階語意驗證器（跨欄位依賴檢驗）
-/// </summary>
-public sealed class PaymentGatewayOptionsValidator : IValidateOptions<PaymentGatewayOptions>
+builder.Services.AddOptions<PaymentOptions>()
+    .Bind(builder.Configuration.GetSection(PaymentOptions.Section))
+    .ValidateDataAnnotations()  // 檢查 [Required]、[Range] 等標註
+    .ValidateOnStart();         // 啟動時就檢查，而不是第一次使用時
+```
+
+`ValidateOnStart` 讓錯誤的設定在 Pod 啟動時就讓程序結束，搭配 Kubernetes 的 rolling update，新版本起不來，舊版本就不會被替換。
+
+跨欄位的規則（例如「重試次數乘上逾時不能超過 60 秒」）用 `.Validate(o => ..., "錯誤訊息")` 加上。.NET 8 起也可以用來源產生器（`[OptionsValidator]`）在編譯時產生驗證程式碼，適合 Native AOT。
+
+### 2. Singleton 注入 IOptionsSnapshot
+
+`IOptionsSnapshot<T>` 是 Scoped 服務。Singleton 注入它，就是 [Captive Dependency](/frameworks/aspnet-core/dependency-injection/)，開發環境會直接丟出例外。Singleton 需要即時設定就用 `IOptionsMonitor<T>`：
+
+```csharp
+public sealed class PaymentClient(HttpClient http, IOptionsMonitor<PaymentOptions> options)
 {
-    public ValidateOptionsResult Validate(string? name, PaymentGatewayOptions options)
+    public async Task<PaymentResult> ChargeAsync(ChargeRequest request, CancellationToken ct)
     {
-        // 跨欄位業務邏輯：若非 Sandbox 測試模式，則必須提供長度不低於 32 碼的生產密鑰
-        if (!options.EnableSandboxMock)
-        {
-            if (string.IsNullOrWhiteSpace(options.MerchantSecretKey) || options.MerchantSecretKey.Length < 32)
-            {
-                return ValidateOptionsResult.Fail("在生產模式下（EnableSandboxMock = false），MerchantSecretKey 必須大於等於 32 碼！");
-            }
-        }
-
-        return ValidateOptionsResult.Success;
-    }
-}
-
-public static class Program
-{
-    public static void Main()
-    {
-        Console.WriteLine("=== ASP.NET Core Options 模式與 ValidateOnStart 防禦實測 ===");
-
-        // 模擬合法生產組態
-        var validConfigData = new Dictionary<string, string?>
-        {
-            ["PaymentGateway:GatewayUrl"] = "https://secure.payment.internal/v1",
-            ["PaymentGateway:TimeoutSeconds"] = "20",
-            ["PaymentGateway:EnableSandboxMock"] = "false",
-            ["PaymentGateway:MerchantSecretKey"] = "production_super_secret_key_1234567890_verified"
-        };
-
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(validConfigData)
-            .Build();
-
-        var services = new ServiceCollection();
-
-        // 註冊 Options、資料註解驗證、進階邏輯驗證與啟動期驗證
-        services.AddOptions<PaymentGatewayOptions>()
-            .Bind(config.GetSection(PaymentGatewayOptions.SectionName))
-            .ValidateDataAnnotations()
-            .ValidateOnStart();
-
-        // 註冊自訂跨欄位驗證器
-        services.AddSingleton<IValidateOptions<PaymentGatewayOptions>, PaymentGatewayOptionsValidator>();
-
-        using ServiceProvider serviceProvider = services.BuildServiceProvider();
-
-        // 驗證解析強型別組態
-        var options = serviceProvider.GetRequiredService<IOptions<PaymentGatewayOptions>>().Value;
-        Console.WriteLine($"[組態檢驗通過] 端點: {options.GatewayUrl}");
-        Console.WriteLine($"[組態檢驗通過] 逾時: {options.TimeoutSeconds} 秒");
-        Console.WriteLine($"[組態檢驗通過] 生產密鑰長度: {options.MerchantSecretKey?.Length} 碼");
-
-        // 驗證 Singleton 與 IOptionsMonitor 配合
-        var monitor = serviceProvider.GetRequiredService<IOptionsMonitor<PaymentGatewayOptions>>();
-        Console.WriteLine($"[IOptionsMonitor 當前值] {monitor.CurrentValue.GatewayUrl}");
-        Console.WriteLine("全域 ValidateOnStart 防禦機制已生效，杜絕一切帶病上線隱患。");
+        var current = options.CurrentValue; // 每次讀取都是最新值
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(current.TimeoutSeconds));
+        // ...
     }
 }
 ```
 
-預期控制台輸出：
+### 3. 以為改了設定就會即時生效
 
-```text
-=== ASP.NET Core Options 模式與 ValidateOnStart 防禦實測 ===
-[組態檢驗通過] 端點: https://secure.payment.internal/v1
-[組態檢驗通過] 逾時: 20 秒
-[組態檢驗通過] 生產密鑰長度: 49 碼
-[IOptionsMonitor 當前值] https://secure.payment.internal/v1
-全域 ValidateOnStart 防禦機制已生效，杜絕一切帶病上線隱患。
-```
+有些設定只在啟動時使用一次，例如資料庫連線池大小、Kestrel 的 port。即使用了 `IOptionsMonitor`，改了也不會套用到已經建立的連線池。這類設定的變更應該透過重新部署，而不是熱更新。
 
----
+## 使用邊界
 
-## 踩坑與避坑指南
-
-### 1. Options 三劍客選型矩陣與記憶體邊界
-
-| 介面 | 生命週期 | 支援動態熱重載？ | 能否注入 Singleton 服務？ | 適用場景 |
-| :--- | :--- | :--- | :--- | :--- |
-| **`IOptions<T>`** | Singleton | **否**（首次讀取後永久固定） | **可以** | 基礎設施連線字串、日誌級別、應用程式識別碼等生命週期內不變的靜態設定。 |
-| **`IOptionsSnapshot<T>`** | Scoped | **是**（每個 HTTP 請求獨立快照） | **嚴禁注入**（引發 Captive Dependency） | Controller 或 Minimal API 等短請求管線，可即時感知 ConfigMap 更新。 |
-| **`IOptionsMonitor<T>`** | Singleton | **是**（隨時透過 `CurrentValue` 取得最新值） | **可以** | `BackgroundService`、全域快取管理器、動態功能開關（Feature Flags）、即時限流閾值。 |
-
-### 2. 避免對不可變基礎設施進行「熱重載（Hot Reload）」
-
-雖然 `IOptionsMonitor` 支援動態監聽變更（`monitor.OnChange(opts => ...)`），但在面對**底層有狀態資源**時應極度謹慎：
-- **狀態撕裂風險**：若在執行期動態修改資料庫 `ConnectionString` 或 Redis 密碼，既有的 `DbConnectionPool` 與 `ConnectionMultiplexer` 並不會自動銷毀既有連線，這會導致進行中的長交易與新請求使用不同的連線池，引發難以預期的髒讀與連線洩漏。
-- **最佳實踐**：基礎設施連線變更一律應透過 Kubernetes Pod 滾動重啟（Rolling Restart）進行發布。
-
-### 3. 具名選項（Named Options）的多租戶分流實踐
-
-當系統需要同時對接多個第三方金流（如 Stripe 與 PayPal）時，可宣告具名選項：
-
-```csharp
-// 註冊具名選項
-services.Configure<PaymentOptions>("Stripe", config.GetSection("Payment:Stripe"));
-services.Configure<PaymentOptions>("PayPal", config.GetSection("Payment:PayPal"));
-
-// 在端點中依名稱獲取對應組態
-app.MapGet("/checkout/{provider}", (string provider, IOptionsSnapshot<PaymentOptions> optionsSnapshot) =>
-{
-    PaymentOptions options = optionsSnapshot.Get(provider);
-    return Results.Ok(new { endpoint = options.GatewayUrl });
-});
-```
-
----
-
-## 線上排查指令
-
-### 1. 檢索 Pod 啟動初期是否拋出 `OptionsValidationException`
-
-當 Kubernetes Deployment 更新後 Pod 陷入 `CrashLoopBackOff` 時，第一時間調閱啟動記錄：
-
-```bash
-# 1. 檢索前一個崩潰容器的選項驗證失敗例外
-kubectl logs <pod-name> --previous | grep -A 10 "OptionsValidationException"
-
-# 2. 檢視當前已掛載的 ConfigMap / Secret 內容是否符合規範
-kubectl get configmap <configmap-name> -o yaml
-```
-
-### 2. 印出 Configuration Debug View 檢驗數值覆蓋來源
-
-在除錯或排查端點中輸出完整的組態鍵值與提供者來源：
-
-```csharp
-// 在排查診斷端點中執行
-var configRoot = (IConfigurationRoot)app.Services.GetRequiredService<IConfiguration>();
-Console.WriteLine(configRoot.GetDebugView());
-```
-輸出會明確標示某個選項到底是被 `appsettings.json`、`EnvironmentVariables` 還是命令列引數所給定。
+- 密碼、金鑰不要放在 `appsettings.json`。在雲端使用 Secret Manager 或 Secrets Manager，透過 Kubernetes Secret 或 CSI 掛載成環境變數或檔案，見 [設定與 Secret](/platforms/kubernetes/configuration-security/)。
+- 同一個類別需要多組設定（例如兩個不同的付款閘道），用具名選項（Named Options）：`IOptionsMonitor<T>.Get("LinePay")`。
+- 設定來源的優先順序（環境變數覆蓋 `appsettings.json` 等），見 [Generic Host](/platforms/dotnet/hosting/)。

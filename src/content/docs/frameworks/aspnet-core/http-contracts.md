@@ -1,273 +1,116 @@
 ---
-title: "ASP.NET Core HTTP API 契約設計：RFC 7807 與 REST 語意實戰"
-description: "直擊 Fake 200 反模式、RFC 7807 ProblemDetails 標準錯誤結構、TypedResults 契約導向設計與冪等性標頭規範。"
+title: "HTTP 契約：失敗時回什麼狀態碼，用戶端才知道該重試還是放棄"
+description: "說明 HTTP 狀態碼的語意、為什麼不該「全部回 200」、用 Problem Details（RFC 9457）統一錯誤格式，以及下單 API 的冪等鍵。"
 articleId: "aspnet-core-http-contracts"
 topic: "aspnet-core"
 category: "web-api"
-order: 4
-tags: ["ASP.NET Core", "HTTP契約", "REST", "ProblemDetails", "RFC 7807", "TypedResults", "API設計"]
+order: 6
+tags: ["ASP.NET Core", "HTTP 狀態碼", "Problem Details", "RFC 9457", "冪等鍵"]
 articleType: "reference"
+difficulty: "beginner"
 prerequisites: ["aspnet-core-model-binding"]
-relatedArticles: ["aspnet-core-api-styles-aot", "architecture-communication-boundaries"]
-applicableVersions: ".NET 8 / .NET 10、C# 12+ / 14"
-difficulty: "advanced"
-lastReviewed: "2026-10-10"
-takeaway: "嚴禁 Fake 200 回傳業務錯誤；全面採用 RFC 7807 ProblemDetails 規範回傳錯誤；以標準 HTTP 狀態碼對齊監控與重試。"
+relatedArticles: ["aspnet-core-http-resilience", "data-access-concurrent-crud", "architecture-cross-cutting"]
+applicableVersions: ".NET 8～10、ASP.NET Core 8～10。"
+lastReviewed: "2026-10-21"
+takeaway: "狀態碼要說實話：4xx 是請求的問題、不該重試，5xx 是伺服器的問題、可能可以重試；錯誤內容統一用 Problem Details，並且不回傳內部例外訊息。"
 sources:
-  - title: "IETF RFC 7807：Problem Details for HTTP APIs"
-    url: "https://datatracker.ietf.org/doc/html/rfc7807"
-  - title: "Microsoft Learn：ASP.NET Core Web API 中的 ProblemDetails"
-    url: "https://learn.microsoft.com/zh-tw/aspnet/core/web-api/handle-errors#problem-details"
+  - title: "RFC 9457：Problem Details for HTTP APIs"
+    url: "https://www.rfc-editor.org/rfc/rfc9457"
+  - title: "RFC 9110：HTTP Semantics（狀態碼）"
+    url: "https://www.rfc-editor.org/rfc/rfc9110#name-status-codes"
+  - title: "Microsoft Learn：處理 ASP.NET Core 中的錯誤"
+    url: "https://learn.microsoft.com/aspnet/core/fundamentals/error-handling"
+  - title: "Microsoft Learn：Minimal API 中的回應（TypedResults）"
+    url: "https://learn.microsoft.com/aspnet/core/fundamentals/minimal-apis/responses"
 ---
 
-## 案發現場
+## 這是什麼
 
-某中台系統的 API 設計規範中，曾長年奉行一條荒謬的內部土炮條款：「為了簡化前端錯誤處理，所有 API 一律回傳 `HTTP 200 OK`，並在 JSON 酬載中塞入自定義狀態碼，例如 `{"code": -1004, "msg": "餘額不足，扣款失敗"}`」。
+API 回應給用戶端兩樣東西：狀態碼和內容。**HTTP 契約**指的是這兩者代表什麼的約定：成功回什麼、各種失敗回什麼、錯誤內容長什麼樣子。
 
-這個看似微小的架構偷懶，在微服務全面容器化並接入雲端原生設施後，引發了連環災難：
-1. **雲端基礎設施全面「失明」**：Kubernetes Ingress 負載平衡器、API Gateway 與 Service Mesh（Istio）全部仰賴標準 HTTP 狀態碼計算上游服務健康度。由於所有扣款失敗甚至崩潰的請求全部回傳 `200 OK`，維運儀表板上的「API 成功率」永遠顯示完美的 100%！系統的自動熔斷（Circuit Breaker）、藍綠部署自動回滾（Rollback）以及 Prometheus 錯誤警報完全失去作用。
-2. **CDN 毒化與非預期快取**：某查詢商品資訊的端點因資料庫抖動發生業務錯誤，由於回傳了 `200 OK`，邊緣 CDN 節點誤以為這是合法的成功回應，直接將「資料庫查詢失敗」的錯誤 JSON 快取了整整 10 分鐘，導致全網數百萬名使用者持續看見錯誤畫面！
+狀態碼不只是給人看的。前端依它決定要顯示錯誤還是重試，HTTP 用戶端的重試策略依它決定要不要再送一次，監控系統依它計算錯誤率。狀態碼不說實話，這些機制就會一起出錯。
 
-同一時期，另一個微服務走入了另一個極端：將所有的業務參數不合規（如庫存不足、手機號碼格式錯誤）全數粗暴回傳 `HTTP 500 Internal Server Error`。這導致維運團隊的 PagerDuty 警報在促銷當晚被觸發了數萬次，全體工程師在疲於奔命後產生嚴重的「警報疲勞」，最終在一週後導致一起真正的資料庫磁碟損毀事故被淹沒在假警報中，延宕三小時才被發現。
-
-這場事故深刻警示：**HTTP 狀態碼是網際網路基礎設施的通用通用語言**。無視標準協議語意、隨意偽造狀態碼，必然招致基礎設施的反噬。
+## 運作原理
 
 ```mermaid
 flowchart TD
-    subgraph Fake200Chaos["Fake 200 反模式：基礎設施全面失明"]
-        direction TB
-        ClientReq["扣款請求 (帳戶餘額不足)"] --> APIApp["微服務返回 HTTP 200 OK<br/>JSON: {code: -1004, msg: '扣款失敗'}"]
-        APIApp --> APIGateway["API Gateway / Envoy 代理"]
-        APIGateway --"判定 HTTP 200 為成功"--> Metrics["APM 指標顯示成功率 100% (警報不響)"]
-        APIGateway --"自動快取 200 回應"--> CDN["CDN 緩存錯誤訊息 10 分鐘 (毒化全網)"]
-    end
-
-    subgraph RFC7807Standard["IETF RFC 7807 ProblemDetails 標準契約分流"]
-        direction TB
-        Req["HTTP 請求抵達"] --> Router{狀態判定}
-        Router -->|"2xx 成功"| S200["200 OK / 201 Created / 204 No Content"]
-        Router -->|"4xx 用戶端過失"| S400["400 Bad Request / 422 Unprocessable Entity<br/>Content-Type: application/problem+json<br/>(前端展示具體欄位錯誤)"]
-        Router -->|"5xx 伺服器故障"| S500["500 Internal Server Error<br/>(遮蔽內部堆疊，僅附 TraceId 供客服排查)"]
-    end
+    Result["處理結果"] --> OK{"成功？"}
+    OK -->|是| S2["2xx<br/>200 已完成、201 已建立、202 已受理"]
+    OK -->|否| Who{"是誰的問題？"}
+    Who -->|請求內容或權限| C4["4xx：用戶端修正後再送<br/>重試同樣內容不會成功"]
+    Who -->|伺服器或下游| C5["5xx：伺服器端問題<br/>稍後重試可能成功"]
 ```
 
----
+電商常用的狀態碼：
 
-## 致命反模式 vs. 正確解法
+| 狀態碼 | 意思 | 電商例子 |
+| --- | --- | --- |
+| 200 OK | 完成，並回傳結果 | 查詢商品 |
+| 201 Created | 建立了新資源，`Location` 指向它 | 訂單已建立 |
+| 202 Accepted | 已受理，稍後處理 | 匯出報表已排入佇列 |
+| 400 Bad Request | 格式錯誤 | JSON 格式不對、數量不是數字 |
+| 401 Unauthorized | 沒有有效的身分 | 沒帶 token 或 token 過期 |
+| 403 Forbidden | 知道你是誰，但你沒有權限 | 買家想改商品價格 |
+| 404 Not Found | 資源不存在（或不讓你知道它存在） | 商品不存在、查別人的訂單 |
+| 409 Conflict | 和目前狀態衝突 | 庫存不足、版本衝突、重複下單 |
+| 422 Unprocessable Content | 格式正確但不符合業務規則 | 已出貨的訂單不能取消 |
+| 429 Too Many Requests | 太頻繁，請稍後再試 | 觸發限流 |
+| 500 Internal Server Error | 伺服器未預期的錯誤 | 程式例外 |
+| 503 Service Unavailable | 暫時無法服務 | 依賴的資料庫停機 |
 
-### 反模式一：Fake 200（業務失敗一律回傳 200 OK）
+**Problem Details（RFC 9457）**是錯誤內容的標準格式，Content-Type 為 `application/problem+json`，固定有 `type`、`title`、`status`、`detail` 等欄位，用戶端可以用同一套程式處理所有錯誤。它取代了舊的 RFC 7807。
 
-將錯誤偽裝為 200 OK 會破壞整個現代微服務通訊鏈路：
-- 破壞 OpenTelemetry 分散式追蹤：HTTP Span 會被標記為 Success，APM 無法透過過濾錯誤請求來定位慢查詢或系統瓶頸。
-- 破壞重試策略：Polly 等容錯彈性庫無法透過 HTTP 狀態碼自動進行條件式重試或觸發斷路器。
-- 破壞 HTTP 快取規範：邊緣代理無法識別錯誤，誤將失敗資料分發給其他使用者。
+## 常見錯誤與正確寫法
 
-### 反模式二：所有校驗失敗粗暴回傳 500 Internal Server Error
+### 1. 業務失敗也回 200
 
-5xx 代表「伺服器遇到了無法預期的內部故障（Bug 或硬體崩潰）」，而 4xx 代表「呼叫端傳入的參數不合法，需要呼叫端修正後再試」。混淆兩者會導致監控系統的 SRE SLI/SLA 指標完全失真。
+```json
+// 錯：HTTP 200，內容卻是失敗；重試策略與監控都以為成功了
+{ "success": false, "message": "庫存不足" }
+```
 
-### 正確解法：全面擁抱 IETF RFC 7807 ProblemDetails 與 TypedResults
-
-RFC 7807 定義了 Web API 傳回錯誤的國際標準結構（`application/problem+json`）：
-- `type`：指向錯誤類型說明文件的 URI 標識。
-- `title`：簡短、人類可讀的錯誤分類摘要。
-- `status`：與 HTTP 回應頭完全一致的數字狀態碼。
-- `detail`：針對當前特定請求的人類可讀詳細描述。
-- `instance`：發生錯誤的具體資源路徑 URI。
-- 擴充屬性：`traceId`、欄位錯誤清單（`errors`）。
-
-以下完整程式碼展示了如何在 ASP.NET Core 中建立符合 RFC 7807 標準的錯誤契約，並利用 `TypedResults` 輸出強型別回應。
+依失敗原因回對應的狀態碼，內容用 Problem Details：
 
 ```csharp
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Text.Json;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
-
-namespace DotNetPerformance.Contracts;
-
-/// <summary>
-/// 建立訂單請求酬載
-/// </summary>
-public sealed record PlaceOrderRequest(string CustomerId, int Quantity, decimal UnitPrice);
-
-/// <summary>
-/// 標準 RFC 7807 錯誤契約工廠
-/// </summary>
-public static class ProblemDetailsFactory
+app.MapPost("/orders", async Task<Results<Created<OrderDto>, ProblemHttpResult>> (
+    PlaceOrderRequest request, PlaceOrderHandler handler, CancellationToken ct) =>
 {
-    /// <summary>
-    /// 建立業務規則校驗失敗回應 (422 Unprocessable Entity)
-    /// </summary>
-    public static HttpValidationProblemDetails CreateBusinessValidationProblem(
-        string instancePath,
-        string ruleTitle,
-        string detailMessage,
-        Dictionary<string, string[]> validationErrors)
+    var result = await handler.HandleAsync(request, ct);
+    return result.Status switch
     {
-        var problem = new HttpValidationProblemDetails(validationErrors)
-        {
-            Type = "https://api.commerce.internal/errors/business-validation-failed",
-            Title = ruleTitle,
-            Status = StatusCodes.Status422UnprocessableEntity,
-            Detail = detailMessage,
-            Instance = instancePath
-        };
+        PlaceOrderStatus.Created => TypedResults.Created($"/orders/{result.Order!.Id}", result.Order),
+        PlaceOrderStatus.OutOfStock => TypedResults.Problem(statusCode: 409, title: "庫存不足",
+            detail: $"商品 {request.ProductId} 目前只剩 {result.Available} 件"),
+        _ => TypedResults.Problem(statusCode: 422, title: "訂單不符合規則", detail: result.Reason),
+    };
+});
+```
 
-        // 注入 W3C TraceContext 相關識別碼以利分散式排查
-        problem.Extensions["traceId"] = Activity.Current?.Id ?? Guid.NewGuid().ToString("N");
-        problem.Extensions["timestamp"] = DateTimeOffset.UtcNow;
+`TypedResults` 讓回傳型別出現在方法簽章上，OpenAPI 文件也能正確描述所有可能的回應。
 
-        return problem;
-    }
+### 2. 未預期的例外把內部訊息回給用戶端
 
-    /// <summary>
-    /// 建立伺服器未預期錯誤回應 (500 Internal Server Error，嚴格遮蔽內部堆疊)
-    /// </summary>
-    public static ProblemDetails CreateInternalServerErrorProblem(string instancePath)
+`NpgsqlException` 的訊息可能包含資料表名稱、SQL 片段甚至連線資訊。Production 環境只回應通用訊息與一個追蹤用的 ID，詳細內容只寫進日誌：
+
+```csharp
+builder.Services.AddProblemDetails(options =>
+{
+    options.CustomizeProblemDetails = context =>
     {
-        var problem = new ProblemDetails
-        {
-            Type = "https://api.commerce.internal/errors/internal-server-error",
-            Title = "伺服器內部發生未預期異常",
-            Status = StatusCodes.Status500InternalServerError,
-            Detail = "系統暫時遭遇內部故障，請記錄追蹤代碼並聯絡客服支援。",
-            Instance = instancePath
-        };
-
-        // 僅暴露安全的 TraceId，絕對不洩漏 Exception StackTrace 或 SQL 語法！
-        problem.Extensions["traceId"] = Activity.Current?.Id ?? Guid.NewGuid().ToString("N");
-        return problem;
-    }
-}
-
-public static class Program
-{
-    public static void Main()
-    {
-        Console.WriteLine("=== ASP.NET Core RFC 7807 ProblemDetails 契約實測 ===");
-
-        // 模擬訂單校驗失敗情境
-        var errors = new Dictionary<string, string[]>
-        {
-            ["Quantity"] = ["商品購買數量必須大於 0", "單筆採購不可超過 50 件"],
-            ["UnitPrice"] = ["單價不可為負數"]
-        };
-
-        HttpValidationProblemDetails validationProblem = ProblemDetailsFactory.CreateBusinessValidationProblem(
-            instancePath: "/api/v1/orders/checkout",
-            ruleTitle: "訂單商務規則校驗未通過",
-            detailMessage: "您所提交的訂單內容包含不合法欄位數值，請修正後重新送出。",
-            validationErrors: errors);
-
-        string jsonOutput = JsonSerializer.Serialize(validationProblem, new JsonSerializerOptions { WriteIndented = true });
-        Console.WriteLine($"[RFC 7807 422 格式驗證]\n{jsonOutput}\n");
-
-        // 模擬內部未預期異常情境
-        ProblemDetails internalProblem = ProblemDetailsFactory.CreateInternalServerErrorProblem("/api/v1/orders/checkout");
-        string internalJson = JsonSerializer.Serialize(internalProblem, new JsonSerializerOptions { WriteIndented = true });
-        Console.WriteLine($"[RFC 7807 500 格式驗證 (無敏感資訊洩漏)]\n{internalJson}");
-    }
-}
+        // 加上 traceId，用戶回報問題時可以對應到日誌與追蹤
+        context.ProblemDetails.Extensions["traceId"] = Activity.Current?.Id ?? context.HttpContext.TraceIdentifier;
+    };
+});
+app.UseExceptionHandler(); // 未處理的例外轉成 500 Problem Details，不含例外訊息
 ```
 
-預期控制台輸出：
+### 3. 下單 API 沒有冪等鍵
 
-```text
-=== ASP.NET Core RFC 7807 ProblemDetails 契約實測 ===
-[RFC 7807 422 格式驗證]
-{
-  "type": "https://api.commerce.internal/errors/business-validation-failed",
-  "title": "\u8A02\u55AE\u5546\u52D9\u898F\u5247\u6821\u9A57\u672A\u901A\u904E",
-  "status": 422,
-  "detail": "\u60A8\u6240\u63D0\u4EA4\u7684\u8A02\u55AE\u5167\u5BB9\u5305\u542B\u4E0D\u5408\u6CD5\u6 field\u6578\u503C\uFF0C\u8ACB\u4FEE\u6B63\u5F8C\u91CD\u65B0\u9001\u51FA\u3002",
-  "instance": "/api/v1/orders/checkout",
-  "errors": {
-    "Quantity": [
-      "\u5546\u54C1\u8CFC\u8CB7\u6578\u91CF\u5FC5\u9808\u5927\u65BC 0",
-      "\u55AE\u7B46\u63A1\u8CFC\u4E0D\u53EF\u8D85\u904E 50 \u4EF6"
-    ],
-    "UnitPrice": [
-      "\u55AE\u50F9\u4E0D\u53EF\u70BA\u8CA0\u6578"
-    ]
-  },
-  "traceId": "01925b6a-8b1e-72c0-8a19-9f4a18012345",
-  "timestamp": "2026-10-10T11:07:00Z"
-}
+網路不穩時，App 沒收到回應就重送下單請求，伺服器建立了兩張訂單。讓用戶端在每次「同一個下單意圖」帶上同一個 `Idempotency-Key` 標頭，伺服器以它作為唯一條件：第一次建立訂單，之後相同的鍵直接回傳第一次的結果；同一個鍵卻帶著不同內容，回 422。實作方式見 [高併發 CRUD](/data-access/concurrent-crud/)。
 
-[RFC 7807 500 格式驗證 (無敏感資訊洩漏)]
-{
-  "type": "https://api.commerce.internal/errors/internal-server-error",
-  "title": "\u4F3A\u670D\u5668\u5167\u90E8\u767C\u751F\u672A\u9810\u671F\u7570\u5E38",
-  "status": 500,
-  "detail": "\u7CFB\u7D71\u66AB\u6642\u906D\u9047\u5167\u90E8\u6545\u969C\uFF0C\u8ACB\u8A18\u9304\u8FFD\u8E64\u4EE3\u78BC\u4E26\u806F\u7D61\u5BA2\u670D\u652F\u63F4\u3002",
-  "instance": "/api/v1/orders/checkout",
-  "traceId": "01925b6a-8b1e-72c0-8a19-9f4a18012345"
-}
-```
+## 使用邊界
 
----
-
-## 踩坑與避坑指南
-
-### 1. HTTP 語意狀態碼分流對照表
-
-| HTTP 狀態碼 | 標準語意 | 適用場景 | 前端 / 網關應對策略 |
-| :--- | :--- | :--- | :--- |
-| **200 OK** | 請求成功處理 | 一般 GET 查詢、同步 PUT/PATCH 成功 | 正常渲染資料。 |
-| **201 Created** | 資源成功建立 | POST 建立新訂單、新增會員（需附 `Location` 標頭） | 取得新資源 URL 並導航。 |
-| **202 Accepted** | 請求已受理，排入非同步處理 | 長耗時報表匯出、非同步影片轉檔 | 輪詢任務狀態或等待 Webhook。 |
-| **204 No Content** | 成功但無回傳內容 | DELETE 刪除資源、單純的設定切換 | 不更新畫面實體資料。 |
-| **400 Bad Request** | 語法格式錯誤 | JSON 畸形、缺少必填標頭 | 客戶端修復請求格式。 |
-| **401 Unauthorized** | 未通過身分查驗 | 未提供 Token 或 Token 已失效 | 靜默刷新 Token 或跳轉登入。 |
-| **403 Forbidden** | 身分合法但無權操作 | 普通會員試圖存取管理員端點 | 提示「權限不足」，禁止跳轉登入。 |
-| **404 Not Found** | 資源不存在 | 目標 ID 不在資料庫中 | 提示找不到對應項目。 |
-| **409 Conflict** | 狀態衝突 | 併發版本樂觀鎖衝突、唯一鍵重複 | 重新獲取最新版本後重試。 |
-| **422 Unprocessable** | 語法正確但商務規則校驗失敗 | 庫存不足、帳戶餘額不足 | 依據 `errors` 欄位標記表單紅字。 |
-| **500 Internal Error** | 伺服器內部非預期例外 | 程式未捕捉例外、空指標、連線字串錯 | 彈出通用錯誤，提示回報 traceId。 |
-| **503 Service Unavailable** | 暫時無法提供服務 | 伺服器過載、停機維護、斷路器跳脫 | 退避並等待數秒後重試。 |
-
-### 2. 生產環境資安防禦：500 錯誤遮蔽（Data Sanitization）
-
-在 ASP.NET Core 中呼叫 `builder.Services.AddProblemDetails()` 時，若未正確設定環境變數，伺服器在 `Development` 環境會將完整的 C# Exception StackTrace 包含在 `detail` 中。
-- **高危漏洞警告**：若在 `Production` 環境洩漏了呼叫堆疊，攻擊者可藉此窺探專案所使用的內部類別庫版本、資料庫表結構甚至是硬編碼的伺服器檔案路徑！
-- **防禦原則**：生產環境一律強制開啟例外脫敏，內部堆疊寫入私有日誌系統（如 Seq / Elasticsearch），向外僅暴露唯一的 `traceId`。
-
-### 3. 關鍵 POST 端點之 `Idempotency-Key` 契約標準
-
-對於所有涉及扣款、下單等產生副作用的 POST 端點，API 契約必須要求傳入 HTTP 標頭：
-`Idempotency-Key: <UUID>`。
-後端接收到請求時：
-1. 以該 Key 嘗試取得分散式鎖。
-2. 若在 Redis 中發現該 Key 已有先前的執行結果，直接回傳上次快取的 HTTP 狀態與回應，跳過二次扣款。
-3. 若為新請求，執行完畢後將結果寫入 Redis（設定適當 TTL 如 24 小時）。
-
----
-
-## 線上排查指令
-
-### 1. 使用 `curl` 檢驗 API 回傳狀態碼與 `application/problem+json` 標頭
-
-確認線上端點是否遵循 RFC 7807 契約：
-
-```bash
-# 發送非法空酬載並檢驗 HTTP 回應頭與 Content-Type
-curl -i -X POST https://api.commerce.internal/api/v1/orders \
-  -H "Content-Type: application/json" \
-  -d "{}"
-```
-
-檢查重點：
-- 回應狀態碼是否為 `422 Unprocessable Entity` 或 `400 Bad Request`（絕非 200 或 500）。
-- 回應頭是否包含 `Content-Type: application/problem+json; charset=utf-8`。
-
-### 2. 透過 APM / LogQL 追蹤 RFC 7807 traceId
-
-當使用者向客服回報錯誤與 `traceId` 時，在 Loki 或 ELK 中秒級定位案發現場：
-
-```bash
-# 在日誌搜尋平台透過 traceId 精確過濾單一調用鏈路
-traceId="01925b6a-8b1e-72c0-8a19-9f4a18012345"
-```
+- 查詢別人的訂單時，回 404 比 403 更安全：403 等於告訴對方「這張訂單存在」。
+- 400 與 422 的界線各團隊不同，重點是全系統一致，並寫進 API 文件。
+- 202 只代表「收到了」，要提供查詢處理結果的方式，例如 `Location` 指向一個狀態端點。
+- 用戶端該如何依狀態碼重試，見 [HTTP 彈性策略](/frameworks/aspnet-core/http-resilience/)。
