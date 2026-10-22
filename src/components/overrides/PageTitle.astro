@@ -1,6 +1,6 @@
 ---
 import Icon from '../Icon.astro';
-import { categoryFor, levelLabel, topicFor, topicUrl } from '../../lib/catalog';
+import { articleTypeLabel, difficultyLabel, categoryFor, topicFor, topicUrl } from '../../lib/catalog';
 const { data } = Astro.locals.starlightRoute.entry;
 const category = categoryFor(data.category);
 const topic = topicFor(data.topic)!;
@@ -14,14 +14,11 @@ const topic = topicFor(data.topic)!;
   <span class="sr-only" aria-hidden="true" data-pagefind-weight="0.1">{[...new Set([topic.name, data.topic, ...(data.tags ?? [])])].join(' ')}</span>
   <p class="article-description" data-pagefind-meta="description">{data.description}</p>
   <div class="article-meta" data-pagefind-ignore>
-    <span>{topic.name}</span><span class="meta-dot">·</span><span>{levelLabel(data.difficulty)}</span>
+    <span>{topic.name}</span><span class="meta-dot">·</span><span>{articleTypeLabel(data.articleType)}</span><span class="meta-dot">·</span><span>{difficultyLabel(data.difficulty)}</span>
     <span class="meta-dot">·</span><span>已審閱 {data.lastReviewed?.toISOString().slice(0, 10)}</span>
     <button class="bookmark-button" type="button" data-bookmark={data.articleId} aria-pressed="false"><Icon name="bookmark" size={17} /><span>收藏文章</span></button>
   </div>
   <p class="article-offline" data-article-offline role="status" data-pagefind-ignore>正在確認離線閱讀狀態…</p>
   <div class="takeaway"><Icon name="spark" size={20} /><div><strong>先記住這件事</strong><p>{data.takeaway}</p></div></div>
-  <details class="version-details" data-pagefind-ignore>
-    <summary>適用版本與驗證紀錄</summary>
-    <p>{data.applicableVersions}</p><p>{data.verifiedWith}</p>
-  </details>
+  <p class="version-details" data-pagefind-ignore><strong>適用版本</strong>　{data.applicableVersions}</p>
 </div>

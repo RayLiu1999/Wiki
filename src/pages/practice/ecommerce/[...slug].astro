@@ -1,0 +1,18 @@
+---
+import MovedPage from '../../../components/MovedPage.astro';
+// 實作指南已移除（見 docs/adr/0001），舊網址逐一轉到內容最接近的電商章節。
+export function getStaticPaths() {
+  const moved = {
+    overview: { title: '電商專題', url: '/projects/ecommerce/' },
+    setup: { title: '電商專題', url: '/projects/ecommerce/' },
+    'cache-messaging': { title: '07 商品快取與失效', url: '/projects/ecommerce/caching/' },
+    'failure-drills': { title: '10 行為測試與端到端觀測', url: '/projects/ecommerce/testing-observability/' },
+    containers: { title: '11 容器化與程序邊界', url: '/projects/ecommerce/containers/' },
+    kubernetes: { title: '12 在本機 Kubernetes 執行商品 API', url: '/projects/ecommerce/kubernetes/' },
+    gke: { title: '14 進入 GKE 與外部資料服務', url: '/projects/ecommerce/gke/' },
+    'database-validation': { title: '資料庫專題：高併發與大量訂單', url: '/projects/ecommerce/database-capacity/' },
+  };
+  return Object.entries(moved).map(([slug, target]) => ({ params: { slug: slug === 'overview' ? undefined : slug }, props: { target } }));
+}
+---
+<MovedPage target={Astro.props.target} reason="實作指南已經整併進電商章節。" />

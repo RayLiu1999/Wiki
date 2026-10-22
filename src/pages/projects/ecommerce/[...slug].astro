@@ -1,0 +1,9 @@
+---
+import HandbookPage from '../../../components/HandbookPage.astro';
+import { getHandbook } from '../../../lib/catalog';
+export async function getStaticPaths() {
+  return (await getHandbook('ecommerce')).map((entry) => ({ params: { slug: entry.id.split('/').slice(1).join('/') === 'overview' ? undefined : entry.id.split('/').slice(1).join('/') }, props: { entry } }));
+}
+const { entry } = Astro.props;
+---
+<HandbookPage entry={entry} />

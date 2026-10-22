@@ -2,13 +2,14 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 export default defineConfig({
+  site: 'https://devwiki.invalid',
   output: 'static',
   trailingSlash: 'always',
   integrations: [
     starlight({
       title: 'DevWiki',
       disable404Route: true,
-      description: '以繁體中文串起軟體知識，從 C# 開始。',
+      description: '用電商案例串起 .NET 後端、Kubernetes、GKE 與維運。',
       defaultLocale: 'root',
       locales: { root: { label: '繁體中文', lang: 'zh-TW' } },
       customCss: ['./src/styles/site.css'],
@@ -33,10 +34,17 @@ export default defineConfig({
       sidebar: [
         { label: 'C#', items: [{ autogenerate: { directory: 'languages/csharp' } }] },
         { label: 'ASP.NET Core', items: [{ autogenerate: { directory: 'frameworks/aspnet-core' } }] },
+        { label: '應用安全', items: [{ autogenerate: { directory: 'security' } }] },
         { label: '架構設計', items: [{ autogenerate: { directory: 'architecture' } }] },
         { label: '資料存取', items: [{ autogenerate: { directory: 'data-access' } }] },
+        { label: 'Redis', items: [{ autogenerate: { directory: 'infrastructure/redis' } }] },
+        { label: 'RabbitMQ', items: [{ autogenerate: { directory: 'infrastructure/rabbitmq' } }] },
+        { label: '容器與網路', items: [{ autogenerate: { directory: 'infrastructure/containers-networking' } }] },
+        { label: 'Kubernetes', items: [{ autogenerate: { directory: 'platforms/kubernetes' } }] },
+        { label: 'GCP 與 GKE', items: [{ autogenerate: { directory: 'platforms/gke' } }] },
+        { label: 'AWS 與 EKS', items: [{ autogenerate: { directory: 'platforms/eks' } }] },
         { label: '.NET 執行環境', items: [{ autogenerate: { directory: 'platforms/dotnet' } }] },
-        { label: '測試與觀測', items: [{ autogenerate: { directory: 'engineering' } }] },
+        { label: '工程實務', items: [{ autogenerate: { directory: 'engineering' } }] },
       ],
     }),
   ],

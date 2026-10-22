@@ -4,7 +4,7 @@ import Footer from '../components/Footer.astro';
 import ThemeProvider from '../components/ThemeProvider.astro';
 import '../styles/site.css';
 interface Props { title: string; description?: string; }
-const { title, description = '以繁體中文串起軟體知識，從 C# 開始。' } = Astro.props;
+const { title, description = '用電商案例串起 C#／.NET、資料與訊息、Kubernetes、GKE、交付與維運。' } = Astro.props;
 ---
 <!doctype html>
 <html lang="zh-TW" data-theme="light">
@@ -18,6 +18,7 @@ const { title, description = '以繁體中文串起軟體知識，從 C# 開始�
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <ThemeProvider />
+    <slot name="head" />
   </head>
   <body>
     <a class="skip-link" href="#main">跳至主要內容</a>

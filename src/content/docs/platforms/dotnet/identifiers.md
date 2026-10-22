@@ -1,47 +1,88 @@
 ---
-title: "UUID v4、v7、ULID、COMB 與 Snowflake"
-description: "比較 ID 的大小、排序、產生條件與資料庫索引行為，避免把時間排序誤當全域遞增。"
+title: "分散式識別碼：為什麼不要用隨機 GUID 當主鍵，UUIDv7 解決了什麼"
+description: "說明應用程式自己產生 ID 的好處、隨機 GUID（v4）讓索引頻繁分裂的原因、.NET 9 的 Guid.CreateVersion7、雪花演算法的時鐘風險，以及在 MySQL 中存放 GUID 的位元組順序。"
 articleId: "dotnet-identifiers"
 topic: "dotnet"
 category: "time-identifiers"
-order: 4
-tags: ["UUID v4", "UUID v7", "ULID", "COMB Guid", "Snowflake", "Guid.CreateVersion7", "索引", "唯一識別碼"]
-difficulty: "intermediate"
-prerequisites: ["dotnet-time-zones", "data-access-type-mapping"]
-relatedArticles: ["data-access-pools-locks", "architecture-domain-modeling"]
-applicableVersions: "Guid.CreateVersion7 需 .NET 9 以上；UUID 依 RFC 9562，其他方案依列出的規格或實作。"
-verifiedWith: "已核對官方文件與概念；整合片段需放入對應專案，未在本站建置或連線執行。"
-lastReviewed: "2026-10-07"
-takeaway: "ID 的時間布局、比較順序與唯一性依賴不同條件；先確認實際資料庫與跨節點需求。"
-noteDates: ["2026-08-27"]
-sources: [{"title": "IETF：RFC 9562 UUID", "url": "https://www.rfc-editor.org/rfc/rfc9562.html"}, {"title": "ULID：正式規格", "url": "https://github.com/ulid/spec"}, {"title": "RT.Comb：SQL Server 與 PostgreSQL 的 COMB 實作", "url": "https://github.com/richardtallent/RT.Comb"}, {"title": "Twitter：Snowflake 原始專案", "url": "https://github.com/twitter-archive/snowflake"}, {"title": "Microsoft Learn：Guid.CreateVersion7", "url": "https://learn.microsoft.com/en-us/dotnet/api/system.guid.createversion7?view=net-10.0"}]
+order: 5
+tags: [".NET", "UUIDv7", "Guid.CreateVersion7", "Snowflake", "主鍵", "B-tree"]
+articleType: "deep-dive"
+difficulty: "advanced"
+prerequisites: ["dotnet-time-zones"]
+relatedArticles: ["data-access-concurrent-crud", "data-access-large-table-queries", "architecture-creation-patterns"]
+applicableVersions: ".NET 9 以上（Guid.CreateVersion7）、PostgreSQL 14～18、MySQL 8.0／8.4、MySqlConnector 2.x。"
+lastReviewed: "2026-10-21"
+takeaway: "需要在應用程式產生 ID 時，用依時間排序的 UUIDv7，不要用隨機的 v4；MySQL 以 BINARY(16) 存放時要確認位元組順序，否則排序效果會消失。"
+omitSections:
+  - section: "雲端排查"
+    reason: "識別碼的設計問題在資料表結構與程式中決定，和部署在哪個雲端無關；索引膨脹的檢查方式見大表查詢一文。"
+sources:
+  - title: "Microsoft Learn：Guid.CreateVersion7"
+    url: "https://learn.microsoft.com/dotnet/api/system.guid.createversion7"
+  - title: "RFC 9562：Universally Unique IDentifiers（UUID）"
+    url: "https://www.rfc-editor.org/rfc/rfc9562"
+  - title: "PostgreSQL：UUID Type"
+    url: "https://www.postgresql.org/docs/current/datatype-uuid.html"
+  - title: "MySqlConnector：Connection Options（GuidFormat）"
+    url: "https://mysqlconnector.net/connection-options/"
+  - title: "Microsoft Learn：Guid.ToByteArray(Boolean)"
+    url: "https://learn.microsoft.com/dotnet/api/system.guid.tobytearray"
 ---
 
-## 先比較二進位大小與排序意圖
+## 這是什麼
 
-| 方案 | 二進位大小 | 產生與排序特性 |
-| --- | --- | --- |
-| UUID v4 | 128-bit / 16 bytes | 隨機為主，沒有時間前綴 |
-| UUID v7 | 128-bit / 16 bytes | 前段含 Unix 毫秒時間，另有隨機 / 計數布局 |
-| ULID | 128-bit / 16 bytes | 48-bit 時間、80-bit 隨機，常用 26 字元文字表示 |
-| COMB Guid | 通常 128-bit / 16 bytes | 時間與隨機組合，布局依實作及目標資料庫不同 |
-| Snowflake 類型 | 常見 64-bit / 8 bytes | 時間、worker 與序號，需管理節點配置及時鐘 |
+訂單需要一個唯一的 ID。最常見的兩種做法：
 
-文字欄位實際空間還受編碼、欄位型別與索引影響。不能拿 36 字元 UUID 字串直接當成 Guid 的二進位儲存大小。
+- **資料庫自動遞增**：插入時由資料庫產生 1、2、3……。簡單，但 ID 要等寫入後才知道，而且多個資料庫（分片）之間會重複。
+- **應用程式產生**：在寫入前就由程式產生一個全域唯一的值，例如 GUID。好處是可以先產生 ID、作為冪等鍵、放進事件，再一起寫入。
 
-## .NET 的 API 版本
+應用程式產生 ID 時，ID 的「排序特性」會大幅影響資料庫的寫入效能。
 
-Guid.NewGuid 產生 v4；Guid.CreateVersion7 自 .NET 9 起提供。以下為 API 片段，未單獨納入可執行範例驗證；較早 runtime 需選符合規格的實作。
+## 運作原理
 
-~~~csharp title=".NET 9 以上的片段"
-Guid randomId = Guid.NewGuid();
-Guid timedId = Guid.CreateVersion7();
-~~~
+```mermaid
+flowchart LR
+    subgraph V4["隨機 GUID（v4）"]
+        A1["新 ID 隨機落在索引任何位置"] --> A2["頻繁在中間插入<br/>頁面分裂、快取效率差"]
+    end
+    subgraph V7["UUIDv7"]
+        B1["前 48 位元是毫秒時間戳"] --> B2["新 ID 幾乎都在索引尾端<br/>順序寫入"]
+    end
+```
 
-時間前綴不保證同一毫秒或不同節點都嚴格遞增，ULID 的 monotonic 行為也取決於 generator。Snowflake 類型要避免 worker id 衝突，處理時鐘回撥與每個時間單位的序號耗盡。
+資料庫的主鍵通常是 B-tree 索引，資料依 ID 排序存放在一頁頁的磁碟頁中。新的 ID 如果是**隨機**的，每次插入都可能落在任何一頁的中間：那一頁滿了就要分裂成兩頁，而且需要的頁面散布在整個索引，記憶體快取的效率很差。資料量一大，寫入明顯變慢、索引也變得更大。
 
-## 資料庫排序才決定索引表現
+**UUIDv7**（RFC 9562）的前段是毫秒精度的時間戳，後段是隨機值。新產生的 ID 幾乎總是比舊的大，插入都落在索引的尾端，就像自動遞增一樣是順序寫入，同時仍保有全域唯一、不需要協調的特性。.NET 9 起提供 `Guid.CreateVersion7()`。
 
-隨機 key 可能增加 B-tree 寫入的頁分裂，時間布局有機會改善寫入區域性，但也可能產生熱點。SQL Server uniqueidentifier、PostgreSQL uuid、字串 collation 與 .NET 比較順序未必相同；尤其不能把 v7 在某個引擎的結果直接套到另一個。
+## 常見錯誤與正確寫法
 
-COMB 不是一個跨實作一致的 UUID 標準版本；要確認布局、排序與相容性。用實際資料量、索引型態及工作負載量測，再選方案。ID 也不是授權憑證，時間型 ID 可能透露建立時刻。
+### 1. 用 Guid.NewGuid() 當主鍵
+
+```csharp
+// 錯：v4 完全隨機，大量寫入時索引頻繁分裂
+var order = new Order { Id = Guid.NewGuid(), ... };
+
+// 對：依時間排序的 v7
+var order = new Order { Id = Guid.CreateVersion7(), ... };
+```
+
+如果需要讓 ID 的時間和業務時間一致（例如使用 `TimeProvider`），可以傳入時間：`Guid.CreateVersion7(time.GetUtcNow())`。
+
+PostgreSQL 的 `uuid` 型別以 16 位元組儲存，並依位元組順序比較，v7 的排序特性可以直接發揮。
+
+### 2. 在 MySQL 中用錯誤的位元組順序存放
+
+MySQL 沒有原生的 UUID 型別，常見做法是 `BINARY(16)`。但 .NET 的 `Guid.ToByteArray()` 預設使用混合位元組順序（前幾段是小端序），存進去後排序就不再依時間，v7 的優點消失。
+
+使用 MySqlConnector 時，以連線選項 `GuidFormat` 指定存放格式，讓 `BINARY(16)` 依 RFC 的順序（大端序）存放；自己轉換時用 `guid.ToByteArray(bigEndian: true)`。不確定時，`CHAR(36)` 雖然佔空間較多，但排序一定正確。
+
+### 3. 自己實作雪花演算法
+
+雪花演算法（Snowflake）用「時間戳 + 機器編號 + 序號」組成 64 位元整數，很緊湊。但自己實作要處理兩個難題：每個 Pod 的機器編號不能重複（Pod 會擴縮、替換），以及伺服器時鐘被 NTP 往回調整時可能產生重複的 ID。除非真的需要 64 位元的整數 ID，否則 UUIDv7 不需要任何協調，更簡單。
+
+## 使用邊界
+
+- **UUIDv7 會透露建立時間。** 任何人拿到 ID 都能解出它大約何時產生。對外公開、不希望洩漏建立時間或數量的情境（例如分享連結），另外產生一個隨機的公開代碼。
+- UUIDv7 是 16 位元組，比 8 位元組的整數大；索引與外鍵都會跟著變大。資料量極大的表可以權衡使用整數。
+- 在同一毫秒內大量產生的 v7 之間，順序取決於隨機部分，不保證嚴格遞增；不要用 ID 的大小判斷事件的先後順序。
+- 大表的索引與分頁見 [上億筆資料的查詢](/data-access/large-table-queries/)。

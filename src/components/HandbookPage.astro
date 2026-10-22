@@ -1,0 +1,41 @@
+---
+import { render } from 'astro:content';
+import SiteLayout from '../layouts/SiteLayout.astro';
+import Icon from './Icon.astro';
+import { getArticles, getHandbook, handbookUrl, handbookGroups, articleUrl, type HandbookEntry } from '../lib/catalog';
+interface Props { entry: HandbookEntry; }
+const { entry } = Astro.props;
+const { Content, headings } = await render(entry);
+const articles = await getArticles();
+const related = entry.data.linkedArticles.map((id) => articles.find((article) => article.data.articleId === id)!);
+const guides = await getHandbook();
+const siblings = guides.filter((guide) => guide.data.group === entry.data.group);
+const index = siblings.findIndex((guide) => guide.id === entry.id);
+const previous = siblings[index - 1];
+const next = siblings[index + 1];
+const prerequisites = guides.filter((guide) => entry.data.prerequisites.includes(guide.id));
+const group = handbookGroups[entry.data.group];
+---
+<SiteLayout title={entry.data.title} description={entry.data.description}>
+  <div class="reading-grid handbook-grid">
+    <article data-pagefind-body>
+      <div class="article-heading guide-heading" data-guide-id={'handbook-' + entry.id.replaceAll('/', '-')}>
+        <nav class="breadcrumbs" aria-label="麵包屑" data-pagefind-ignore><a href={group.path}>{group.title}</a><Icon name="chevron" size={13} /><span>{entry.data.title}</span></nav>
+        <h1 id="_top" data-pagefind-meta="title">{entry.data.title}</h1>
+        <p class="article-description" data-pagefind-meta="description">{entry.data.description}</p>
+        <p class="article-offline" data-article-offline role="status" data-pagefind-ignore>正在確認離線閱讀狀態…</p>
+      </div>
+      <div class="sl-markdown-content"><Content /></div>
+      <div class="article-resources">
+        {prerequisites.length > 0 && <section><h2>開始前先讀</h2><ul>{prerequisites.map((guide) => <li><a href={handbookUrl(guide)}>{guide.data.title}</a></li>)}</ul></section>}
+        {related.length > 0 && <section><h2>本篇串接的技術知識</h2><ul>{related.map((article) => <li><a href={articleUrl(article)}>{article.data.title}</a></li>)}</ul></section>}
+        <section id="references"><h2>參考來源</h2><ul>{entry.data.sources.map((source) => <li><a href={source.url} rel="noopener noreferrer">{source.title}</a></li>)}</ul></section>
+      </div>
+      <nav class="article-pagination" aria-label="前後章節" data-pagefind-ignore>
+        {previous ? <a href={handbookUrl(previous)}><small>上一個章節</small><strong>{previous.data.title}</strong></a> : <span />}
+        {next ? <a href={handbookUrl(next)}><span><small>接著閱讀</small><strong>{next.data.title}</strong></span><Icon name="arrow" /></a> : <a href="/topics/"><span><small>繼續深入</small><strong>瀏覽技術主題</strong></span><Icon name="arrow" /></a>}
+      </nav>
+    </article>
+    <aside class="reading-sidebar" data-pagefind-ignore><nav class="article-toc" aria-label="本篇目錄"><details open><summary>這篇文章的內容</summary><ul>{headings.filter((heading) => heading.depth === 2).map((heading) => <li><a href={'#' + heading.slug}>{heading.text}</a></li>)}<li><a href="#references">參考來源</a></li></ul></details><a class="toc-topic-link" href={group.path}>回到{group.title}<Icon name="arrow" size={15} /></a></nav></aside>
+  </div>
+</SiteLayout>

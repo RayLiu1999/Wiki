@@ -1,0 +1,13 @@
+---
+import MovedPage from '../../../components/MovedPage.astro';
+// 「容器與 Docker」已併入「容器與網路」主題。
+export function getStaticPaths() {
+  const base = '/infrastructure/containers-networking/';
+  return [
+    { params: { slug: undefined }, props: { target: { title: '容器與網路', url: base } } },
+    { params: { slug: 'image-runtime' }, props: { target: { title: '容器映像與程序', url: base + 'image-runtime/' } } },
+    { params: { slug: 'compose' }, props: { target: { title: 'Docker Compose', url: base + 'compose/' } } },
+  ];
+}
+---
+<MovedPage target={Astro.props.target} reason="容器與網路已合併成同一個主題。" />

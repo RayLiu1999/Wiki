@@ -341,7 +341,7 @@ summary { cursor: pointer; }
   .reading-grid { display: block; }
   .document-container { padding: 0; max-width: none; }
 }
-.knowledge-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.knowledge-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .knowledge-card { display: block; position: relative; padding: 24px; border: 1px solid var(--wiki-line); border-radius: 12px; background: var(--wiki-surface); color: var(--wiki-ink); text-decoration: none; transition: border-color .15s, background .15s; min-width: 0; }
 .knowledge-card:hover { border-color: var(--wiki-accent); background: var(--wiki-soft); }
 .knowledge-card h3 { margin-top: 20px; font-size: 21px; }
@@ -368,8 +368,24 @@ summary { cursor: pointer; }
 .note-mapping-item strong { font-size: 13px; font-weight: 550; }
 .note-provenance p { overflow-wrap: anywhere; }
 .cs-mark.wide-mark { font-size: 22px; min-width: 76px; }
-@media (max-width: 1000px) {
-  .knowledge-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.handbook-grid { padding-block: 40px; }
+.map-domain { margin-bottom: 40px; padding-top: 25px; border-top: 1px solid var(--wiki-line); scroll-margin-top: 130px; }
+.map-domain h2 { margin-top: 8px; }
+.map-domain > p:not(.eyebrow) { margin-top: 10px; color: var(--wiki-muted); }
+.domain-outcome { font-size: 14px; }
+.map-articles { list-style: none; padding: 0; margin: 20px 0 0; }
+.map-articles li { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid var(--wiki-line); }
+.map-articles a { font-size: 14px; text-decoration: none; }
+.map-articles span { white-space: nowrap; color: var(--wiki-muted); font-size: 11px; }
+@media (max-width: 1100px) {
+  .search-trigger { width: auto; }
+  .search-trigger span, .search-trigger kbd { display: none; }
+}
+@media (max-width: 760px) {
+  .primary-nav { overflow-x: auto; white-space: nowrap; gap: 22px; }
+  .primary-nav a { flex: 0 0 auto; }
+  .handbook-grid { padding-block: 25px; }
+  .map-domain { scroll-margin-top: 165px; }
 }
 @media (max-width: 760px) {
   .knowledge-grid, .path-options { grid-template-columns: 1fr; }
@@ -380,3 +396,17 @@ summary { cursor: pointer; }
   .note-group-links a { min-height: 44px; display: inline-flex; align-items: center; }
   .cs-mark.wide-mark { min-width: 60px; font-size: 18px; }
 }
+
+.concept-flow { margin: 1.6rem 0; padding: 1.15rem; border: 1px solid var(--wiki-line); border-radius: 12px; background: var(--wiki-surface); }
+.concept-flow figcaption { font-weight: 650; margin-bottom: .8rem; font-size: .9rem; }
+.sl-markdown-content .concept-flow ol { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem 1.5rem; padding: 0; margin: .65rem 0; list-style: none; }
+.sl-markdown-content .concept-flow li { position: relative; margin: 0; padding: .45rem .6rem; border-radius: 7px; background: var(--wiki-soft); font-size: .82rem; }
+.concept-flow li:not(:last-child)::after { content: '→'; position: absolute; right: -1.15rem; color: var(--wiki-muted); }
+
+.sl-markdown-content .mermaid-diagram { margin: 1.6rem 0; padding: 1rem; border: 1px solid var(--wiki-line); border-radius: 12px; background: var(--wiki-surface); min-width: 0; }
+.mermaid-canvas { overflow-x: auto; overscroll-behavior-x: contain; }
+.mermaid-canvas > svg { display: block; width: 100%; min-width: var(--diagram-min-width, 320px); max-width: none; height: auto; margin: 0 auto; }
+.sl-markdown-content .diagram-status { margin: 0; padding: 1rem; color: var(--wiki-muted); font: 14px/1.8 var(--wiki-sans); }
+.diagram-source { margin-top: .75rem; font: 12px/1.8 var(--wiki-sans); color: var(--wiki-muted); }
+.diagram-source summary { cursor: pointer; }
+.diagram-source > .expressive-code, .diagram-source > pre { margin-top: .75rem; }

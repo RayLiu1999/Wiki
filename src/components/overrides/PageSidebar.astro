@@ -12,5 +12,5 @@ const items = toc?.items.filter((item) => item.slug !== '_top') ?? [];
     <ul>{items.map((item) => <li><a href={'#' + item.slug}>{item.text}</a></li>)}<li><a href="#references">參考來源</a></li></ul>
   </details>
   <div class="toc-note"><Icon name="book" size={19} /><p>理解一個概念，<br />再連結下一個。</p></div>
-  <a class="toc-topic-link" href={topicUrl(topicId)}>瀏覽{topic.name}知識地圖 <Icon name="arrow" size={15} /></a>
+  <a class="toc-topic-link" href={topicUrl(topicId)}>瀏覽 {topic.name} 文章 <Icon name="arrow" size={15} /></a>
 </nav>}

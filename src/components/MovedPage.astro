@@ -1,0 +1,14 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro';
+// 網址搬移後的轉址頁：靜態託管也能運作，並保留可點擊的新位置。
+interface Props { target: { title: string; url: string }; reason: string; }
+const { target, reason } = Astro.props;
+---
+<SiteLayout title="頁面已移動">
+  <Fragment slot="head">
+    <meta http-equiv="refresh" content={'0; url=' + target.url} />
+    <meta name="robots" content="noindex" />
+    <link rel="canonical" href={target.url} />
+  </Fragment>
+  <section class="not-found"><h1>這一頁已經移動</h1><p>{reason}請改讀<a href={target.url}>{target.title}</a>。</p></section>
+</SiteLayout>

@@ -1,5 +1,4 @@
 ---
-import Icon from './Icon.astro';
 import ArticleRow from './ArticleRow.astro';
 import { getArticles, topicFor, type Article } from '../lib/catalog';
 import type { TopicId } from '../lib/taxonomy';
@@ -10,9 +9,9 @@ const articles: Article[] = await getArticles(topicId);
 ---
 <section class="page-intro">
   <p class="eyebrow"><a href="/topics/">知識主題</a> / {topic.name}</p>
-  <div class="topic-heading"><span class:list={['cs-mark', { 'wide-mark': topicId !== 'csharp' }]}>{topic.mark}</span><h1>{topic.name} 知識地圖</h1></div>
+  <div class="topic-heading"><span class:list={['cs-mark', { 'wide-mark': topicId !== 'csharp' }]}>{topic.mark}</span><h1>{topic.name} 文章</h1></div>
   <p>{topic.description}</p>
-  <div class="topic-meta"><span>{articles.length} 篇文章</span><span>·</span><span>{topic.categories.length} 個分類</span><span>·</span><a href={topicId === 'csharp' ? '/learning-paths/csharp-beginner/' : '/learning-paths/dotnet-backend-practice/'}>查看學習路徑 <Icon name="arrow" size={14} /></a></div>
+  <div class="topic-meta"><span>{articles.length} 篇文章</span><span>·</span><span>{topic.categories.length} 個分類</span></div>
 </section>
 <div class="category-filters" role="group" aria-label="文章分類">
   <button type="button" class="filter-button" data-filter="all" aria-pressed="true">全部文章</button>
