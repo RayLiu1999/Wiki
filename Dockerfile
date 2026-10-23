@@ -10,6 +10,9 @@ COPY astro.config.mjs tsconfig.json ./
 COPY scripts/ ./scripts/
 COPY public/ ./public/
 COPY src/ ./src/
+# Vite 8 的打包器 rolldown 使用 mimalloc，預設會預先提交大塊記憶體而不歸還，
+# 讓建置峰值多出約 400 MB；關掉後 1 GB 以下的主機也能建置。
+ENV MIMALLOC_ARENA_EAGER_COMMIT=0 MIMALLOC_PURGE_DELAY=0
 RUN pnpm build
 
 FROM nginx:1.30.5-alpine AS runtime
